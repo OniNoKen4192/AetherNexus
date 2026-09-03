@@ -967,3 +967,102 @@ describe("gate: canonical dotted plan-slug ID accepted", () => {
       "state file should be named by the ID verbatim");
   });
 });
+
+// ------------------------------------------------ Doctor additions (2026-09-02)
+
+describe("doctor: tracked config passes, untracked config warns", () => {
+  const fx = makeFixtureRepo();
+  after(() => fx.cleanup());
+
+  test("doctor: tracked config passes, untracked config warns", () => {
+    const r1 = validate(fx.dir, "doctor");
+    assert.equal(r1.json.checks.config_tracked.status, "pass");
+
+    fx.git("rm", "-q", "--cached", ".lanes/config.json");
+    fx.git("commit", "-qm", "untrack config");
+    const r2 = validate(fx.dir, "doctor");
+    assert.equal(r2.status, 0, "an untracked config is a warn, never a fail");
+    assert.equal(r2.json.checks.config_tracked.status, "warn");
+    assert.ok(r2.json.checks.config_tracked.reason.includes(".gitignore"),
+      `expected the warning to name the .gitignore fix, got: ${r2.json.checks.config_tracked.reason}`);
+  });
+});
+
+const COVERAGE_INDEX = [
+  "# Workflows",
+  "",
+  "## Coverage table",
+  "",
+  "| Workflow | Spec |",
+  "|---|---|",
+  "| A1 | `e2e/workflows/a1-admin.spec.ts` |",
+  "| A2 | `e2e/workflows/a2-claims.spec.ts` |",
+  "| S10 | `e2e/workflows/s10-availability.spec.ts` |",
+  "",
+].join("\n");
+
+function withReviewSuite(ids) {
+  return (c) => {
+    c.review_suite = {
+      suite_command: "pnpm test:ux",
+      id_pattern: "<id>-",
+      id_index: "docs/workflows.md",
+      route_map: { "src/**": ids },
+    };
+  };
+}
+
+describe("doctor: review coverage — unmapped suite IDs warn", () => {
+  const fx = makeFixtureRepo({ patchConfig: withReviewSuite(["a1"]) });
+  after(() => fx.cleanup());
+
+  test("doctor: review coverage — unmapped suite IDs warn", () => {
+    fs.mkdirSync(path.join(fx.dir, "docs"), { recursive: true });
+    fs.writeFileSync(path.join(fx.dir, "docs", "workflows.md"), COVERAGE_INDEX);
+    fx.commit("coverage index");
+
+    const r = validate(fx.dir, "doctor");
+    assert.equal(r.status, 0, `coverage gaps are a warn, never a fail: ${r.stdout}`);
+    assert.equal(r.json.checks.review_coverage.status, "warn");
+    assert.deepEqual(r.json.checks.review_coverage.unmapped, ["A2", "S10"]);
+  });
+});
+
+describe("doctor: review coverage — fully mapped passes (case-insensitive)", () => {
+  const fx = makeFixtureRepo({ patchConfig: withReviewSuite(["a1", "a2", "S10"]) });
+  after(() => fx.cleanup());
+
+  test("doctor: review coverage — fully mapped passes (case-insensitive)", () => {
+    fs.mkdirSync(path.join(fx.dir, "docs"), { recursive: true });
+    fs.writeFileSync(path.join(fx.dir, "docs", "workflows.md"), COVERAGE_INDEX);
+    fx.commit("coverage index");
+
+    const r = validate(fx.dir, "doctor");
+    assert.equal(r.json.checks.review_coverage.status, "pass");
+    assert.equal(r.json.checks.review_coverage.ids, 3);
+  });
+});
+
+describe("doctor: review coverage — missing index warns", () => {
+  const fx = makeFixtureRepo({ patchConfig: withReviewSuite(["a1"]) });
+  after(() => fx.cleanup());
+
+  test("doctor: review coverage — missing index warns", () => {
+    const r = validate(fx.dir, "doctor");
+    assert.equal(r.json.checks.review_coverage.status, "warn");
+    assert.ok(r.json.checks.review_coverage.reason.includes("docs/workflows.md"));
+  });
+});
+
+describe("doctor: review coverage and worktree ACL without a suite", () => {
+  const fx = makeFixtureRepo();
+  after(() => fx.cleanup());
+
+  test("doctor: review coverage and worktree ACL without a suite", () => {
+    const r = validate(fx.dir, "doctor");
+    assert.equal(r.json.checks.review_coverage.status, "pass");
+    assert.ok(["pass", "warn"].includes(r.json.checks.worktree_acl.status));
+    if (process.platform !== "win32") assert.equal(r.json.checks.worktree_acl.status, "pass");
+    else assert.ok(r.json.checks.worktree_acl.probe, "win32 probe should name the directory it inspected");
+  });
+});

@@ -10,6 +10,12 @@ description: >
   validates specs, dispatches to the configured DELEGATE backend,
   verifies results, and reports.
 tools: mcp__codex__codex, mcp__codex__codex-reply, Read, Grep, Glob, Bash
+effort: medium # dispatch-and-verify only: validates the spec, hands it
+               # to the backend, reruns the acceptance command. No
+               # judgment work happens here, so it is pinned rather than
+               # inheriting the user's global effort setting (xhigh by
+               # default) — medium matches the prior generation on
+               # routine work.
 ---
 
 <!-- This is the one file in the Lanes plugin where a specific delegate

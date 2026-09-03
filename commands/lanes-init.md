@@ -12,8 +12,8 @@ description: >
 
 No argument. Run this once, from the root of the project you want Lanes to
 operate on. It reads; it does not modify your source. Its only writes are
-`.lanes/config.json` (and, optionally, a starter `AGENTS.md`) — both gated by
-the no-clobber rule in Phase 3.
+`.lanes/config.json`, `.lanes/.gitignore` (and, optionally, a starter
+`AGENTS.md`) — all gated by the no-clobber rule in Phase 3.
 
 ## The discipline (read before doing anything)
 
@@ -171,7 +171,15 @@ With the floor clear and no existing config in the way:
    not try to embed commentary. `backend.ratelimit_signal` is an array of
    substrings. `""` is allowed for `commands.lint` / `commands.typecheck`
    when the project has no such step.
-3. **`AGENTS.md`.** If the repo has no `AGENTS.md` (Phase 1), offer to
+3. **`.lanes/.gitignore`.** Write it with exactly two lines, `state/`
+   and `worktrees/`, unless one already exists (leave an existing file
+   untouched). `config.json` is the pipeline definition and belongs in
+   history — without this file the whole `.lanes/` tree shows as
+   untracked, nobody commits the config, and every clone and worktree
+   loses the pipeline. `state/` (per-task baseline records) and
+   `worktrees/` (per-task checkouts) are runtime and stay out.
+   `/lanes-doctor` warns whenever `config.json` is untracked.
+4. **`AGENTS.md`.** If the repo has no `AGENTS.md` (Phase 1), offer to
    write a starter stub — not a full architecture document. The stub
    states the stack, the verification commands, and the standing
    do-not-touch list, and points at `.lanes/config.json` as the source of
@@ -181,12 +189,13 @@ With the floor clear and no existing config in the way:
    `AGENTS.md` already exists, leave it untouched — offer only to note
    where it should reference `.lanes/config.json`, and let the user apply
    that edit themselves.
-4. Show the full draft of `.lanes/config.json` (and the `AGENTS.md` stub,
+5. Show the full draft of `.lanes/config.json` (and the `AGENTS.md` stub,
    if offered and accepted) before finishing.
-5. Print next steps, in this order: review the draft; commit `.lanes/` and
-   `AGENTS.md`; run `/lanes-doctor` to verify the config against the
-   repo; then plan your first effort — lane assignment happens during
-   `writing-plans`, per the lanes skill.
+6. Print next steps, in this order: review the draft; commit
+   `.lanes/config.json`, `.lanes/.gitignore`, and `AGENTS.md`; run
+   `/lanes-doctor` to verify the config against the repo; then plan
+   your first effort — lane assignment happens during `writing-plans`,
+   per the lanes skill.
 
 ## Report format
 
@@ -201,8 +210,8 @@ End with:
 3. **Interview answers** — each Phase 2 question actually asked and the
    confirmed answer; note any question skipped because Phase 1 already
    settled it with a quick confirm rather than an open ask.
-4. **Files written** — `.lanes/config.json` path, and `AGENTS.md` path if
-   a stub was written; or, on the no-clobber path, the single line
-   reporting that `.lanes/config.json` already existed and nothing was
-   written.
+4. **Files written** — `.lanes/config.json` and `.lanes/.gitignore`
+   paths, and `AGENTS.md` path if a stub was written; or, on the
+   no-clobber path, the single line reporting that `.lanes/config.json`
+   already existed and nothing was written.
 5. **Next steps** — the Phase 3 message verbatim.

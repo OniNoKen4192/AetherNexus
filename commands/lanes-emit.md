@@ -14,9 +14,12 @@ argument-hint: <path-to-approved-plan>
 # /lanes-emit — plan → DELEGATE task specs
 
 The plan at `$ARGUMENTS` has been approved. Convert it into dispatchable
-task specs for the Lanes cross-model pipeline, per the procedure below.
-Follow it exactly; where it conflicts with your instincts, the procedure
-wins.
+task specs for the Lanes cross-model pipeline. The goal: every
+DELEGATE-routed task leaves here as one spec file that the deterministic
+gate accepts and an implementer can execute without asking a question,
+and every KEEP-routed task leaves untouched. The standing guards below
+are hard constraints on that outcome; the phases after them are the
+sequence that reliably produces it.
 
 ## Standing guards (read before doing anything)
 

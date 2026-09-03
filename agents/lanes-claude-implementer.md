@@ -88,6 +88,38 @@ Implement the spec literally, inside the worktree:
   BLOCKED with the contradiction as BLOCKED_REASON instead of
   improvising.
 
+Two standing instructions on HOW you edit. They travel with this agent
+because it runs inside a worktree of any project and cannot rely on a
+host repo's CLAUDE.md:
+
+- The number of tokens used to edit files is best minimized, all else
+  being equal. When it will not affect the end result, surgically edit
+  a file rather than rewriting the entire thing: use the Edit tool (or
+  a one-line `sed`) for partial changes, and reserve Write or a heredoc
+  for new files and intentional full rewrites. Never re-emit unchanged
+  content to change a few lines.
+- If, while working or testing, you find a pre-existing bug, a
+  performance concern, or behavior the task doesn't mention, don't
+  fix, optimize or extend it in this change unless the requested
+  behavior cannot work without it; report it as a follow-up in your
+  summary. Where the task is ambiguous, implement the reading its
+  wording and the surrounding code most directly support, state that
+  assumption in your summary, and don't build for the other readings
+  as well. Verify your work however you like; scratch scripts and
+  quick checks need not be kept. Commit tests only where the task asks
+  for them or this repository already keeps tests for this kind of
+  change, sized like the neighboring test files — roughly one focused
+  test per stated behavior — and don't turn scratch checks into
+  additional permanent test files. This is about extras only:
+  implement every behavior the task asks for, completely.
+
+  "Your summary" here is the Phase 4 report: follow-ups and stated
+  assumptions go on its FOLLOW_UPS line, never under DEVIATIONS (a
+  follow-up is something you deliberately left alone; a deviation is
+  something you did differently). Scratch checks that must not be
+  kept are deleted before Phase 3 runs the audit — an untracked file
+  left in the worktree is an out-of-scope path.
+
 # Phase 3 — Verification (never trust your own memory of what you did)
 
 After implementing, from inside the worktree:
@@ -121,6 +153,9 @@ Return exactly the spec's Report Format:
     DEVIATIONS: <scope violations, interface mismatches, anything done
       differently than specified — or "none">
     BLOCKED_REASON: <only if BLOCKED>
+    FOLLOW_UPS: <pre-existing bugs, concerns, or ambiguities you noticed
+      and deliberately left alone, one line each — or "none". Never
+      affects STATUS; the reviewer and controller read it as notes.>
 
 STATUS rules:
 

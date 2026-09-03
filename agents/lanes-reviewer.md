@@ -14,6 +14,8 @@ model: fable   # frontier-judgment stage — the only stage allowed to run
                # e2e and the only stage this plugin never lets you
                # downgrade to a cheaper tier. Override to your own
                # project's frontier model if it differs.
+effort: high   # judgment stage — pinned so review depth neither inflates
+               # nor drifts with a user's global effort setting.
 ---
 
 You are the review stage — the only stage with frontier judgment and the

@@ -59,19 +59,39 @@ Run (Bash):
 
     node "${CLAUDE_PLUGIN_ROOT}/bin/lanes-validate.mjs" doctor
 
-Its JSON report is the evidence for five checks — `schema`, `globs`,
-`commands`, `baseline`, `hook_gate` — each `pass | warn | fail`, plus a
+Its JSON report is the evidence for eight checks — `schema`,
+`config_tracked`, `globs`, `commands`, `baseline`, `hook_gate`,
+`review_coverage`, `worktree_acl` — each `pass | warn | fail`, plus a
 top-level `verdict` (`ok` | `not_safe`; the process exits 0 only when
 nothing failed). `hook_gate` verifies the configured
 `backend.dispatch_tool` actually has a PreToolUse matcher in the
 plugin's `hooks/hooks.json` — without it, dispatches would run with no
 deterministic gate at all, so a mismatch (e.g. a backend swap that
-edited config but not the hook) is a hard fail. Render the report
-readably: one line per check with its status, then the details of every
-check that isn't `pass` — each glob's match count and sample (or its
-malformed-pattern error), each unresolved command's note, each dirty
-path. Do not re-derive any of these by judgment — the
-subcommand's output is the authority (matching semantics:
+edited config but not the hook) is a hard fail. The three
+warn-only checks:
+
+- `config_tracked` — `.lanes/config.json` is committed. Untracked means
+  every clone and worktree loses the pipeline definition; the fix is a
+  `.lanes/.gitignore` listing `state/` and `worktrees/` (what
+  `/lanes-init` writes) and a commit.
+- `review_coverage` — every workflow ID in the coverage table at
+  `review_suite.id_index` appears in at least one
+  `review_suite.route_map` entry. An unmapped ID can never be selected
+  for a review, so its workflow silently goes unreviewed; the report
+  lists them under `unmapped`. Passes trivially without a
+  `review_suite` block.
+- `worktree_acl` — Windows only. `BUILTIN\Users` holds Modify on
+  `.lanes/worktrees` (or `.lanes` before any worktree exists). Without
+  it the DELEGATE backend's sandbox cannot write inside a worktree and
+  rounds come back BLOCKED on a write denial; the report names the
+  one-time `icacls` grant. Passes as not-applicable elsewhere.
+
+Render the report readably: one line per check with its status, then
+the details of every check that isn't `pass` — each glob's match count
+and sample (or its malformed-pattern error), each unresolved command's
+note, each dirty path, each unmapped workflow ID, the ACL fix command.
+Do not re-derive any of these by judgment — the subcommand's output is
+the authority (matching semantics:
 `${CLAUDE_PLUGIN_ROOT}/docs/PATH-MATCHING.md`).
 Also render the report's top-level `automation` field as one
 informational line — the declared trust level and fix cap (defaults
@@ -100,7 +120,8 @@ the worst finding:
 - **healthy** — every deterministic check passed, backend reachable.
 - **healthy, with warnings** — no failures; list each warning on one
   line (zero-match glob, unresolved command, unreachable backend,
-  leftover `config.md`).
+  leftover `config.md`, untracked config, unmapped workflow IDs,
+  missing worktree ACL grant).
 - **not safe to operate** — any deterministic check failed; name the
   failed check and the one action that unblocks it (fix the named
   config key, commit/stash the dirty paths, run the migration).

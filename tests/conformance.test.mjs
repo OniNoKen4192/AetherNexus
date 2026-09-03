@@ -51,13 +51,22 @@ test("§5.1 plugin manifest", () => {
 
 test("§5.2 hooks lockstep", () => {
   const hooks = JSON.parse(read("hooks/hooks.json"));
-  assert.equal(hooks.hooks.PreToolUse.length, 1);
-  const pre = hooks.hooks.PreToolUse[0];
   const config = JSON.parse(read("templates/config.example.json"));
-  assert.equal(pre.matcher, config.backend.dispatch_tool);
-  const command = pre.hooks[0].command;
+  // Exactly one dispatch gate, bound to the example config's dispatch
+  // tool; the Bash read-only allow hook sits beside it and must never
+  // displace it.
+  const gates = hooks.hooks.PreToolUse.filter((h) => h.matcher === config.backend.dispatch_tool);
+  assert.equal(gates.length, 1, "exactly one PreToolUse entry should match the dispatch tool");
+  const command = gates[0].hooks[0].command;
   assert.ok(command.includes("hooks/lanes-dispatch-gate.mjs"), "hook command should reference the dispatch gate script");
   assert.ok(fs.existsSync(path.join(repoRoot, "hooks/lanes-dispatch-gate.mjs")), "hooks/lanes-dispatch-gate.mjs should exist");
+
+  const allows = hooks.hooks.PreToolUse.filter((h) => h.matcher === "Bash");
+  assert.equal(allows.length, 1, "exactly one PreToolUse entry should match Bash (the read-only allow hook)");
+  assert.ok(allows[0].hooks[0].command.includes("hooks/lanes-readonly-allow.mjs"),
+    "the Bash hook command should reference the read-only allow script");
+  assert.ok(fs.existsSync(path.join(repoRoot, "hooks/lanes-readonly-allow.mjs")), "hooks/lanes-readonly-allow.mjs should exist");
+  assert.equal(hooks.hooks.PreToolUse.length, 2, "PreToolUse carries the dispatch gate and the read-only allow hook, nothing else");
 });
 
 // ------------------------------------------------------------- §5.3
@@ -597,7 +606,7 @@ test("failover controller flow: commands, guide, templates agree", () => {
 test("rest stop: seed pointer hook is wired", () => {
   const hooks = JSON.parse(read("hooks/hooks.json"));
   const pre = hooks.hooks.PreToolUse;
-  assert.ok(Array.isArray(pre) && pre.length === 1 && pre[0].matcher === "mcp__codex__codex",
+  assert.ok(Array.isArray(pre) && pre.some((h) => h.matcher === "mcp__codex__codex"),
     "the PreToolUse dispatch gate must survive the SessionStart addition");
   const session = hooks.hooks.SessionStart;
   assert.ok(Array.isArray(session) && session.length === 1,

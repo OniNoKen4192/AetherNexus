@@ -748,6 +748,31 @@ function onPath(bin) {
 const RANK = { pass: 0, warn: 1, fail: 2 };
 function worst(a, b) { return RANK[a] >= RANK[b] ? a : b; }
 
+// Workflow IDs from a coverage index (review_suite.id_index): every
+// Markdown table row whose first cell is an ID token and whose second
+// cell names a file (a path separator or an extension). Header and
+// separator rows fail the second-cell test on their own. Backticks
+// around cells are stripped; IDs are deduplicated case-insensitively.
+function coverageIds(text) {
+  const ids = [];
+  const seen = new Set();
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t.startsWith("|")) continue;
+    const cells = t.replace(/^\|/, "").replace(/\|$/, "").split("|")
+      .map((c) => c.trim().replace(/^`/, "").replace(/`$/, ""));
+    if (cells.length < 2) continue;
+    const [id, spec] = cells;
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(id)) continue;
+    if (!/[\\/]|\.[A-Za-z0-9]+$/.test(spec)) continue;
+    const key = id.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ids.push(id);
+  }
+  return ids;
+}
+
 // Health report (design spec §4). Exit 0 iff no check failed; warns never
 // block. Checks 2 and 4 are the same code paths the gate itself runs —
 // the doctor previews exactly what the gate will enforce.
@@ -763,10 +788,24 @@ function runDoctor() {
     checks.schema = { status: "pass" };
   } catch (err) {
     checks.schema = { status: "fail", reason: String(err.message || err) };
-    for (const c of ["globs", "commands", "baseline", "hook_gate"]) {
+    for (const c of ["globs", "commands", "baseline", "hook_gate", "review_coverage", "worktree_acl"]) {
       checks[c] = { status: "fail", reason: "skipped — config did not load" };
     }
   }
+
+  // Check 1b — config tracked. config.json is the pipeline definition
+  // and belongs in history; a repo that ignores all of .lanes/ hands
+  // every clone and worktree a project with no pipeline. Only state/
+  // and worktrees/ are runtime (/lanes-init writes a .lanes/.gitignore
+  // naming exactly those). Warn, never fail — the gate doesn't need it.
+  let configTracked = false;
+  try { configTracked = git("ls-files", "--", ".lanes/config.json").trim() !== ""; } catch {}
+  checks.config_tracked = configTracked
+    ? { status: "pass" }
+    : {
+        status: "warn",
+        reason: ".lanes/config.json is not tracked by git — clones and worktrees lose the pipeline definition; commit it, with a .lanes/.gitignore listing state/ and worktrees/ so the runtime directories stay out (/lanes-init writes one)",
+      };
 
   if (config) {
     // Check 2 — glob preview (§4.2): every routing pattern against the
@@ -871,6 +910,64 @@ function runDoctor() {
     } catch (err) {
       checks.hook_gate = { status: "fail", reason: `cannot read the plugin's hooks/hooks.json: ${String((err && err.message) || err)}` };
     }
+
+    // Check 6 — review-suite coverage. The reviewer runs the workflow
+    // IDs that review_suite.route_map names for the touched paths; an ID
+    // present in the coverage index (review_suite.id_index) but absent
+    // from every route_map entry can never be selected, so its workflow
+    // silently goes unreviewed. Warn, never fail — which IDs a path
+    // should trigger is the config owner's call.
+    if (config.review_suite) {
+      const idx = normalizePath(config.review_suite.id_index);
+      if (!fs.existsSync(idx)) {
+        checks.review_coverage = { status: "warn", reason: `review_suite.id_index not found: ${idx}` };
+      } else {
+        const ids = coverageIds(fs.readFileSync(idx, "utf8"));
+        const mapped = new Set(Object.values(config.review_suite.route_map).flat().map((s) => s.toLowerCase()));
+        const unmapped = ids.filter((id) => !mapped.has(id.toLowerCase()));
+        if (!ids.length) {
+          checks.review_coverage = { status: "warn", reason: `no coverage-table rows (| <id> | <spec path> |) found in ${idx}` };
+        } else if (unmapped.length) {
+          checks.review_coverage = {
+            status: "warn",
+            reason: `${unmapped.length} of ${ids.length} suite IDs in ${idx} appear in no review_suite.route_map entry — the reviewer can never select them`,
+            ids: ids.length,
+            unmapped,
+          };
+        } else {
+          checks.review_coverage = { status: "pass", ids: ids.length };
+        }
+      }
+    } else {
+      checks.review_coverage = { status: "pass", note: "no review_suite block" };
+    }
+
+    // Check 7 — worktree ACL (win32 only). The DELEGATE backend's sandbox
+    // runs without the owner's token; when BUILTIN\Users lacks Modify on
+    // the worktree it cannot write existing files and every round comes
+    // back BLOCKED on a write denial. A grant on .lanes is inherited by
+    // every worktree created beneath it. Warn and name the fix — the
+    // doctor never changes ACLs.
+    if (process.platform !== "win32") {
+      checks.worktree_acl = { status: "pass", note: "not applicable (win32 only)" };
+    } else {
+      const probe = fs.existsSync(".lanes/worktrees") ? ".lanes/worktrees" : ".lanes";
+      const fix = 'icacls .lanes /grant "*S-1-5-32-545:(OI)(CI)M"';
+      try {
+        const out = execFileSync("icacls", [probe], { encoding: "utf8", timeout: 15_000 });
+        const users = out.split(/\r?\n/).filter((l) => /BUILTIN\\Users:|S-1-5-32-545:/i.test(l));
+        const modify = users.some((l) => /\((?:[A-Z]+,)*(?:M|F)(?:,[A-Z]+)*\)/.test(l));
+        if (modify) {
+          checks.worktree_acl = { status: "pass", probe };
+        } else if (!users.length) {
+          checks.worktree_acl = { status: "warn", probe, reason: `no BUILTIN\\Users entry recognized in the ACL of ${probe} (non-English locale?) — if DELEGATE rounds come back BLOCKED on write denial, run: ${fix}` };
+        } else {
+          checks.worktree_acl = { status: "warn", probe, reason: `BUILTIN\\Users has no Modify right on ${probe} — the DELEGATE sandbox cannot write inside worktrees (rounds come back BLOCKED on write denial); grant it once, inherited by every worktree: ${fix}` };
+        }
+      } catch (err) {
+        checks.worktree_acl = { status: "warn", probe, reason: `icacls probe failed: ${String((err && err.message) || err).split("\n")[0]}` };
+      }
+    }
   }
 
   const failed = Object.values(checks).some((c) => c.status === "fail");
@@ -909,6 +1006,31 @@ function ensureExcluded(root) {
     fs.mkdirSync(path.dirname(excl), { recursive: true });
     fs.writeFileSync(excl, text + (text === "" || text.endsWith("\n") ? "" : "\n") + ".lanes/worktrees/\n");
   }
+}
+
+// Registered worktree paths, normalized for comparison (case-folded —
+// Windows paths compare case-insensitively, and git prints the case it
+// was given).
+function isRegisteredWorktree(wtPath) {
+  const target = normalizePath(path.resolve(wtPath)).toLowerCase();
+  return git("worktree", "list", "--porcelain")
+    .split(/\r?\n/)
+    .filter((l) => l.startsWith("worktree "))
+    .map((l) => normalizePath(l.slice("worktree ".length)).toLowerCase())
+    .includes(target);
+}
+
+// An empty, unregistered directory at a worktree path is a leftover
+// shell, not a worktree: on Windows `git worktree remove` deletes the
+// checkout's contents but leaves the top-level folder behind, and a
+// bare existsSync check would then refuse to re-create the same task
+// id (a rerun, a FIX round). Delete it; report whether we did.
+function clearEmptyShell(wtPath) {
+  let entries;
+  try { entries = fs.readdirSync(wtPath); } catch { return false; } // absent, or not a directory
+  if (entries.length || isRegisteredWorktree(wtPath)) return false;
+  fs.rmdirSync(wtPath);
+  return true;
 }
 
 // Snapshot dispatch inputs from the MAIN working tree into a worktree,
@@ -952,6 +1074,7 @@ function runWorktreeCreate(specPathArg, baseArg) {
   const taskFile = spec.taskId;
   const branch = `lanes/${taskFile}`;
   const wtPath = `.lanes/worktrees/${taskFile}`;
+  clearEmptyShell(wtPath);
   if (fs.existsSync(wtPath)) {
     wtFail(`worktree already exists: ${wtPath} — run 'worktree remove --task ${spec.taskId}' first`);
   }
@@ -984,6 +1107,7 @@ function runWorktreeCreateStream(streamIdArg, baseArg) {
   const streamFile = streamIdArg;
   const branch = `highway/${streamFile}`;
   const wtPath = `.lanes/worktrees/stream-${streamFile}`;
+  clearEmptyShell(wtPath);
   if (fs.existsSync(wtPath)) {
     wtFail(`worktree already exists: ${wtPath} — run 'worktree remove --stream ${streamIdArg}' first`);
   }
@@ -1007,23 +1131,21 @@ function runWorktreeRemove(idArg, force, kind) {
   const wtPath = kind === "stream" ? `.lanes/worktrees/stream-${idFile}` : `.lanes/worktrees/${idFile}`;
   const branch = kind === "stream" ? `highway/${idFile}` : `lanes/${idFile}`;
   const idKey = kind === "stream" ? "stream" : "task";
+  const shellCleared = clearEmptyShell(wtPath);
   if (!fs.existsSync(wtPath)) {
-    // Directory manually deleted? If git still registers it, prune the
-    // stale registration and fall through to branch cleanup; a task that
-    // never had a worktree (no registration, no branch) is a refusal.
-    const registered = git("worktree", "list", "--porcelain")
-      .split(/\r?\n/)
-      .filter((l) => l.startsWith("worktree "))
-      .map((l) => normalizePath(l.slice("worktree ".length)).toLowerCase())
-      .includes(normalizePath(path.resolve(wtPath)).toLowerCase());
+    // Directory manually deleted, or an empty shell just cleared? If git
+    // still registers it, prune the stale registration and fall through
+    // to branch cleanup; a task that never had a worktree (no shell, no
+    // registration, no branch) is a refusal.
+    const registered = isRegisteredWorktree(wtPath);
     const branchExists = git("branch", "--list", branch).trim() !== "";
-    if (!registered && !branchExists) wtFail(`no worktree at ${wtPath}`);
+    if (!registered && !branchExists && !shellCleared) wtFail(`no worktree at ${wtPath}`);
     if (registered) git("worktree", "prune");
     let branchRemoved = !branchExists;
     if (branchExists) {
       try { git("branch", "-d", branch); branchRemoved = true; } catch { branchRemoved = false; }
     }
-    console.log(JSON.stringify({ ok: true, [idKey]: idArg, removed: wtPath, pruned: registered, branch, branch_removed: branchRemoved }));
+    console.log(JSON.stringify({ ok: true, [idKey]: idArg, removed: wtPath, pruned: registered, shell_cleared: shellCleared, branch, branch_removed: branchRemoved }));
     return;
   }
   try {
@@ -1034,6 +1156,9 @@ function runWorktreeRemove(idArg, force, kind) {
       { path: wtPath },
     );
   }
+  // Windows leaves the empty top-level folder behind — finish the job, or
+  // the next create for this id refuses on a shell.
+  if (fs.existsSync(wtPath)) fs.rmSync(wtPath, { recursive: true, force: true });
   let branchRemoved = true;
   try { git("branch", "-d", branch); } catch { branchRemoved = false; } // unmerged — kept deliberately
   console.log(JSON.stringify({ ok: true, [idKey]: idArg, removed: wtPath, branch, branch_removed: branchRemoved }));

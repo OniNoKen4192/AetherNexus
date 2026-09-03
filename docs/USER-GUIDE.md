@@ -79,11 +79,31 @@ From the root of the project Lanes will operate on:
    glob actually matches, resolves your commands against the manifest,
    checks the clean baseline, verifies the dispatch gate's hook matcher
    covers your configured backend tool, and confirms the backend's MCP
-   tools are reachable. It ends with exactly one verdict: healthy /
+   tools are reachable. Three warn-only checks catch slow leaks: an
+   untracked `.lanes/config.json` (commit it — `/lanes-init` writes a
+   `.lanes/.gitignore` so only `state/` and `worktrees/` stay out),
+   workflow IDs in your coverage index that no `route_map` entry can
+   ever select, and — on Windows — a missing `BUILTIN\Users` Modify
+   grant on `.lanes/worktrees`, which shows up as the DELEGATE sandbox
+   being denied writes inside a worktree. It ends with exactly one verdict: healthy /
    healthy with warnings / not safe to operate — and the one action that
    unblocks the worst finding. It certifies configuration and repository
    readiness, not that a live dispatch will succeed. It is also the
    one-time migration path from a legacy Markdown config.
+
+**Permission prompts.** Every stage shells out to
+`bin/lanes-validate.mjs`, and each call would otherwise prompt unless
+your `settings.json` carried an allow rule naming the plugin's absolute
+path — version segment included, so it breaks on every update. The
+plugin ships a PreToolUse hook on Bash
+([`hooks/lanes-readonly-allow.mjs`](../hooks/lanes-readonly-allow.mjs))
+that pre-approves exactly the read-only calls — `gate`, `audit`,
+`doctor`, `attention`, `seed`, `config get` — when the script resolves
+to the installed plugin's own validator and nothing else is chained
+onto the command. `config set` and every `worktree` subcommand still
+prompt, as does anything that isn't a lone validator call. Delete any
+version-pinned allow rule you added by hand; the hook follows the
+installed version.
 
 The full field-by-field config reference is
 [`templates/config.example.md`](../templates/config.example.md), with

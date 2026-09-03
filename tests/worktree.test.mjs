@@ -404,3 +404,75 @@ describe("worktree remove: noncanonical ID refused", () => {
     assert.ok(r.json.reason.includes("../escape"), `expected reason to name the bad ID, got: ${r.json.reason}`);
   });
 });
+
+// ------------------------------------------------ Worktree hygiene (2026-09-02)
+// On Windows `git worktree remove` deletes the checkout's contents but
+// leaves the empty top-level folder behind; those shells then block
+// re-creating the same task id (a rerun or a FIX round) on a bare
+// existsSync check. Remove must leave nothing; create and remove must
+// treat an empty, unregistered directory as absent.
+
+describe("worktree remove: leaves no directory behind", () => {
+  // Spec committed first so the worktree is clean and plain (no --force)
+  // removal is the path under test.
+  const fx = makeFixtureRepo();
+  fs.writeFileSync(path.join(fx.dir, "docs", "tasks", "T2.md"), T2_SPEC);
+  fx.commit("T2 spec");
+  const wt = path.join(fx.dir, ".lanes", "worktrees", "T2");
+  after(() => fx.cleanup());
+
+  test("worktree remove: leaves no directory behind", () => {
+    const c = validate(fx.dir, "worktree", "create", "--spec", "docs/tasks/T2.md");
+    assert.equal(c.status, 0, `setup: worktree create failed: ${c.stdout} ${c.stderr}`);
+    const r = validate(fx.dir, "worktree", "remove", "--task", "T2");
+    assert.equal(r.status, 0, `expected clean removal, got: ${r.stdout} ${r.stderr}`);
+    assert.equal(r.json.ok, true);
+    assert.ok(!fs.existsSync(wt), `expected worktree dir to be gone: ${wt}`);
+  });
+});
+
+describe("worktree create: empty leftover shell treated as absent", () => {
+  const { fx } = setup({ skipCreate: true });
+  after(() => fx.cleanup());
+
+  test("worktree create: empty leftover shell treated as absent", () => {
+    const wt = path.join(fx.dir, ".lanes", "worktrees", "T2");
+    fs.mkdirSync(wt, { recursive: true });
+
+    const r = validate(fx.dir, "worktree", "create", "--spec", "docs/tasks/T2.md");
+    assert.equal(r.status, 0, `expected create to succeed over an empty shell: ${r.stdout} ${r.stderr}`);
+    assert.equal(r.json.ok, true);
+    assert.ok(fs.existsSync(path.join(wt, "docs", "tasks", "T2.md")), "expected a real worktree at the shell's path");
+  });
+});
+
+describe("worktree remove: empty leftover shell is cleaned", () => {
+  const { fx } = setup({ skipCreate: true });
+  after(() => fx.cleanup());
+
+  test("worktree remove: empty leftover shell is cleaned", () => {
+    const wt = path.join(fx.dir, ".lanes", "worktrees", "T2");
+    fs.mkdirSync(wt, { recursive: true });
+
+    const r = validate(fx.dir, "worktree", "remove", "--task", "T2");
+    assert.equal(r.status, 0, `expected shell cleanup to succeed: ${r.stdout} ${r.stderr}`);
+    assert.equal(r.json.ok, true);
+    assert.ok(!fs.existsSync(wt), `expected shell dir to be gone: ${wt}`);
+  });
+});
+
+describe("worktree create: non-empty unregistered dir still refused", () => {
+  const { fx } = setup({ skipCreate: true });
+  after(() => fx.cleanup());
+
+  test("worktree create: non-empty unregistered dir still refused", () => {
+    const wt = path.join(fx.dir, ".lanes", "worktrees", "T2");
+    fs.mkdirSync(wt, { recursive: true });
+    fs.writeFileSync(path.join(wt, "leftover.txt"), "not a worktree\n");
+
+    const r = validate(fx.dir, "worktree", "create", "--spec", "docs/tasks/T2.md");
+    assert.equal(r.status, 2);
+    assert.equal(r.json.check, "worktree");
+    assert.ok(r.json.reason.includes("already exists"), `expected 'already exists', got: ${r.json.reason}`);
+  });
+});
