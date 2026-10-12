@@ -55,8 +55,8 @@ backend (v1 ships one: Codex via the `codex` MCP server — without it,
 everything simply stays KEEP).
 
 ```
-/plugin marketplace add OniNoKen4192/Lanes
-/plugin install lanes@lanes
+/plugin marketplace add OniNoKen4192/AetherNexus
+/plugin install nexus@nexus
 ```
 
 One check: `agents/lanes-reviewer.md` ships with `model: fable` in its

@@ -1,5 +1,5 @@
 {
-  "name": "lanes",
+  "name": "nexus",
   "owner": {
     "name": "Ken Culver"
   },
@@ -8,7 +8,7 @@
   },
   "plugins": [
     {
-      "name": "lanes",
+      "name": "nexus",
       "source": "./",
       "description": "Cross-model task routing: frontier Claude plans and reviews; a delegated backend implements. Requires superpowers.",
       "version": "3.5.0",

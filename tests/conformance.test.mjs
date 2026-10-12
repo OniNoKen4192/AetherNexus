@@ -36,7 +36,7 @@ function walkFiles(relDir) {
 
 test("§5.1 plugin manifest", () => {
   const manifest = JSON.parse(read(".claude-plugin/plugin.json"));
-  assert.equal(manifest.name, "lanes");
+  assert.equal(manifest.name, "nexus");
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
   assert.ok(
     typeof manifest.description === "string" && manifest.description.trim().length > 0,

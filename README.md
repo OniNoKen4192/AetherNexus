@@ -34,8 +34,8 @@ to fully unattended runs.
 ## Install
 
 ```
-/plugin marketplace add OniNoKen4192/Lanes
-/plugin install lanes@lanes
+/plugin marketplace add OniNoKen4192/AetherNexus
+/plugin install nexus@nexus
 ```
 
 ## Set up a project
