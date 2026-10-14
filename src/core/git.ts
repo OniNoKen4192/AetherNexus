@@ -61,9 +61,11 @@ function firstPositional(args: string[], valueFlags: string[] = []): string | un
 
 export class Git {
   private readonly wtRoot: string;
-  constructor(public readonly repoRoot: string, private readonly opts: { log?: GitLog } = {}) {
+  constructor(public readonly repoRoot: string, private opts: { log?: GitLog } = {}) {
     this.wtRoot = this.canon(path.join(repoRoot, ".nexus", "worktrees"));
   }
+  /** Install (or clear, with null) the command log hook. */
+  setLog(log: GitLog | null): void { this.opts = log ? { log } : {}; }
   canon(p: string): string {
     const abs = normalizePath(path.resolve(this.repoRoot, p)).replace(/\/+$/, "");
     return process.platform === "win32" ? abs.toLowerCase() : abs;

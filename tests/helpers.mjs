@@ -112,9 +112,8 @@ export async function makeGalaxy(patchConfig) {
   const repo = makeRepo();
   const { initGalaxy } = await import("../dist/server/commands/init.js");
   const { openGalaxy } = await import("../dist/server/galaxy.js");
-  initGalaxy(repo.dir);
   patchConfig ??= (c) => { c.roles = { implement: ["fake"], review: ["fake"] }; c.routing.security_routed = ["src/auth.ts"]; c.routing.do_not_touch = [".env"]; };
-  { const p = path.join(repo.dir, ".nexus", "config.json"); const c = JSON.parse(fs.readFileSync(p, "utf8")); patchConfig(c); fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n"); }
+  initGalaxy(repo.dir, { patchConfig });
   repo.git("add", "-A"); repo.git("commit", "-qm", "nexus init");
   const g = openGalaxy(repo.dir, { scriptsDir: path.join(repoRoot, "tests", "fixtures", "scripts") });
   return { ...repo, g, cleanup: () => { g.close(); repo.cleanup(); } };

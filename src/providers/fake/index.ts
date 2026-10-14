@@ -10,7 +10,13 @@ export type FakeStep = { delay_ms?: number } & (
 );
 
 export function createFakeAdapter(scriptsDir: string, opts: { pick?: (job: Job) => string } = {}): ProviderAdapter {
-  const pick = opts.pick ?? ((job: Job) => job.prompt.match(/^FAKE-SCRIPT:\s*(\S+)/m)?.[1] ?? (job.role === "review" ? "review-approve" : "happy"));
+  const pick = opts.pick ?? ((job: Job) => {
+    // A review prompt embeds the spec, whose comment names the IMPLEMENT script; only review-* names count there.
+    const names = [...job.prompt.matchAll(/FAKE-SCRIPT:\s*(\S+)/g)].map((m) => m[1]!);
+    const name = (job.role === "review" ? names.find((n) => n.startsWith("review-")) : names[0]) ?? (job.role === "review" ? "review-approve" : "happy");
+    // Scripted "first attempt goes wrong" scripts behave on the fix round.
+    return (name === "fix-round" || name === "scope-violation") && job.round > 1 ? "happy" : name;
+  });
   const now = () => new Date().toISOString();
   return {
     id: "fake", roles: ["implement", "review"],

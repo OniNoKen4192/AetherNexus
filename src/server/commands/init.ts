@@ -7,13 +7,16 @@ import { generateFleet } from "../../core/fleet.js";
 import { Refusal } from "../errors.js";
 import { galaxyPaths } from "../galaxy.js";
 
-export function initGalaxy(repoRoot: string, opts: { force?: boolean } = {}): { configPath: string; dbFile: string; ships: number } {
+export function initGalaxy(repoRoot: string, opts: { force?: boolean; patchConfig?: (config: any) => void } = {}): { configPath: string; dbFile: string; ships: number } {
   const paths = galaxyPaths(repoRoot);
   const configPath = path.join(paths.nexusDir, "config.json");
   if (fs.existsSync(configPath) && !opts.force) throw new Refusal(`already initialized: ${configPath} exists (use --force to overwrite)`);
   fs.mkdirSync(paths.nexusDir, { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(DEFAULT_CONFIG, null, 2) + "\n");
-  fs.writeFileSync(path.join(paths.nexusDir, ".gitignore"), "nexus.db*\nworktrees/\n");
+  // patchConfig lets callers (tests) start from a non-default config so the roster matches it.
+  const initial = structuredClone(DEFAULT_CONFIG);
+  opts.patchConfig?.(initial);
+  fs.writeFileSync(configPath, JSON.stringify(initial, null, 2) + "\n");
+  fs.writeFileSync(path.join(paths.nexusDir, ".gitignore"), "nexus.db*\nworktrees/\nstate/\n");
 
   if (fs.existsSync(path.join(repoRoot, ".git"))) {
     const exclude = path.join(repoRoot, ".git", "info", "exclude");
@@ -24,7 +27,7 @@ export function initGalaxy(repoRoot: string, opts: { force?: boolean } = {}): { 
     }
   }
 
-  const config = normalizeConfig(DEFAULT_CONFIG);
+  const config = normalizeConfig(initial);
   const db = openDb(paths.dbFile, { stats: config.db.stats });
   try {
     const have = new Set(db.all("ships.all").map((s) => String(s["id"])));

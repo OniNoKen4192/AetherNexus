@@ -40,5 +40,7 @@ export const moonReducers: Record<string, Reducer> = {
     transitionMoon(db, ev.moon_id, "moon.merged", ev.id);
     db.run("moons.settle", { id: ev.moon_id!, last_event_id: ev.id });
   },
+  // A spec amendment is recorded for the log; the spec file itself is the state.
+  "moon.amended": (db, ev) => { moonRow(db, ev.moon_id); },
   "moon.cleared": (db, ev) => { moonRow(db, ev.moon_id); db.run("moons.clear", { id: ev.moon_id!, last_event_id: ev.id }); },
 };
