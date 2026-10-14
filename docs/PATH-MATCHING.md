@@ -63,3 +63,5 @@ is the matching authority.
 | `src/?pi.ts` | `src/a/pi.ts` | no | 3 (`?` ≠ `/`) |
 | `.env` | `.env` | yes | literal |
 | `.env` | `.env.example` | no | literal ≠ prefix |
+| `src/my file.ts` | `src/my file.ts` | yes | literal (space) |
+| `src/lib/**` | `src\lib\deep\x.ts` | yes | 1 (`\` → `/`) + 3 (`**`) |

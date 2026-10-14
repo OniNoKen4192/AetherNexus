@@ -308,14 +308,7 @@ test("§5.8 template shape", () => {
 
 test("§5.9 MATCH_VECTORS ↔ PATH-MATCHING.md", () => {
   function sourceVectors() {
-    const src = read("bin/lanes-validate.mjs");
-    const block = src.match(/const MATCH_VECTORS = \[([\s\S]*?)\n\];/)[1];
-    const rows = block
-      .split("\n")
-      .map((l) => l.replace(/\/\/.*$/, "").trim())
-      .filter((l) => l.startsWith("["))
-      .map((l) => l.replace(/,\s*$/, ""));
-    return rows.map((r) => JSON.parse(r));
+    return JSON.parse(read("tests/fixtures/match-vectors.json"));
   }
 
   function docVectors() {

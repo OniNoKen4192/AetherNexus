@@ -1,0 +1,21 @@
+[
+  ["src/auth.ts", "src/auth.ts", true],
+  ["src/auth.ts", "SRC/Auth.ts", true],
+  ["src/auth.ts", "src/auth.ts.bak", false],
+  ["prisma/migrations", "prisma/migrations", true],
+  ["prisma/migrations", "prisma/migrations/0001/m.sql", true],
+  ["prisma/migrations", "prisma/migrations2/x.sql", false],
+  ["prisma/migrations/**", "prisma/migrations/0001/m.sql", true],
+  ["prisma/migrations/**", "prisma/migrations", false],
+  ["src/components/ui/**", "src\\components\\ui\\button.tsx", true],
+  ["*.md", "README.md", true],
+  ["*.md", "docs/README.md", false],
+  ["**/*.test.ts", "src/lib/x.test.ts", true],
+  ["**/*.test.ts", "x.test.ts", true],
+  ["src/?pi.ts", "src/api.ts", true],
+  ["src/?pi.ts", "src/a/pi.ts", false],
+  [".env", ".env", true],
+  [".env", ".env.example", false],
+  ["src/my file.ts", "src/my file.ts", true],
+  ["src/lib/**", "src\\lib\\deep\\x.ts", true]
+]
