@@ -14,7 +14,7 @@
     "build": "tsc -p tsconfig.json && node -e \"require('node:fs').cpSync('src/db/migrations','dist/db/migrations',{recursive:true})\"",
     "pretest": "npm run build",
     "test": "node --disable-warning=ExperimentalWarning --test",
-    "test:validate": "node --test tests/validate/",
+    "test:validate": "node --disable-warning=ExperimentalWarning --test \"tests/validate/*.test.mjs\"",
     "selftest": "node dist/cli/main.js validate --selftest"
   },
   "dependencies": {

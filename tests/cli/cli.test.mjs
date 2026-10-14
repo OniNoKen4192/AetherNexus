@@ -43,3 +43,18 @@ test("status <unknown-system> is a refusal", () => {
   const { dir, git, cleanup } = makeRepo(); nexus(dir, "init"); git("add", "-A"); git("commit", "-qm", "init");
   const r = nexus(dir, "status", "nope"); assert.equal(r.code, 2); assert.match(r.err, /unknown system 'nope'/); cleanup();
 });
+
+test("planet assign --planet <name> puts the stream on that planet; moon park is documented and refuses a moon with nothing in flight", () => {
+  const { dir, git, cleanup } = makeRepo();
+  nexus(dir, "init"); git("add", "-A"); git("commit", "-qm", "init");
+  const sys = JSON.parse(nexus(dir, "system", "create", "demo", "--title", "Demo", "--brief-text", "b", "--seed", "1", "--json").out);
+  const shown = JSON.parse(nexus(dir, "system", "show", sys.systemId, "--json").out);
+  const second = shown.planets[1].name;
+  const p = nexus(dir, "planet", "assign", sys.systemId, "--stream", "P1", "--territory", "src/**", "--planet", second, "--json");
+  assert.equal(p.code, 0, p.err); assert.equal(JSON.parse(p.out).planetId, `${sys.systemId}/${second}`);
+  const spec = writeSpec(dir, "T1"); git("add", "-A"); git("commit", "-qm", "spec");
+  nexus(dir, "moon", "assign", JSON.parse(p.out).planetId, spec);
+  const help = nexus(dir, "--help"); assert.match(help.out, /moon park <task-id> --reason <text>/); assert.match(help.out, /process died/);
+  const r = nexus(dir, "moon", "park", "T1", "--reason", "gone"); assert.equal(r.code, 2); assert.match(r.err, /only an implementing or reviewing moon/);
+  cleanup();
+});

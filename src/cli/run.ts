@@ -12,7 +12,7 @@ import { assignPlanet, assignMoon } from "../server/commands/assign.js";
 import { launchMoon } from "../server/commands/launch.js";
 import { inspectMoon } from "../server/commands/review.js";
 import { dockMoon } from "../server/commands/dock.js";
-import { replyMoon, dropMoon, retireShip } from "../server/commands/park.js";
+import { replyMoon, dropMoon, retireShip, parkStaleMoon } from "../server/commands/park.js";
 import { status, events, fleet } from "../server/commands/query.js";
 import { rebuild } from "../db/rebuild.js";
 import { STATEMENTS, type StatementName } from "../db/statements.js";
@@ -28,11 +28,13 @@ const USAGE = `usage: nexus [--json] <command>
   init [--force]
   system create <slug> --title <t> (--brief <file> | --brief-text <text>) [--kind feature|bug] [--seed <n>]
   system show <system-id>
-  planet assign <system-id> --stream <id> [--mission <m>] [--territory <glob>]...
+  planet assign <system-id> --stream <id> [--mission <m>] [--territory <glob>]... [--planet <name>]
   moon assign <planet-id> <spec-path> [--moon <name>]
   moon launch <task-id> [--provider <p>] [--quiet]
   moon reply <task-id> --note <text>
   moon drop <task-id>
+  moon park <task-id> --reason <text>      for a voyage whose process died (crash, kill, reboot):
+                                           parks it as 'stale:<text>' so reply/drop can proceed
   voyage inspect <task-id> [--provider <p>] [--quiet]
   voyage dock <task-id>
   status [<system-id>]
@@ -42,6 +44,7 @@ const USAGE = `usage: nexus [--json] <command>
   validate <spec-path> | --selftest
 
 --json prints the result object as JSON. --quiet suppresses the event stream on stderr.
+Ctrl-C (SIGINT/SIGTERM) during launch/inspect parks the voyage as 'interrupted' and exits 2.
 Env: NEXUS_FAKE_SCRIPTS overrides the fake adapter's scripts directory.
 Exit codes: 0 ok, 2 refused (message only), 1 error or unknown command.`;
 
@@ -98,7 +101,7 @@ function parse(argv: string[]) {
       options: {
         json: { type: "boolean" }, quiet: { type: "boolean" }, force: { type: "boolean" }, selftest: { type: "boolean" }, help: { type: "boolean", short: "h" }, follow: { type: "boolean" },
         title: { type: "string" }, brief: { type: "string" }, "brief-text": { type: "string" }, kind: { type: "string" }, seed: { type: "string" },
-        stream: { type: "string" }, mission: { type: "string" }, territory: { type: "string", multiple: true }, moon: { type: "string" },
+        stream: { type: "string" }, mission: { type: "string" }, territory: { type: "string", multiple: true }, moon: { type: "string" }, planet: { type: "string" },
         provider: { type: "string" }, note: { type: "string" }, since: { type: "string" }, reason: { type: "string" },
       },
     });
@@ -169,7 +172,7 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
       return out(r, () => [`${r.system["id"]}  ${r.system["title"]}`, ...r.planets.map((p) => `  ${p["id"]}  ${p["name"]}  moons: ${p.moons.length}`)].join("\n"));
     }
     case "planet assign": {
-      const r = assignPlanet(g, { systemId: need(rest[0], "<system-id>"), streamId: need(o.stream, "--stream"), mission: o.mission ?? "", territory: o.territory ?? [] });
+      const r = assignPlanet(g, { systemId: need(rest[0], "<system-id>"), streamId: need(o.stream, "--stream"), mission: o.mission ?? "", territory: o.territory ?? [], ...(o.planet ? { planetName: o.planet } : {}) });
       return out(r, () => `assigned planet ${r.planetId} on ${r.branch}${r.discovered ? " (discovered)" : ""}`);
     }
     case "moon assign": {
@@ -177,12 +180,20 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
       return out(r, () => `assigned moon ${r.moonId} (task ${r.taskId})`);
     }
     case "moon launch": {
-      const r = await launchMoon(g, launchIn(need(rest[0], "<task-id>")));
-      return out(r, () => `voyage ${r.voyageId}: moon ${r.moonStatus}`);
+      const taskId = need(rest[0], "<task-id>");
+      const r = await interruptible((signal) => launchMoon(g, { ...launchIn(taskId), signal }));
+      if (r.interrupted && interruptedPark(g, taskId)) return interruptedExit();
+      return out(r.value, () => `voyage ${r.value.voyageId}: moon ${r.value.moonStatus}`);
     }
     case "moon inspect": case "voyage inspect": {
-      const r = await inspectMoon(g, launchIn(need(rest[0], "<task-id>")));
-      return out(r, () => `voyage ${r.voyageId}: verdict ${r.verdict?.verdict ?? "none"}, moon ${r.moonStatus}`);
+      const taskId = need(rest[0], "<task-id>");
+      const r = await interruptible((signal) => inspectMoon(g, { ...launchIn(taskId), signal }));
+      if (r.interrupted && interruptedPark(g, taskId)) return interruptedExit();
+      return out(r.value, () => `voyage ${r.value.voyageId}: verdict ${r.value.verdict?.verdict ?? "none"}, moon ${r.value.moonStatus}`);
+    }
+    case "moon park": {
+      const r = parkStaleMoon(g, { taskId: need(rest[0], "<task-id>"), reason: need(o.reason, "--reason") });
+      return out(r, () => `parked voyage ${r.voyageId} (${r.reason})`);
     }
     case "moon dock": case "voyage dock": {
       const r = dockMoon(g, { taskId: need(rest[0], "<task-id>") });
@@ -217,6 +228,17 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
     default: throw new Usage();
   }
 }
+
+/** Run a voyage with SIGINT/SIGTERM wired to abort it (the voyage then parks as 'interrupted' instead of wedging the moon). */
+async function interruptible<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<{ value: T; interrupted: boolean }> {
+  const ac = new AbortController();
+  const onSignal = (): void => ac.abort();
+  process.on("SIGINT", onSignal); process.on("SIGTERM", onSignal);
+  try { return { value: await fn(ac.signal), interrupted: ac.signal.aborted }; }
+  finally { process.off("SIGINT", onSignal); process.off("SIGTERM", onSignal); }
+}
+const interruptedPark = (g: Galaxy, taskId: string): boolean => g.db.get<{ park_reason: string | null }>("moons.byTask", { task_id: taskId })?.park_reason === "interrupted";
+function interruptedExit(): void { console.error("interrupted — voyage parked"); process.exitCode = 2; }
 
 export async function main(argv: string[]): Promise<void> {
   try {
