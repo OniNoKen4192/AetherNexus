@@ -1,0 +1,4 @@
+{ "name": "review-fix", "role": "review", "steps": [
+  { "text": "Reviewing the diff." },
+  { "done": { "verdict": "FIX", "reasoning": "thing must equal 2", "delta_spec": "Set thing = 2 in src/lib/thing.js; acceptance: node run-tests.mjs" } }
+] }

@@ -1,0 +1,4 @@
+{ "name": "rate-limited", "role": "implement", "steps": [
+  { "text": "Starting work." },
+  { "error": { "classification": "rate_limited", "message": "usage limit reached; resets 3:45pm" } }
+] }

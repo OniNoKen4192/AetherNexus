@@ -1,0 +1,9 @@
+{ "name": "scope-violation", "role": "implement", "steps": [
+  { "text": "Reading the spec." },
+  { "tool": "Read", "input": { "path": ".nexus/specs/T1.md" } },
+  { "write": { "path": "src/lib/thing.js", "content": "export const thing = 2;\n" } },
+  { "write": { "path": "src/lib/thing.test.js", "content": "import assert from 'node:assert'; import { thing } from './thing.js'; assert.equal(thing, 2);\n" } },
+  { "write": { "path": "README.md", "content": "oops\n" } },
+  { "usage": { "input_tokens": 1200, "output_tokens": 300 } },
+  { "done": { "status": "IMPLEMENTED" } }
+] }

@@ -1,0 +1,4 @@
+{ "name": "crash-midrun", "role": "implement", "steps": [
+  { "write": { "path": "src/lib/thing.js", "content": "export const thing = 2;\n" } },
+  { "crash": "socket hang up" }
+] }

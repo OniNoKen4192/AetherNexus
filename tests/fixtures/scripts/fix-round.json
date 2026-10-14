@@ -1,0 +1,5 @@
+{ "name": "fix-round", "role": "implement", "steps": [
+  { "write": { "path": "src/lib/thing.js", "content": "export const thing = 1;\n" } },
+  { "write": { "path": "src/lib/thing.test.js", "content": "import assert from 'node:assert'; import { thing } from './thing.js'; assert.equal(thing, 2);\n" } },
+  { "done": { "status": "IMPLEMENTED" } }
+] }
