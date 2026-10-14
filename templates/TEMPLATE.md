@@ -31,6 +31,7 @@ delegate backend make no guarantees about their working directory.
 - **Depends on**: <task IDs that must be merged first, or "none">
 - **Estimated scope**: <S | M | L>              (S: 1 file, M: 2–4 files, L: reconsider splitting)
 - **Model hint**: <top-tier | mid-tier | low-tier | keep>  (the config `tiers` names, best→cheapest, or `keep` for security-routed — see rule 7; dispatcher may override the tier on rate limit)
+- **Gravity**: <0-20, written by the Nexus at assign; leave blank when authoring>
 
 ## Objective
 <One to three sentences. What exists after this task that didn't before,
