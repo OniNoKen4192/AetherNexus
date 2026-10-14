@@ -4,12 +4,16 @@
   "description": "Aether Nexus — an always-on dispatch layer that turns features and bug reports into routed, reviewed, merged work across model providers.",
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=22.13" },
-  "bin": { "nexus": "dist/cli/main.js" },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "bin": {
+    "nexus": "dist/cli/main.js"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').cpSync('src/db/migrations','dist/db/migrations',{recursive:true})\"",
     "pretest": "npm run build",
-    "test": "node --test",
+    "test": "node --disable-warning=ExperimentalWarning --test",
     "test:validate": "node --test tests/validate/",
     "selftest": "node dist/cli/main.js validate --selftest"
   },

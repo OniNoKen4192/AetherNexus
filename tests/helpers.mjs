@@ -92,3 +92,5 @@ export function validate(dir, ...args) {
 function tryParse(s) {
   try { return JSON.parse(s); } catch { return null; }
 }
+
+export const tmpDb = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "nexus-db-")), "nexus.db");
