@@ -144,7 +144,9 @@ export async function launchMoon(
   let carriedSha: string | undefined;
   // A relaunch after a park is treated the same way (when its worktree survived): the parked work is carried over, audited first.
   // Without a gate baseline (a gate_failed park never wrote one) there is nothing to audit against: gate afresh instead.
-  const hasBaseline = fs.existsSync(path.join(g.paths.stateDir, `${taskId}.json`));
+  // A state file is a baseline only if this assignment was gated: a stale file from a dropped assignment of the same id is not.
+  const gatedHere = g.db.all("events.byAssignment", { assignment_id: moon.assignment_id }).some((e) => e["kind"] === "moon.gated");
+  const hasBaseline = gatedHere && fs.existsSync(path.join(g.paths.stateDir, `${taskId}.json`));
   if (fixRound || (relaunch && hadWorktree && hasBaseline)) {
     // Re-audit against the round-1 baseline first: anything that changed in the worktree since that audit
     // (customs runs there; a human may edit) would otherwise be committed as 'nexus' and never audited again.

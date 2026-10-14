@@ -109,3 +109,37 @@ test("I2: moon park parks a voyage whose process is gone (stale:<reason>); refus
   w.cleanup();
 });
 
+
+// A dropped assignment's gate baseline must not be mistaken for the re-assigned task's: drop removes the state file, and a
+// relaunch takes the carry-over path only when the current assignment has been gated.
+test("drop removes the gate baseline; same-id re-assign → gate fails → reply → clean → relaunch audits", async () => {
+  const { assignMoon } = await import("../../dist/server/commands/assign.js");
+  const w = await worldWithMoon("happy"); const stateFile = path.join(w.g.paths.stateDir, "T1.json");
+  await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  assert.equal(fs.existsSync(stateFile), true, "the first assignment's gate wrote a baseline");
+  assert.equal((await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-reject" })).moonStatus, "quarantined");
+  dropMoon(w.g, { taskId: "T1" });
+  assert.equal(fs.existsSync(stateFile), false, "drop removes the dropped assignment's gate baseline");
+  w.git("commit", "-qm", "retry", "--allow-empty");
+  assignMoon(w.g, { planetId: w.planetId, specPath: ".nexus/specs/T1.md" });
+  const moon = w.g.db.get("moons.byTask", { task_id: "T1" }); const planet = w.g.db.get("planets.byId", { id: moon.planet_id });
+  const wt = path.join(w.g.paths.worktrees, "T1");
+  w.g.git.worktreeAdd(wt, "nexus/T1", w.g.git.revParse(planet.branch)); fs.writeFileSync(path.join(wt, "junk.txt"), "dirt");
+  await assert.rejects(launchMoon(w.g, { taskId: "T1", provider: "fake" }), /gate failed/);
+  assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).status, "adrift");
+  replyMoon(w.g, { taskId: "T1", note: "cleaned" }); fs.rmSync(path.join(wt, "junk.txt"));
+  assert.equal((await launchMoon(w.g, { taskId: "T1", provider: "fake" })).moonStatus, "audited");
+  w.cleanup();
+});
+
+test("a stale baseline file with no gate in the current assignment is not a baseline: relaunch gates afresh", async () => {
+  const w = await worldWithMoon("happy"); const stateFile = path.join(w.g.paths.stateDir, "T1.json");
+  const moon = w.g.db.get("moons.byTask", { task_id: "T1" }); const planet = w.g.db.get("planets.byId", { id: moon.planet_id });
+  const wt = path.join(w.g.paths.worktrees, "T1");
+  w.g.git.worktreeAdd(wt, "nexus/T1", w.g.git.revParse(planet.branch)); fs.writeFileSync(path.join(wt, "junk.txt"), "dirt");
+  await assert.rejects(launchMoon(w.g, { taskId: "T1", provider: "fake" }), /gate failed/);
+  fs.mkdirSync(path.dirname(stateFile), { recursive: true }); fs.writeFileSync(stateFile, "{\"stale\":true}");
+  replyMoon(w.g, { taskId: "T1", note: "cleaned" }); fs.rmSync(path.join(wt, "junk.txt"));
+  assert.equal((await launchMoon(w.g, { taskId: "T1", provider: "fake" })).moonStatus, "audited");
+  w.cleanup();
+});

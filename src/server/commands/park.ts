@@ -61,6 +61,8 @@ export function dropMoon(g: Galaxy, input: { taskId: string }): { moonId: string
   if (g.git.branchExists(branch) && !g.git.deleteBranch(branch, { force: true }) && g.git.branchExists(branch)) {
     throw new Refusal(`cannot delete branch ${branch} (is it checked out in another worktree?) — nothing was dropped`);
   }
+  // The gate baseline belongs to this assignment: a later assignment of the same task id must not inherit it.
+  fs.rmSync(path.join(g.paths.stateDir, `${moon.task_id}.json`), { force: true });
   releaseMoonVoyages(g, moon, "drop");
   resolveDecisions(g, moon, "drop", "");
   append(g.db, { kind: "moon.dropped", ...scope, payload: {} });
