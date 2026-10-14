@@ -17,11 +17,16 @@ function specTitle(text: string, taskId: string): string {
 export function dockMoon(g: Galaxy, input: { taskId: string }): { mergeSha: string | null; planetBranch: string; moonStatus: "merged" | "adrift" } {
   const { taskId } = input;
   const moon = loadMoon(g, taskId);
-  if (moon.status !== "reviewing") throw new Refusal(`moon ${taskId} is '${moon.status}' — only a 'reviewing' moon with an APPROVE verdict can dock`);
+  const finishing = moon.status === "merged";   // resuming a dock that crashed after moon.merged
+  if (moon.status !== "reviewing" && !finishing) throw new Refusal(`moon ${taskId} is '${moon.status}' — only a 'reviewing' moon with an APPROVE verdict can dock`);
   const verdicts = g.db.all<VerdictRow>("verdicts.byMoon", { moon_id: moon.id });
-  if (verdicts[verdicts.length - 1]?.verdict !== "APPROVE") throw new Refusal(`moon ${taskId} has no APPROVE verdict to dock on`);
+  if (!finishing && verdicts[verdicts.length - 1]?.verdict !== "APPROVE") throw new Refusal(`moon ${taskId} has no APPROVE verdict to dock on`);
   const voyage = g.db.get<VoyageRow>("voyages.latestByMoonRole", { moon_id: moon.id, role: "implement" });
-  if (!voyage || (voyage.status !== "cleared" && voyage.status !== "en_route")) throw new Refusal(`moon ${taskId} has no cleared freighter voyage to dock`);
+  const resuming = voyage?.status === "docked";   // docked already: only the remaining steps are left
+  if (!voyage || (voyage.status !== "cleared" && voyage.status !== "en_route" && !resuming)) throw new Refusal(`moon ${taskId} has no cleared freighter voyage to dock`);
+  if (finishing && g.db.get<{ status: string }>("ships.byId", { id: voyage.ship_id })?.status !== "assigned" && !fs.existsSync(path.join(g.paths.worktrees, taskId))) {
+    throw new Refusal(`moon ${taskId} is already merged`);
+  }
 
   const scope = moonScope(g, moon);
   const fscope = { ...scope, voyage_id: voyage.id, ship_id: voyage.ship_id };
@@ -35,9 +40,21 @@ export function dockMoon(g: Galaxy, input: { taskId: string }): { mergeSha: stri
   g.git.setLog((entry) => {
     try { append(g.db, { kind: "voyage.event", ...fscope, payload: { event: { kind: "tool_use", ts: new Date().toISOString(), data: { name: "git", input: entry.args } } } }); } catch { /* logging must never break git */ }
   });
+  // Idempotent tail of the dock: each step runs only if it has not happened yet.
+  const finish = (planetBranch: string, sha?: string): { mergeSha: string | null; planetBranch: string; moonStatus: "merged" } => {
+    const mergeSha = sha ?? g.git.revParse(planetBranch);
+    if (loadMoon(g, taskId).status === "reviewing") append(g.db, { kind: "moon.merged", ...scope, payload: { merge_sha: mergeSha } });
+    if (g.db.get<{ status: string }>("ships.byId", { id: voyage.ship_id })?.status === "assigned") {
+      append(g.db, { kind: "ship.released", ...fscope, payload: { voyage_id: voyage.id, outcome: "docked" } });
+    }
+    g.git.setLog(null); // the voyage is docked: it takes no more events
+    g.git.worktreeRemove(moonWorktree);
+    return { mergeSha, planetBranch, moonStatus: "merged" };
+  };
   try {
     // Recreates the planet worktree if it was deleted by hand.
     g.git.worktreeAdd(planetWorktree, planet.branch, g.git.revParse(planet.branch));
+    if (resuming) return finish(planet.branch);
     if (voyage.status === "cleared") {
       const specAbs = path.join(g.repoRoot, moon.spec_path);
       const title = specTitle(fs.existsSync(specAbs) ? fs.readFileSync(specAbs, "utf8") : "", taskId);
@@ -57,10 +74,7 @@ export function dockMoon(g: Galaxy, input: { taskId: string }): { mergeSha: stri
       mergeSha = merged.sha;
     }
     append(g.db, { kind: "voyage.docked", ...fscope, payload: { merge_sha: mergeSha, planet_branch: planet.branch } });
-    append(g.db, { kind: "moon.merged", ...scope, payload: { merge_sha: mergeSha } });
-    append(g.db, { kind: "ship.released", ...fscope, payload: { voyage_id: voyage.id, outcome: "docked" } });
-    g.git.worktreeRemove(moonWorktree);
-    return { mergeSha, planetBranch: planet.branch, moonStatus: "merged" };
+    return finish(planet.branch, mergeSha);
   } finally {
     g.git.setLog(null);
   }

@@ -55,11 +55,15 @@ export function dropMoon(g: Galaxy, input: { taskId: string }): { moonId: string
   const moon = loadMoon(g, input.taskId);
   requireParked(moon, "dropped");
   const scope = moonScope(g, moon);
+  // Remove first: if either removal fails, nothing is recorded and the drop can simply be retried.
+  const branch = `nexus/${moon.task_id}`;
+  g.git.worktreeRemove(path.join(g.paths.worktrees, moon.task_id), { force: true });
+  if (g.git.branchExists(branch) && !g.git.deleteBranch(branch, { force: true }) && g.git.branchExists(branch)) {
+    throw new Refusal(`cannot delete branch ${branch} (is it checked out in another worktree?) — nothing was dropped`);
+  }
   releaseMoonVoyages(g, moon, "drop");
   resolveDecisions(g, moon, "drop", "");
   append(g.db, { kind: "moon.dropped", ...scope, payload: {} });
-  g.git.worktreeRemove(path.join(g.paths.worktrees, moon.task_id), { force: true });
-  if (g.git.branchExists(`nexus/${moon.task_id}`)) g.git.deleteBranch(`nexus/${moon.task_id}`, { force: true });
   append(g.db, { kind: "moon.cleared", ...scope, payload: {} });
   return { moonId: moon.id };
 }

@@ -53,14 +53,28 @@ function repliedSincePark(g: Galaxy, moonId: string): boolean {
   return reply > park;
 }
 
-/** Restore paths to HEAD (tracked) or delete them (untracked). */
-function revertPaths(g: Galaxy, worktree: string, paths: string[]): void {
+const violationPaths = (r: AuditReport): string[] => [...r.out_of_scope, ...r.forbidden.map((f) => f.path)];
+
+/** Paths the latest recorded audit of the moon flagged (out_of_scope and forbidden). */
+function recordedViolations(g: Galaxy, moonId: string): Set<string> {
+  const audited = g.db.all("events.byMoon", { moon_id: moonId }).map(rowToEvent).filter((e) => e.kind === "voyage.audited").pop();
+  const rec = audited?.payload["audit"] as AuditReport | undefined;
+  return new Set(rec ? violationPaths(rec) : []);
+}
+
+/** Split paths into those git tracks (restored to HEAD) and those it does not (deleted). */
+function classifyPaths(g: Galaxy, worktree: string, paths: string[]): { reverted: string[]; deleted: string[] } {
+  const reverted: string[] = [], deleted: string[] = [];
   for (const p of paths) {
     let tracked = true;
     try { g.git.run(["ls-files", "--error-unmatch", "--", p], { cwd: worktree }); } catch { tracked = false; }
-    if (tracked) g.git.run(["checkout", "HEAD", "--", p], { cwd: worktree });
-    else fs.rmSync(path.join(worktree, p), { recursive: true, force: true });
+    (tracked ? reverted : deleted).push(p);
   }
+  return { reverted, deleted };
+}
+function applyRestore(g: Galaxy, worktree: string, r: { reverted: string[]; deleted: string[] }): void {
+  for (const p of r.reverted) g.git.run(["checkout", "HEAD", "--", p], { cwd: worktree });
+  for (const p of r.deleted) fs.rmSync(path.join(worktree, p), { recursive: true, force: true });
 }
 
 export async function launchMoon(
@@ -108,15 +122,25 @@ export async function launchMoon(
   // (the audit ignores nexus commits), so this round's audit shows only this round's changes.
   let carriedSha: string | undefined;
   // A relaunch after a park is treated the same way (when its worktree survived): the parked work is carried over, audited first.
-  if (fixRound || (relaunch && hadWorktree)) {
+  // Without a gate baseline (a gate_failed park never wrote one) there is nothing to audit against: gate afresh instead.
+  const hasBaseline = fs.existsSync(path.join(g.paths.stateDir, `${taskId}.json`));
+  if (fixRound || (relaunch && hadWorktree && hasBaseline)) {
     // Re-audit against the round-1 baseline first: anything that changed in the worktree since that audit
     // (customs runs there; a human may edit) would otherwise be committed as 'nexus' and never audited again.
     const runCarry = (): AuditReport => (deps?.audit ?? audit)({ git: g.git, worktree, taskId, routing: g.config.routing, pipeline: g.config.pipeline, stateDir: g.paths.stateDir });
     let carry = runCarry();
-    // The human has answered an audit_violations park: put the offending paths back to the baseline so the new round starts in scope.
+    // The human has answered an audit_violations park: put the violations that audit recorded back to the baseline
+    // so the new round starts in scope. Only if that leaves the tree clean; otherwise nothing is touched.
     if (relaunch && moon.park_reason === "audit_violations" && carry.verdict === "violations") {
-      const paths = [...carry.out_of_scope, ...carry.forbidden.map((f) => f.path)];
-      if (paths.length) { revertPaths(g, worktree, paths); carry = runCarry(); }
+      const recorded = recordedViolations(g, moon.id);
+      const current = violationPaths(carry);
+      const otherwiseDirty = current.some((p) => !recorded.has(p)) || carry.commits_past_base.length > 0 || carry.spec_modified || !!carry.error;
+      if (!otherwiseDirty && current.length) {
+        const plan = classifyPaths(g, worktree, current);
+        append(g.db, { kind: "moon.restored", ...scope, payload: { paths: plan } });
+        applyRestore(g, worktree, plan);
+        carry = runCarry();
+      }
     }
     if (carry.verdict === "violations") {
       const details = { out_of_scope: carry.out_of_scope, forbidden: carry.forbidden, ...(carry.error ? { error: carry.error } : {}) };

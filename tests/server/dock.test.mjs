@@ -52,3 +52,21 @@ test("dock refuses before APPROVE", async () => {
   const w = await worldWithMoon("happy"); await launchMoon(w.g, { taskId: "T1", provider: "fake" });
   assert.throws(() => dockMoon(w.g, { taskId: "T1" }), /is 'audited'/); w.cleanup();
 });
+
+test("dock resumes after a crash past voyage.docked (and past moon.merged)", async () => {
+  const w = await approved(); const planet = w.g.db.get("planets.byId", { id: w.planetId }); const wt = path.join(w.dir, ".nexus", "worktrees", "T1");
+  w.g.git.commitAll(wt, "T1", { name: "implement/fake", email: "nexus@local" });
+  const v = w.g.db.get("voyages.latestByMoonRole", { moon_id: w.moonId, role: "implement" });
+  append(w.g.db, { kind: "voyage.departed", moon_id: w.moonId, voyage_id: v.id, payload: {} });
+  const m = w.g.git.mergeNoFF(path.join(w.dir, planet.worktree), "nexus/T1", "manual merge");
+  append(w.g.db, { kind: "voyage.docked", moon_id: w.moonId, voyage_id: v.id, payload: { merge_sha: m.sha, planet_branch: planet.branch } });
+  const r = dockMoon(w.g, { taskId: "T1" });
+  assert.equal(r.moonStatus, "merged"); assert.ok(w.g.db.all("ships.all").every((s) => s.status === "idle")); assert.equal(fs.existsSync(wt), false);
+  assert.throws(() => dockMoon(w.g, { taskId: "T1" }), /already merged/); w.cleanup();
+});
+test("dock resumes when only the worktree removal is left (moon merged, ship released)", async () => {
+  const w = await approved(); const wt = path.join(w.dir, ".nexus", "worktrees", "T1");
+  dockMoon(w.g, { taskId: "T1" });
+  const planet = w.g.db.get("planets.byId", { id: w.planetId }); w.g.git.worktreeAdd(wt, "nexus/T1", w.g.git.revParse(planet.branch));
+  const r = dockMoon(w.g, { taskId: "T1" }); assert.equal(r.moonStatus, "merged"); assert.equal(fs.existsSync(wt), false); w.cleanup();
+});

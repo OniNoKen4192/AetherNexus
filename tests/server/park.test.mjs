@@ -7,7 +7,7 @@ test("reply: amendment appended, decision resolved, ship released; relaunch allo
   const w = await worldWithMoon("scope-violation"); await launchMoon(w.g, { taskId: "T1", provider: "fake" });
   await assert.rejects(launchMoon(w.g, { taskId: "T1", provider: "fake" }), /adrift.*reply/);
   const r = replyMoon(w.g, { taskId: "T1", note: "only touch src/lib" }); assert.equal(r.round, 2);
-  assert.match(fs.readFileSync(path.join(w.dir, ".nexus", "specs", "T1.md"), "utf8"), /### A2 .* human: only touch src\/lib/);
+  assert.match(fs.readFileSync(path.join(w.dir, ".nexus", "specs", "T1.md"), "utf8"), /### A1 .* human: only touch src\/lib/);
   assert.equal(w.g.db.all("decisions.pending").length, 0); assert.ok(w.g.db.all("ships.all").every((s) => s.status === "idle"));
   // the fake adapter's default pick for "scope-violation" at round >= 2 is "happy" (same rule as fix-round)
   const l2 = await launchMoon(w.g, { taskId: "T1", provider: "fake" }); assert.equal(l2.moonStatus, "audited");
@@ -44,4 +44,41 @@ test("status/events/fleet shapes", async () => {
   const s = status(w.g, w.systemId); assert.equal(s.moons.length, 1); assert.ok(s.moons.every((m) => m.task_id)); assert.equal(s.voyages.length, 1);
   const ev = events(w.g, { moon: w.moonId }); assert.ok(ev.length > 5); assert.ok(ev.every((e) => typeof e.payload === "object"));
   assert.ok(events(w.g, { since: ev.at(-1).id }).length === 0); w.cleanup();
+});
+
+const wtOf = (w) => path.join(w.dir, ".nexus", "worktrees", "T1");
+
+test("relaunch restores only the recorded violation; moon.restored is logged first", async () => {
+  const w = await worldWithMoon("scope-violation"); await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  replyMoon(w.g, { taskId: "T1", note: "only touch src/lib" });
+  const l2 = await launchMoon(w.g, { taskId: "T1", provider: "fake" }); assert.equal(l2.moonStatus, "audited");
+  const ev = events(w.g, { moon: w.moonId }); const r = ev.find((e) => e.kind === "moon.restored");
+  assert.ok(r, "moon.restored event"); assert.deepEqual(r.payload.paths, { reverted: ["README.md"], deleted: [] });
+  assert.ok(r.id < ev.find((e) => e.kind === "moon.gated" && e.id > r.id).id); w.cleanup();
+});
+test("relaunch with an extra hand-edited violation restores nothing and refuses", async () => {
+  const w = await worldWithMoon("scope-violation"); await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  fs.writeFileSync(path.join(wtOf(w), "src", "other.js"), "export const other = 1;\n");
+  replyMoon(w.g, { taskId: "T1", note: "only touch src/lib" });
+  await assert.rejects(launchMoon(w.g, { taskId: "T1", provider: "fake" }), /carryover_violations/);
+  assert.ok(fs.existsSync(path.join(wtOf(w), "README.md")), "recorded violation untouched");
+  assert.ok(fs.existsSync(path.join(wtOf(w), "src", "other.js")), "hand edit untouched");
+  assert.ok(!events(w.g, { moon: w.moonId }).some((e) => e.kind === "moon.restored"));
+  assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).status, "adrift"); w.cleanup();
+});
+test("drop: a failed branch delete records nothing and can be retried", async () => {
+  const w = await worldWithMoon("happy"); await launchMoon(w.g, { taskId: "T1", provider: "fake" }); await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-reject" });
+  const other = path.join(w.dir, ".nexus", "worktrees", "other"); w.git("worktree", "add", "--force", other, "nexus/T1");
+  assert.throws(() => dropMoon(w.g, { taskId: "T1" }), /nexus\/T1/);
+  assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).status, "quarantined"); assert.equal(w.g.git.branchExists("nexus/T1"), true);
+  w.git("worktree", "remove", "--force", other);
+  const r = dropMoon(w.g, { taskId: "T1" }); assert.equal(w.g.db.get("moons.byId", { id: r.moonId }).body_status, "barren"); w.cleanup();
+});
+test("a gate_failed park can be replied to and relaunched with a fresh gate", async () => {
+  const w = await worldWithMoon("happy"); const planet = w.g.db.get("planets.byId", { id: w.planetId });
+  w.g.git.worktreeAdd(wtOf(w), "nexus/T1", w.g.git.revParse(planet.branch)); fs.writeFileSync(path.join(wtOf(w), "junk.txt"), "x\n");
+  await assert.rejects(launchMoon(w.g, { taskId: "T1", provider: "fake" }), /gate failed/);
+  assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).status, "adrift");
+  replyMoon(w.g, { taskId: "T1", note: "cleaned" }); fs.rmSync(path.join(wtOf(w), "junk.txt"));
+  const l = await launchMoon(w.g, { taskId: "T1", provider: "fake" }); assert.equal(l.moonStatus, "audited"); w.cleanup();
 });

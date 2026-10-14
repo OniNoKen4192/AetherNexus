@@ -43,5 +43,7 @@ export function appendAmendment(text: string, e: { round: number; date: string; 
   const hasSection = /^## Amendments[ \t]*$/m.test(text);
   const base = text.replace(/\s+$/, "") + "\n";
   const head = hasSection ? "" : "\n## Amendments\n";
-  return `${base}${head}\n### A${e.round} — ${e.date} — ${e.author}: ${e.note}\n`;
+  // Sequential counter: the next number after existing entries (e.round is accepted but not used for numbering).
+  const n = (text.match(/^### A\d+ /gm) ?? []).length + 1;
+  return `${base}${head}\n### A${n} — ${e.date} — ${e.author}: ${e.note}\n`;
 }
