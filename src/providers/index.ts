@@ -1,6 +1,7 @@
 import type { NexusConfig } from "../config/schema.js";
 import type { ProviderAdapter } from "./adapter.js";
 import { createFakeAdapter } from "./fake/index.js";
+import { createCodexAdapter } from "./codex-mcp/index.js";
 import { createClaudeAdapter } from "./claude-sdk/index.js";
 
 function placeholder(id: string): ProviderAdapter {
@@ -15,7 +16,7 @@ function placeholder(id: string): ProviderAdapter {
 export function buildAdapters(config: NexusConfig, deps: { scriptsDir: string }): Record<string, ProviderAdapter> {
   const out: Record<string, ProviderAdapter> = {};
   for (const [id, p] of Object.entries(config.providers)) {
-    out[id] = p.adapter === "fake" ? createFakeAdapter(deps.scriptsDir) : p.adapter === "claude-sdk" ? createClaudeAdapter(id, p) : placeholder(p.adapter);
+    out[id] = p.adapter === "fake" ? createFakeAdapter(deps.scriptsDir) : p.adapter === "claude-sdk" ? createClaudeAdapter(id, p) : p.adapter === "codex-mcp" ? createCodexAdapter(id, p) : placeholder(p.adapter);
   }
   return out;
 }
