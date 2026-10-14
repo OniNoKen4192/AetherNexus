@@ -34,7 +34,8 @@ CI never runs a real provider: it cannot log in. Real-adapter runs are a manual,
 
 ```
 AetherNexus/
-  package.json            # name "aether-nexus", version 0.1.0, "type": "module", engines node >=22
+  package.json            # name "aether-nexus", version 0.1.0, "type": "module", engines node >=22.13 (node:sqlite unflagged from 22.13.0)
+  .gitattributes          # `* text=auto eol=lf` — specs must hash identically on every OS (parent R6)
   tsconfig.json           # strict, module NodeNext, outDir dist/
   src/
     cli/                  # `nexus` entry and one file per command group
@@ -52,7 +53,7 @@ AetherNexus/
 ```
 
 - **TypeScript compiled with `tsc` to `dist/`**, run with plain `node`. No bundler, no `tsx` at runtime. Tests import from `dist/`; `pretest` builds.
-- **`node:sqlite`** (built in to Node ≥ 22.5). No native build on Windows. It is experimental; CI on Node 22 and 24 surfaces API drift. If it bites, `better-sqlite3` has the same synchronous shape and swaps in behind `src/db/`.
+- **`node:sqlite`** (built in since Node 22.5; no flag needed since 22.13.0, hence the engines floor). No native build on Windows. It is experimental; CI on Node 22 and 24 surfaces API drift. If it bites, `better-sqlite3` has the same synchronous shape and swaps in behind `src/db/`.
 - **`node --test`** kept, matching the existing suite.
 - **Dependencies:** `@anthropic-ai/claude-agent-sdk`, `@modelcontextprotocol/sdk`, `typescript`. Nothing else until something earns it.
 - **Lanes files** (`bin/`, `commands/`, `agents/`, `hooks/`, `skills/`) stay in place; each is deleted in the commit that lands its port. `.claude-plugin/` stays (name `nexus`) as the future thin plugin's manifest; the conformance test pinning manifest version = marketplace version stays.
@@ -73,7 +74,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);   -- schema_version, galaxy_id, created_ts
 
 CREATE TABLE events (
-  id        INTEGER PRIMARY KEY,                 -- rowid; monotonic and gap-free under one writer
+  id        INTEGER PRIMARY KEY,                 -- rowid; monotonic. Not guaranteed gap-free (a rolled-back txn can burn a value)
   ts        TEXT    NOT NULL,                    -- ISO-8601 UTC
   kind      TEXT    NOT NULL,                    -- dotted, see §3.4
   system_id TEXT, planet_id TEXT, moon_id TEXT, voyage_id TEXT, ship_id TEXT,  -- nullable, denormalized for filtering
@@ -112,7 +113,7 @@ CREATE TABLE voyages  (id TEXT PRIMARY KEY, ship_id TEXT NOT NULL REFERENCES shi
                        moon_id TEXT REFERENCES moons(id), planet_id TEXT REFERENCES planets(id),  -- exactly one non-null
                        role TEXT NOT NULL CHECK (role IN ('implement','review','carry','plan')), round INTEGER NOT NULL,  -- only implement/review are dispatched in v0
                        provider TEXT NOT NULL, model TEXT, session_id TEXT,
-                       status TEXT NOT NULL CHECK (status IN ('launched','working','holding','cleared','en_route','docked','adrift','quarantined')),
+                       status TEXT NOT NULL CHECK (status IN ('launched','working','holding','cleared','en_route','docked','superseded','adrift','quarantined')),
                        launched_ts TEXT NOT NULL, returned_ts TEXT, docked_ts TEXT,
                        report TEXT CHECK (report IS NULL OR json_valid(report)), cost TEXT CHECK (cost IS NULL OR json_valid(cost)),
                        last_event_id INTEGER NOT NULL REFERENCES events(id));
@@ -130,8 +131,9 @@ CREATE TABLE query_stats (name TEXT PRIMARY KEY, sql TEXT NOT NULL, calls INTEGE
 
 ### 3.2 Rules
 
-1. **One writer, one transaction per event.** `append(event)` inserts the `events` row and applies it to the projections inside the same `BEGIN … COMMIT`. Projections are never ahead of or behind the log.
+1. **One transaction per event; writers are serialized, not assumed single.** `append(event)` runs `BEGIN IMMEDIATE`, re-reads the current projection state it is about to transition, validates the transition, inserts the `events` row, applies it to the projections, `COMMIT`. `BEGIN IMMEDIATE` takes the write lock up front, so two processes (a blocking `launch` in one terminal, `status` or a second `launch` in another) cannot interleave a read-then-write; `PRAGMA busy_timeout = 5000` makes the loser wait rather than fail. Writes are short by rule: no transaction is held while an agent streams — each `voyage.event` is its own transaction. Projections are never ahead of or behind the log.
 2. **Live and rebuild share one code path.** `rebuild` deletes every projection row, then replays `SELECT * FROM events ORDER BY id` through the same reducer functions `append` uses. A test byte-compares a projection dump before and after rebuild.
+   **Reducers are pure:** they read only the event row and the current projection rows — never the clock, the filesystem, git, or config. Anything a reducer needs (timestamps, SHAs, paths) is put into the event payload by the command that appends it. This is what makes byte-equivalence hold.
 3. **Payloads are JSON text**, queried with `json_extract`. A hot field is promoted to a column in the *projection*, never by changing `events`.
 4. **IDs are human-readable:** `moon_id` = the spec's task id; `system_id` = `S-<yyyymmdd>-<slug>`; `voyage_id` = `<ship_id>/<moon_id>/<role>/<round>`; `ship_id` = a slug of the ship's name. They appear in branch names and the UI.
 5. **Spec immutability:** `moons.spec_sha` is recorded at emit; launch refuses if the file hashes differently. Amendments append under `## Amendments` and re-hash (the Lanes rule, header renamed to `NEXUS-SPEC:`).
@@ -140,7 +142,7 @@ CREATE TABLE query_stats (name TEXT PRIMARY KEY, sql TEXT NOT NULL, calls INTEGE
 
 ### 3.3 Query instrumentation
 
-- **Statement registry.** Every SQL statement is declared once, by name, in `src/db/statements.ts`. A test fails if a SQL keyword string appears in any other file under `src/`. `nexus db explain <name>` prints `EXPLAIN QUERY PLAN` for any registered statement.
+- **Statement registry.** Every SQL statement is declared once, by name, in `src/db/statements.ts`. A test fails if any `.ts` file under `src/` other than `src/db/statements.ts` contains a string or template literal that starts with a SQL verb (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `PRAGMA`, `EXPLAIN`, …). Migrations (`src/db/migrations/*.sql`) and prose are outside its reach by construction. `nexus db explain <name>` prints `EXPLAIN QUERY PLAN` for any registered statement.
 - **`query_stats`**, written only when `config.db.stats` is `true`: the `run/get/all` wrapper times each call and upserts `calls`, `total_ms`, `max_ms`, `last_rows`. `nexus db stats` prints it sorted by `total_ms`.
 - **`nexus db analyze`** runs `ANALYZE` + `PRAGMA optimize`; the server runs `PRAGMA optimize` on close.
 
@@ -151,7 +153,8 @@ system.created          planet.created
 moon.emitted  moon.gated  moon.gate_failed  moon.amended  moon.adrift  moon.quarantined  moon.merged
 ship.registered  ship.assigned  ship.released
 voyage.launched  voyage.event (one normalized AgentEvent)  voyage.returned  voyage.audited
-voyage.cleared  voyage.departed  voyage.docked  voyage.adrift  voyage.quarantined
+voyage.cleared  voyage.departed  voyage.docked  voyage.superseded  voyage.adrift  voyage.quarantined
+ship.retired  moon.dropped
 verdict.issued
 decision.opened  decision.resolved  human.message
 ```
@@ -183,12 +186,22 @@ Moons and planets are **places**; they do not move. **Ships** are the units of m
 ```
 launched ──agent starts──▶ working ──agent returns──▶ holding (in orbit with cargo, awaiting customs)
    customs APPROVE ──▶ cleared ──▶ en_route ──▶ docked (= merge into planet branch; ship → idle)
-   customs FIX     ──▶ voyage stays holding; a new implement voyage (round+1) is launched to the same moon
+   customs FIX     ──▶ superseded (terminal; ship → idle). A new implement voyage (round+1) launches to the
+                       same moon, in the SAME worktree, carrying the previous voyage's cargo forward
    customs REJECT  ──▶ quarantined (cargo held at the moon; moon flagged; ship status quarantined)
-   BLOCKED | BACKEND_FAILURE | RATE_LIMITED | audit violation | merge conflict ──▶ adrift
+   BLOCKED | BACKEND_FAILURE | RATE_LIMITED | audit violation | merge conflict ──▶ adrift (ship → adrift)
 ```
 
-A customs voyage is `launched → working → docked` (it returns to the Nexus with the verdict). The dispatcher assigns the lowest-`voyage_count` idle ship of the right class and fleet; if none is idle, `launch` refuses with "all freighters assigned" (later: a visible signal, not an abstract cap).
+Every voyage reaches a terminal state (`docked`, `superseded`, or a park that a decision resolves), so a ship is never stuck `assigned`.
+
+**Leaving a park.** A park opens a `decision`. Resolving it releases the ship:
+- `reply` (adrift or quarantined) → the ship returns to `idle`; a new voyage, round+1, launches to the same moon and worktree with the amendment. The parked voyage becomes `superseded`.
+- `drop moon` → the ship returns to `idle`; the voyage stays in its park state as history; the moon becomes `dropped`; the worktree is removed.
+- `retire ship` (human choice, any time) → status `retired`; never assigned again. The only way the roster shrinks.
+
+**Sessions belong to the moon's round chain, not to the ship.** `voyages.session_id` is recorded by the adapter that ran the voyage. When a FIX round launches on the same moon with the same provider, the adapter is handed the previous round's `session_id` and may continue it (`codex-reply`; SDK `resume`); a different provider, or a provider that can't resume, starts fresh. The ship assigned to the new voyage may differ — the name on the hull changes, the conversation does not.
+
+The dispatcher assigns the lowest-`voyage_count` idle ship of the right class and fleet; if none is idle, `launch` refuses with "all freighters assigned" (later: a visible signal, not an abstract cap).
 
 ### 4.3 Moon lifecycle
 
@@ -199,7 +212,7 @@ emitted ──gate ok──▶ gated ──launch──▶ implementing ──vo
                                                                                REJECT  → quarantined
 ```
 
-Transitions are a table `from → event → to`; anything else is refused with the moon's current state in the message. **Side effects run after the commit and are idempotent**: if `git merge` fails halfway, the voyage is recorded as `en_route`, and the next command retries or parks it from that recorded state. The DB is never allowed to claim a merge that did not happen.
+Transitions are a table `from → event → to`; anything else is refused with the moon's current state in the message. **Side effects run after the commit and are idempotent**: if `git merge` fails halfway, the voyage is recorded as `en_route`, and the next command retries or parks it from that recorded state. The DB is never allowed to claim a merge that did not happen — and the converse is handled too: a retry from `en_route` first asks git whether the work is already there (`git merge-base --is-ancestor nexus/<moon> <planet-branch>`); if yes, it records `voyage.docked` and skips the merge, so a crash *after* the merge but *before* the event is written converges on the truth on the next command. The same check-before-act pattern applies to worktree creation (`git worktree list` first) and removal.
 
 ### 4.4 Git model
 
@@ -218,19 +231,22 @@ Transitions are a table `from → event → to`; anything else is refused with t
 
 ## 5. Validator port
 
-`bin/lanes-validate.mjs` (1,214 lines) → `src/validate/`, one module per job, the existing vectors as the oracle.
+`bin/lanes-validate.mjs` (1,315 lines) → `src/validate/`, one module per job. The selftest has three vector sets: `MATCH_VECTORS` (17, path matching), `TOKENIZER_VECTORS` (9), and `SCHEMA_VECTORS` (34) — the last of which validate a **schema-v1 `.lanes/config.json`**, not specs. Spec parsing (`parseSpec`, :210) has only ad-hoc "parse checks" and no vector set.
 
-| Lanes subcommand | Module | Change |
+| Lanes subcommand / function | Module | Change |
 |---|---|---|
-| path matching (17 vectors) | `match.ts` | none; `docs/PATH-MATCHING.md` kept |
-| spec parse + schema (34 vectors) | `spec.ts` | header `LANES-SPEC:` → `NEXUS-SPEC:`; optional `Gravity:` meta line parsed, ignored |
-| tokenizer (9 vectors) | `tokenize.ts` | none |
-| `gate` | `gate.ts` | returns a result object; baseline at `.nexus/state/<moon>.json` |
-| `audit` | `audit.ts` | returns a result object; its JSON is what `review` reads, never the agent's report |
-| `worktree create/remove` | `src/core/git.ts` | subsumed by §4.4 |
+| path matching (`MATCH_VECTORS`, 17) | `validate/match.ts` | none; `docs/PATH-MATCHING.md` kept; vectors ported as the oracle |
+| tokenizer (`TOKENIZER_VECTORS`, 9) | `validate/tokenize.ts` | none; vectors ported as the oracle |
+| `parseSpec` + the ad-hoc parse checks | `validate/spec.ts` | header `LANES-SPEC:` → `NEXUS-SPEC:`; optional `Gravity:` meta line parsed, ignored. **New vector set written in v0** (`tests/fixtures/specs/*.md`, good and bad), since none exists to port |
+| config schema (`SCHEMA_VECTORS`, 34) | `config/schema.ts` | **rewritten for schema v2.** Each v1 vector is kept where the key survives (`routing.*`, `pipeline`, `automation.max_fix_rounds`, …), re-pointed where it moved (`backend.*` → `providers.*`), and new vectors cover v2-only keys. Unknown keys still refuse |
+| `gate --spec` | `validate/gate.ts` | returns a result object; baseline at `.nexus/state/<moon>.json` |
+| `audit --task` | `validate/audit.ts` | returns a result object; its JSON is what `review` reads, never the agent's report |
+| `attention --spec` | `validate/attention.ts` | returns the matched `routing.attention` categories; run at `moon emit` so a restricted-space moon is flagged before launch (v0 parks it `adrift`, reason `restricted`) |
+| `worktree create/remove` (task and stream) | `core/git.ts` | subsumed by §4.4 |
+| `seed --check` | dropped | belongs to Drydock (parent §12); returns in v1 |
 | `doctor`, `config get/set` | dropped here | config validation in `src/config/`; `doctor` returns as a CLI command in v0.5 |
 
-Order: vectors become `tests/validate/*.test.mjs` first (failing); modules are ported until green; `tests/validator.test.mjs` and `tests/worktree.test.mjs` are retargeted from the CLI to the library; `bin/lanes-validate.mjs` is deleted in the commit where the last vector passes against `dist/`. `nexus validate <spec>` keeps the debugging affordance.
+Order: the three vector sets become `tests/validate/*.test.mjs` and `tests/config/schema.test.mjs` first (failing); modules are ported until green; `tests/validator.test.mjs` and `tests/worktree.test.mjs` are retargeted from the CLI to the library; `bin/lanes-validate.mjs` is deleted in the commit where the last vector passes against `dist/`. `nexus validate <spec>` keeps the debugging affordance.
 
 Not carried over: the KEEP/no-spec asymmetry (every moon has a spec, parent §6.2) and `hooks/lanes-readonly-allow.mjs` (parent §12). The dispatch gate becomes a `PreToolUse` function for the Claude adapter; for Codex it runs server-side before spawn with the audit as backstop.
 
@@ -258,7 +274,7 @@ Above the adapter, the orchestrator sees only `AgentEvent`s; each is appended as
 ### 6.2 Implementations
 
 - **`fake`** reads `tests/fixtures/scripts/<name>.json`: an ordered list of events to emit, optional delays, and files to write into `ctx.cwd`. Scripts: `happy`, `scope-violation` (writes outside `touch`), `rate-limited`, `crash-midrun`, `fix-round` (first voyage incomplete, second completes), `review-approve`, `review-fix`, `review-reject`.
-- **`claude-sdk`** wraps `query()` with `cwd: ctx.cwd`, `settingSources: ["project"]`, `strictMcpConfig: true`, `disallowedTools` for anything the role does not need, `maxTurns`, and the dispatch gate as a `PreToolUse` **function** refusing Edit/Write outside `touch`. Auth from `config.providers.claude.auth`: `"login"` (default) uses the subprocess's existing login; `"api_key"` sets `ANTHROPIC_API_KEY` in the subprocess env and requires `maxBudgetUsd`.
+- **`claude-sdk`** wraps `query()` with `cwd: ctx.cwd`, `settingSources: ["project"]`, `strictMcpConfig: true`, `disallowedTools` for anything the role does not need, `maxTurns`, and the dispatch gate as a `PreToolUse` **function** refusing Edit/Write outside `touch`. Auth from `config.providers.claude.auth`: `"login"` (default) uses the subprocess's existing login **and deletes `ANTHROPIC_API_KEY` from the subprocess env** — an inherited key silently overrides login (parent §2.2) and would bill per token; `"api_key"` sets `ANTHROPIC_API_KEY` in the subprocess env from `config.providers.claude.api_key_env` and requires `maxBudgetUsd`. The adapter logs which mode it resolved to as the first `voyage.event`.
 - **`codex-mcp`** uses `@modelcontextprotocol/sdk`'s stdio client to spawn `codex mcp-server` with `cwd: ctx.cwd`, calls its `codex` tool, and `codex-reply` for FIX rounds in the same session. `touch` is checked server-side before spawn; the audit catches anything after.
 - **Prompts** (`prompts/implement.md`, `prompts/review.md`) are the ported Lanes agent bodies with the spec, audit JSON and delta interpolated. The review prompt states that the audit JSON is ground truth and the implementer's report is a claim.
 
@@ -288,7 +304,9 @@ nexus moon emit <planet> <spec-path>         # parse + hash spec; moon row; gate
 nexus moon launch <moon> [--provider fake|codex|claude]   # assigns an idle freighter; worktree; dispatch; streams events
 nexus voyage inspect <moon>                  # launches a customs ship (review) → verdict
 nexus voyage dock <moon>                     # APPROVE only: commit, merge to planet, remove worktree
-nexus moon reply <moon> --note <text>        # adrift/quarantined → amendment appended; new round
+nexus moon reply <moon> --note <text>        # adrift/quarantined → amendment appended; new round; ship released
+nexus moon drop <moon>                       # adrift/quarantined → moon dropped; ship released; worktree removed
+nexus fleet retire <ship>                    # ship never assigned again (the only way the roster shrinks)
 nexus status [<system>]                      # moons, voyages, ship statuses
 nexus events [--since <id>] [--moon <id>] [--follow]
 nexus db rebuild | stats | explain <name> | analyze
@@ -318,5 +336,7 @@ One rule: **the log is never wrong about the repo.** Agent failures become event
 - §1 vocabulary: ships/voyages/fleets/cargo; Fleet HQ = integration branch; the star is scenery; the portal = landing on `main`; "Docking" is a ship event.
 - §5: `ships` split into `ships` (roster) + `voyages`; `last_event_id` on projections; `query_stats`.
 - §6.3: `moon.docked` → `voyage.docked` + `moon.merged`; parks and quarantine attach to voyages/ships.
+- §6.3: planet branches are `system/<system-id>/<planet-id>` (namespaced under the system; the parent had `system/<planet-id>`).
 - §7: integration branch at *every* rung is stated as a deliberate tightening of Lanes.
 - §11: assets rule (`assets/LICENSES.md`); roster names.
+- §14: the v0 row's "done when" is replaced by this spec's §1 (fake adapter in CI is the gate; the real-adapter run is a stretch).
