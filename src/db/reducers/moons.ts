@@ -42,5 +42,7 @@ export const moonReducers: Record<string, Reducer> = {
   },
   // A spec amendment is recorded for the log; the spec file itself is the state.
   "moon.amended": (db, ev) => { moonRow(db, ev.moon_id); },
+  // A human reply is log-only; launch reads the event stream to decide whether a parked moon may relaunch.
+  "human.message": () => {},
   "moon.cleared": (db, ev) => { moonRow(db, ev.moon_id); db.run("moons.clear", { id: ev.moon_id!, last_event_id: ev.id }); },
 };

@@ -49,6 +49,7 @@ export const STATEMENTS = {
   "verdicts.insert": "INSERT INTO verdicts(moon_id, voyage_id, verdict, delta_spec, reasoning, round, last_event_id) VALUES (@moon_id, @voyage_id, @verdict, @delta_spec, @reasoning, @round, @last_event_id)",
   "verdicts.byMoon": "SELECT * FROM verdicts WHERE moon_id = @moon_id ORDER BY id",
   "decisions.insert": "INSERT INTO decisions(kind, target_kind, target_id, reasoning, status, opened_ts, last_event_id) VALUES (@kind, @target_kind, @target_id, @reasoning, 'pending', @opened_ts, @last_event_id)",
+  "decisions.pendingByTarget": "SELECT * FROM decisions WHERE status = 'pending' AND target_id = @target_id ORDER BY id",
   "decisions.byId": "SELECT * FROM decisions WHERE id = @id",
   "decisions.pending": "SELECT * FROM decisions WHERE status = 'pending' ORDER BY opened_ts, id",
   "decisions.resolve": "UPDATE decisions SET status = 'resolved', outcome = @outcome, human_note = @human_note, resolved_ts = @resolved_ts, last_event_id = @last_event_id WHERE id = @id",

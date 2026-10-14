@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { append } from "../../db/events.js";
+import { append, rowToEvent } from "../../db/events.js";
 import { pickIdleShip } from "../../core/fleet.js";
 import type { MoonStatus } from "../../core/transitions.js";
 import type { AgentEvent, ImplementReport } from "../../providers/adapter.js";
@@ -43,6 +43,26 @@ export function runAuditOrPark(g: Galaxy, p: { taskId: string; worktree: string;
   }
 }
 
+/** True when the latest human.message for the moon is newer than the latest park (moon.adrift or a REJECT verdict). */
+function repliedSincePark(g: Galaxy, moonId: string): boolean {
+  let park = 0, reply = 0;
+  for (const e of g.db.all("events.byMoon", { moon_id: moonId }).map(rowToEvent)) {
+    if (e.kind === "moon.adrift" || (e.kind === "verdict.issued" && e.payload["verdict"] === "REJECT")) park = e.id;
+    else if (e.kind === "human.message") reply = e.id;
+  }
+  return reply > park;
+}
+
+/** Restore paths to HEAD (tracked) or delete them (untracked). */
+function revertPaths(g: Galaxy, worktree: string, paths: string[]): void {
+  for (const p of paths) {
+    let tracked = true;
+    try { g.git.run(["ls-files", "--error-unmatch", "--", p], { cwd: worktree }); } catch { tracked = false; }
+    if (tracked) g.git.run(["checkout", "HEAD", "--", p], { cwd: worktree });
+    else fs.rmSync(path.join(worktree, p), { recursive: true, force: true });
+  }
+}
+
 export async function launchMoon(
   g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void },
   deps?: { audit?: typeof audit },
@@ -54,14 +74,16 @@ export async function launchMoon(
   const lastVerdict = verdicts[verdicts.length - 1];
 
   // Precheck 1: state.
-  if (status === "adrift" || status === "quarantined") throw new Refusal(`moon ${taskId} is ${status} — use 'nexus moon reply' or 'nexus moon drop'`);
+  // A parked moon relaunches only after a human reply newer than the park (reply appends moon.amended, then human.message).
+  const relaunch = status === "adrift" || status === "quarantined";
+  if (relaunch && !repliedSincePark(g, moon.id)) throw new Refusal(`moon ${taskId} is ${status} — use 'nexus moon reply' or 'nexus moon drop'`);
   if (status === "audited") {
     if (lastVerdict?.verdict !== "FIX") throw new Refusal(`moon ${taskId} is 'audited' — run 'nexus moon inspect'; only a FIX verdict reopens it for another launch`);
-  } else if (status !== "emitted" && status !== "gated") {
+  } else if (!relaunch && status !== "emitted" && status !== "gated") {
     throw new Refusal(`moon ${taskId} is '${status}' — it cannot be launched from there`);
   }
   const fixRound = status === "audited";
-  const round = fixRound ? moon.round + 1 : moon.round || 1;
+  const round = fixRound || relaunch ? moon.round + 1 : moon.round || 1;
 
   // Precheck 2: spec immutability — the body is the contract; changes go under ## Amendments.
   const specAbs = path.join(g.repoRoot, moon.spec_path);
@@ -79,18 +101,28 @@ export async function launchMoon(
   const worktree = path.join(g.paths.worktrees, taskId);
   const branch = `nexus/${taskId}`;
   if (!planet.branch) throw new Refusal(`planet '${planet.id}' has no branch`);
+  const hadWorktree = fs.existsSync(worktree);
   g.git.worktreeAdd(worktree, branch, g.git.revParse(planet.branch));
   syncIn(specAbs, path.join(worktree, moon.spec_path));
   // A FIX round starts from a clean baseline: the previous round's work becomes a nexus-authored commit
   // (the audit ignores nexus commits), so this round's audit shows only this round's changes.
   let carriedSha: string | undefined;
-  if (fixRound) {
+  // A relaunch after a park is treated the same way (when its worktree survived): the parked work is carried over, audited first.
+  if (fixRound || (relaunch && hadWorktree)) {
     // Re-audit against the round-1 baseline first: anything that changed in the worktree since that audit
     // (customs runs there; a human may edit) would otherwise be committed as 'nexus' and never audited again.
-    const carry = (deps?.audit ?? audit)({ git: g.git, worktree, taskId, routing: g.config.routing, pipeline: g.config.pipeline, stateDir: g.paths.stateDir });
+    const runCarry = (): AuditReport => (deps?.audit ?? audit)({ git: g.git, worktree, taskId, routing: g.config.routing, pipeline: g.config.pipeline, stateDir: g.paths.stateDir });
+    let carry = runCarry();
+    // The human has answered an audit_violations park: put the offending paths back to the baseline so the new round starts in scope.
+    if (relaunch && moon.park_reason === "audit_violations" && carry.verdict === "violations") {
+      const paths = [...carry.out_of_scope, ...carry.forbidden.map((f) => f.path)];
+      if (paths.length) { revertPaths(g, worktree, paths); carry = runCarry(); }
+    }
     if (carry.verdict === "violations") {
-      // The round-1 freighter voyage is already superseded (cannot go adrift), so park the moon itself.
       const details = { out_of_scope: carry.out_of_scope, forbidden: carry.forbidden, ...(carry.error ? { error: carry.error } : {}) };
+      // A moon that is already parked cannot go adrift again: refuse and leave it as it is (fix the worktree, then relaunch).
+      if (relaunch) throw new Refusal(`carry-over audit found violations in the parked worktree (carryover_violations)`, details);
+      // The round-1 freighter voyage is already superseded (cannot go adrift), so park the moon itself.
       append(g.db, { kind: "moon.adrift", ...scope, payload: { reason: "carryover_violations" } });
       append(g.db, { kind: "decision.opened", ...scope, payload: { kind: "adrift", target_kind: "moon", target_id: taskId, reasoning: `round ${moon.round} work changed after its audit (carryover_violations): ${JSON.stringify(details)}` } });
       return { voyageId: "", audit: carry, moonStatus: "adrift" };
