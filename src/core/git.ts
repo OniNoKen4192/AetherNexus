@@ -16,6 +16,8 @@ const OWNED_BRANCH = /^(nexus|system)\//;
 const EXCLUDE_LINE = ".nexus/worktrees/";
 // Subcommands that write to a working tree.
 const TREE_WRITERS = /^(checkout|switch|reset|stash|rebase|commit|merge|clean)$/;
+// Inherited variables that would point git at some other repository, index or object store than the cwd's.
+const REDIRECT_ENV = new Set(["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CEILING_DIRECTORIES"]);
 
 // `git status --porcelain -z` record stream -> every path named (renames/copies
 // contribute both sides; the original path is its own NUL-terminated field).
@@ -61,8 +63,22 @@ function firstPositional(args: string[], valueFlags: string[] = []): string | un
 
 export class Git {
   private readonly wtRoot: string;
+  private readonly ceiling: string;
   constructor(public readonly repoRoot: string, private opts: { log?: GitLog } = {}) {
     this.wtRoot = this.canon(path.join(repoRoot, ".nexus", "worktrees"));
+    this.ceiling = path.join(repoRoot, ".nexus", "worktrees");
+  }
+  /**
+   * The child env: process.env minus every repo-redirecting GIT_* variable (case-insensitive, for Windows), plus a
+   * discovery ceiling at .nexus/worktrees so a plain directory there can never resolve to the human's repository.
+   * The ceiling stops git from walking up INTO .nexus/worktrees; a registered worktree is found at its own .git file,
+   * and commands run at the repo root itself are unaffected.
+   */
+  static childEnv(ceiling: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = {};
+    for (const [k, v] of Object.entries(base)) if (!REDIRECT_ENV.has(k.toUpperCase())) env[k] = v;
+    env["GIT_CEILING_DIRECTORIES"] = ceiling;
+    return env;
   }
   /** Install (or clear, with null) the command log hook. */
   setLog(log: GitLog | null): void { this.opts = log ? { log } : {}; }
@@ -88,6 +104,11 @@ export class Git {
     if (TREE_WRITERS.test(cmd ?? "") && this.isMainTree(cwd)) {
       throw new GitRefusal(args, "the human's working tree is never written to");
     }
+    // Judge the repository git will resolve to, not the path string: under .nexus/worktrees a tree- or index-writer
+    // runs only inside a registered worktree (a leftover plain directory there is not one).
+    if ((TREE_WRITERS.test(cmd ?? "") || cmd === "add") && this.underWorktrees(cwd) && !this.registeredWorktreeOf(cwd)) {
+      throw new GitRefusal(args, `${cwd} is not a registered nexus worktree`);
+    }
     if (cmd === "branch" && rest.some((a) => a === "--delete" || /^-[a-zA-Z]*[dD]/.test(a))) {
       const names = rest.filter((a) => !a.startsWith("-"));
       if (names.length === 0 || !names.every((n) => OWNED_BRANCH.test(n))) throw new GitRefusal(args, "only nexus/* and system/* branches may be deleted");
@@ -102,12 +123,21 @@ export class Git {
     }
   }
 
+  /** The registered worktree that contains `p` (itself or an ancestor under .nexus/worktrees), if any. */
+  private registeredWorktreeOf(p: string): string | undefined {
+    const list = new Set(this.worktreeList());
+    for (let c = this.canon(p); c.startsWith(this.wtRoot + "/"); c = c.slice(0, c.lastIndexOf("/"))) {
+      if (list.has(c)) return c;
+    }
+    return undefined;
+  }
+
   runRaw(args: string[], o: { cwd?: string } = {}): string {
     const cwd = o.cwd ?? this.repoRoot;
     this.refuse(args, cwd);
     const t0 = performance.now();
     try {
-      const out = execFileSync("git", ["-c", "core.quotepath=false", "-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      const out = execFileSync("git", ["-c", "core.quotepath=false", "-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: Git.childEnv(this.ceiling) });
       this.opts.log?.({ args, cwd, ms: performance.now() - t0, ok: true });
       return out;
     } catch (err) {

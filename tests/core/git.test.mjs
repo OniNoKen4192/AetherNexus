@@ -111,3 +111,36 @@ test("worktreeAdd re-creates a registered worktree whose directory vanished", ()
   assert.ok(fs.existsSync(path.join(wt, "README.md")));
   g.worktreeRemove(wt, { force: true }); cleanup();
 });
+
+// C2: judge the repository git resolves to, not the path string.
+test("commitAll in a plain (unregistered) dir under .nexus/worktrees is refused; git cannot discover the human's repo from there; main untouched", () => {
+  const { dir, git, cleanup } = makeRepo(); const g = new Git(dir); const head = g.headSha();
+  fs.writeFileSync(path.join(dir, "README.md"), "HUMAN UNCOMMITTED EDIT\n");
+  const plain = path.join(dir, ".nexus", "worktrees", "T1"); fs.mkdirSync(plain, { recursive: true }); fs.writeFileSync(path.join(plain, "x"), "y\n");
+  assert.throws(() => g.commitAll(plain, "nexus: probe", { name: "nexus", email: "nexus@nexus.local" }), GitRefusal);
+  // A read-only command is not refused, but the discovery ceiling stops git at .nexus/worktrees.
+  assert.throws(() => g.run(["status", "--porcelain"], { cwd: plain }), /not a git repository/);
+  assert.equal(git("rev-parse", "HEAD"), head, "main HEAD unchanged"); assert.equal(git("diff", "--cached", "--name-only"), "", "nothing staged in the human's index");
+  // The repo root itself is unaffected by the ceiling.
+  assert.equal(g.headSha(), head);
+  cleanup();
+});
+
+test("an inherited GIT_DIR does not redirect a worktree command to the main repository", () => {
+  const { dir, git, cleanup } = makeRepo(); const g = new Git(dir); const base = g.headSha();
+  const wt = path.join(dir, ".nexus", "worktrees", "T1"); g.worktreeAdd(wt, "nexus/T1", base);
+  fs.writeFileSync(path.join(wt, "src", "lib", "thing.js"), "export const thing = 2;\n");
+  const saved = process.env.GIT_DIR;
+  process.env.GIT_DIR = path.join(dir, ".git");
+  let sha;
+  try { sha = g.commitAll(wt, "T1 work", { name: "implement/fake", email: "nexus@local" }); }
+  finally { if (saved === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = saved; }
+  assert.equal(git("rev-parse", "main"), base, "main is untouched"); assert.equal(git("rev-parse", "nexus/T1"), sha, "the commit landed on the worktree's branch");
+  assert.equal(git("status", "--porcelain"), "", "the human's tree is clean");
+  cleanup();
+});
+
+test("Git.childEnv strips repo-redirecting GIT_* variables case-insensitively and sets the ceiling", () => {
+  const env = Git.childEnv("/r/.nexus/worktrees", { PATH: "p", git_dir: "x", GIT_WORK_TREE: "y", Git_Index_File: "z", GIT_COMMON_DIR: "c", GIT_OBJECT_DIRECTORY: "o", GIT_NAMESPACE: "n", GIT_ALTERNATE_OBJECT_DIRECTORIES: "a", GIT_CEILING_DIRECTORIES: "old", GIT_AUTHOR_NAME: "kept" });
+  assert.deepEqual(env, { PATH: "p", GIT_AUTHOR_NAME: "kept", GIT_CEILING_DIRECTORIES: "/r/.nexus/worktrees" });
+});
