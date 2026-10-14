@@ -1,8 +1,10 @@
 import { rowToEvent, type EventRow } from "../../db/events.js";
 import type { Row } from "../../db/open.js";
 import type { Galaxy } from "../galaxy.js";
+import { Refusal } from "../errors.js";
 
 export function status(g: Galaxy, systemId?: string): { systems: Row[]; moons: Row[]; voyages: Row[]; decisions: Row[] } {
+  if (systemId && !g.db.get("systems.byId", { id: systemId })) throw new Refusal(`unknown system '${systemId}'`);
   const systems = systemId ? [g.db.get("systems.byId", { id: systemId })].filter((s): s is Row => !!s) : g.db.all("systems.all");
   const moons: Row[] = []; const voyages: Row[] = [];
   for (const s of systems) {

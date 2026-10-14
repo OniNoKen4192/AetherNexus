@@ -8,7 +8,7 @@ import { makeTouchGate, WRITE_TOOLS } from "./gate-hook.js";
 export { makeTouchGate };
 
 /**
- * Per-role tool allowlists. The spike (docs/spikes/2026-10-15-sdk-probe/README.md §1) proved `tools: [...]` is a
+ * Per-role tool allowlists. The spike (docs/spikes/2026-10-14-sdk-probe/README.md §1) proved `tools: [...]` is a
  * strict allowlist (with `tools:["Read"]` the model had no Bash), so we allowlist instead of using `disallowedTools`.
  */
 const TOOLS: Record<Role, string[]> = {

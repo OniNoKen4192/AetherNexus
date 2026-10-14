@@ -1,5 +1,9 @@
 # Lanes User Guide
 
+> **v0 status:** this guide describes the Lanes plugin the Aether Nexus fork
+> started from. It will be rewritten for the Nexus CLI in v0.5. For what works
+> today, see the README.
+
 Everything you need to go from finding this repo to running fully
 unattended, multi-stream builds. Read top to bottom the first time; each
 section stands alone afterward.

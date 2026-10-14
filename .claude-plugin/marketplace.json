@@ -4,13 +4,13 @@
     "name": "Ken Culver"
   },
   "metadata": {
-    "description": "Lanes: a portable cross-model KEEP/DELEGATE development pipeline for Claude Code."
+    "description": "Aether Nexus: an always-on dispatch layer that routes features and bug reports to reviewed, merged work across model providers."
   },
   "plugins": [
     {
       "name": "nexus",
       "source": "./",
-      "description": "Cross-model task routing: frontier Claude plans and reviews; a delegated backend implements. Requires superpowers.",
+      "description": "Routes each task to the cheapest model that can do it correctly, with independent review before anything merges.",
       "version": "0.1.0",
       "keywords": ["workflow", "cross-model", "codex", "superpowers"]
     }

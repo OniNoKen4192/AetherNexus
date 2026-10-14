@@ -5,7 +5,7 @@ import fs from "node:fs"; import path from "node:path";
 import { repoRoot } from "../helpers.mjs";
 
 const SQL_VERB = /^(SELECT|INSERT|UPDATE|DELETE|CREATE|PRAGMA|EXPLAIN|BEGIN|COMMIT|ROLLBACK|ANALYZE|DROP|ALTER)\s/;
-const EXEMPT = new Set(["src/db/statements.ts", "src/db/open.ts", "src/db/rebuild.ts", "src/cli/main.ts"]);
+const EXEMPT = new Set(["src/db/statements.ts", "src/db/open.ts", "src/db/rebuild.ts", "src/cli/run.ts"]);
 function* tsFiles(dir) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);

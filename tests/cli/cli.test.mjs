@@ -24,6 +24,7 @@ test("init → system create → planet assign → moon assign → launch → in
   assert.match(l.err, /\[file_changed\] src\/lib\/thing\.js/, "events streamed to stderr");
   const q = nexusFull(dir, "voyage", "inspect", "T1", "--provider", "fake", "--json", "--quiet");
   assert.equal(JSON.parse(q.out).verdict.verdict, "APPROVE"); assert.ok(!/^\[\w+\]/m.test(q.err), "--quiet suppresses the stream");
+  assert.ok(!/ExperimentalWarning/.test(q.err), "no node:sqlite ExperimentalWarning on stderr");
   assert.equal(JSON.parse(nexus(dir, "voyage", "dock", "T1", "--json").out).moonStatus, "merged");
   const st = nexus(dir, "status"); assert.match(st.out, /T1/); assert.match(st.out, /merged/);
   assert.match(nexus(dir, "fleet").out, /idle/);
@@ -38,3 +39,7 @@ test("refusals exit 2 with a one-line message; unknown command exits 1 with usag
   const u = nexus(dir, "frobnicate"); assert.equal(u.code, 1); assert.match(u.err, /usage/i); cleanup();
 });
 test("validate --selftest", () => { const { dir, cleanup } = makeRepo(); const r = nexus(dir, "validate", "--selftest"); assert.equal(r.code, 0); assert.match(r.out, /selftest OK/); cleanup(); });
+test("status <unknown-system> is a refusal", () => {
+  const { dir, git, cleanup } = makeRepo(); nexus(dir, "init"); git("add", "-A"); git("commit", "-qm", "init");
+  const r = nexus(dir, "status", "nope"); assert.equal(r.code, 2); assert.match(r.err, /unknown system 'nope'/); cleanup();
+});

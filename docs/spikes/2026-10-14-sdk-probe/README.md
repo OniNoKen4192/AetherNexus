@@ -1,6 +1,6 @@
 # SDK / MCP probe findings (throwaway spike)
 
-Run: `node spikes/probe.mjs docs/spikes/2026-10-15-sdk-probe` (login mode; `ANTHROPIC_API_KEY` deleted from the env passed to the SDK).
+Run: `node spikes/probe.mjs docs/spikes/2026-10-14-sdk-probe` (login mode; `ANTHROPIC_API_KEY` deleted from the env passed to the SDK).
 Versions: `@anthropic-ai/claude-agent-sdk` 0.3.299, `@modelcontextprotocol/sdk` 1.32.1, Claude Code 2.1.299 (`claude_code_version` in init), `codex` CLI 0.145.0, Node 22.14.
 Deviations from the brief's script: each probe wrapped in try/catch (logs `{error}` and continues); Codex `callTool` given a 120 s timeout and `client.close()` in `finally`. No import or field-name changes were needed; the Codex call worked on the first try (no retry).
 Redaction: grep for `sk-ant`, `Bearer`, `api_key`, `apiKey"` found nothing; `token` matches only usage counters (`input_tokens`, etc.). Nothing redacted. Logs contain opaque `thinking` `signature` blobs (not credentials).
