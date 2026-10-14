@@ -18,7 +18,7 @@ test("all SQL lives in src/db/statements.ts (plus pragmas/migration runner in op
     const rel = path.relative(repoRoot, f).replaceAll("\\", "/");
     if (EXEMPT.has(rel)) continue;
     const src = fs.readFileSync(f, "utf8");
-    for (const m of src.matchAll(/(["'`])((?:\.|(?!\1)[\s\S])*)\1/g)) {
+    for (const m of src.matchAll(/(["'`])((?:\\.|(?!\1)[\s\S])*)\1/g)) {
       if (SQL_VERB.test(m[2].trim())) offenders.push(`${rel}: ${m[2].trim().slice(0, 40)}`);
     }
   }
