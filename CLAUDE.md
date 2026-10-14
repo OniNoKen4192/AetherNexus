@@ -15,6 +15,7 @@ Fork of Lanes (https://github.com/OniNoKen4192/Lanes), a Claude Code plugin for 
 - Keep diffs scoped to the task. No drive-by refactors; flag them instead.
 - Fix root causes, not symptoms. Don't suppress errors or skip hooks/tests to get green.
 - Commit only when asked. Work on feature branches, never directly on `main`.
+- Every third-party file (3D model, texture, font, sound) gets a line in `assets/LICENSES.md` — source URL and license — in the same commit that adds it.
 
 ## Fork notes
 - `origin` = OniNoKen4192/AetherNexus, `upstream` = OniNoKen4192/Lanes. Sync with `git fetch upstream` + merge/rebase. Push to `upstream` is disabled locally.
