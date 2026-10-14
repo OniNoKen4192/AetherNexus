@@ -14,10 +14,8 @@ export type GitLog = (entry: { args: string[]; cwd: string; ms: number; ok: bool
 
 const OWNED_BRANCH = /^(nexus|system)\//;
 const EXCLUDE_LINE = ".nexus/worktrees/";
-// Subcommands that write to a working tree. (A regex, not string literals: the
-// registry test flags any bare commit string literal as a SQL verb.)
+// Subcommands that write to a working tree.
 const TREE_WRITERS = /^(checkout|switch|reset|stash|rebase|commit|merge|clean)$/;
-const GIT_COMMIT = "comm" + "it"; // spelled apart for the same reason
 
 // `git status --porcelain -z` record stream -> every path named (renames/copies
 // contribute both sides; the original path is its own NUL-terminated field).
@@ -70,7 +68,11 @@ export class Git {
     const abs = normalizePath(path.resolve(this.repoRoot, p)).replace(/\/+$/, "");
     return process.platform === "win32" ? abs.toLowerCase() : abs;
   }
-  private isMainTree(cwd: string): boolean { return this.canon(cwd) === this.canon(this.repoRoot); }
+  // The human's tree is the repo root and everything under it except the nexus worktrees.
+  private isMainTree(cwd: string): boolean {
+    const c = this.canon(cwd), root = this.canon(this.repoRoot);
+    return (c === root || c.startsWith(root + "/")) && !this.underWorktrees(cwd);
+  }
   private underWorktrees(p: string): boolean { return this.canon(p).startsWith(this.wtRoot + "/"); }
 
   private refuse(args: string[], cwd: string): void {
@@ -78,14 +80,15 @@ export class Git {
     let i = 0;
     while (args[i] === "-c") i += 2;
     const cmd = args[i];
+    if (cmd === undefined || cmd.startsWith("-")) throw new GitRefusal(args, "global git options (-C, --git-dir, --no-pager, ...) are not allowed");
     const rest = args.slice(i + 1);
     if (cmd === "push") throw new GitRefusal(args, "nothing is ever pushed");
     if (TREE_WRITERS.test(cmd ?? "") && this.isMainTree(cwd)) {
       throw new GitRefusal(args, "the human's working tree is never written to");
     }
-    if (cmd === "branch" && rest.some((a) => a === "-D" || a === "-d" || a === "--delete")) {
-      const name = firstPositional(rest);
-      if (!name || !OWNED_BRANCH.test(name)) throw new GitRefusal(args, "only nexus/* and system/* branches may be deleted");
+    if (cmd === "branch" && rest.some((a) => a === "--delete" || /^-[a-zA-Z]*[dD]/.test(a))) {
+      const names = rest.filter((a) => !a.startsWith("-"));
+      if (names.length === 0 || !names.every((n) => OWNED_BRANCH.test(n))) throw new GitRefusal(args, "only nexus/* and system/* branches may be deleted");
     }
     if (cmd === "worktree" && rest[0] === "remove") {
       const dir = firstPositional(rest.slice(1));
@@ -151,7 +154,10 @@ export class Git {
   worktreeAdd(dir: string, branch: string, fromSha: string): void {
     if (!this.underWorktrees(dir)) throw new GitRefusal(["worktree", "add", dir], "worktrees are created only under .nexus/worktrees");
     this.clearEmptyShell(dir);
-    if (this.worktreeList().includes(this.canon(dir))) return; // check-before-act: already there
+    if (this.worktreeList().includes(this.canon(dir))) {
+      if (fs.existsSync(dir)) return; // check-before-act: already there
+      this.run(["worktree", "prune"]); // registered but the checkout is gone: re-create it below
+    }
     if (fs.existsSync(dir)) throw new Error(`worktree path exists but is not registered: ${dir}`);
     this.ensureExcluded();
     fs.mkdirSync(path.dirname(dir), { recursive: true });
@@ -178,12 +184,15 @@ export class Git {
   commitAll(cwd: string, message: string, author: { name: string; email: string }): string | null {
     this.run(["add", "-A"], { cwd });
     if (this.run(["status", "--porcelain"], { cwd }) === "") return null;
-    this.run(["-c", `user.name=${author.name}`, "-c", `user.email=${author.email}`, GIT_COMMIT, "-q", "-m", message], { cwd });
+    this.run(["-c", `user.name=${author.name}`, "-c", `user.email=${author.email}`, "commit", "-q", "-m", message], { cwd });
     return this.headSha(cwd);
   }
   mergeNoFF(cwd: string, branch: string, message: string): { ok: true; sha: string } | { ok: false; conflict: true; files: string[] } {
     try { this.run(["merge", "--no-ff", "-m", message, branch], { cwd }); return { ok: true, sha: this.headSha(cwd) }; }
-    catch {
+    catch (err) {
+      let inProgress = true;
+      try { this.run(["rev-parse", "-q", "--verify", "MERGE_HEAD"], { cwd }); } catch { inProgress = false; }
+      if (!inProgress) throw err; // not a conflict (unknown branch, dirty tree, ...): surface the real error
       const files = this.run(["diff", "--name-only", "--diff-filter=U"], { cwd }).split(/\r?\n/).filter(Boolean).map(normalizePath);
       this.run(["merge", "--abort"], { cwd });
       return { ok: false, conflict: true, files };

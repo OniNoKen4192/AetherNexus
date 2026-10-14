@@ -76,6 +76,38 @@ test("status/diff/untracked -z parsers; commitAll with author; mergeNoFF success
 
 test("git failures carry stderr in the message", () => {
   const { dir, cleanup } = makeRepo(); const g = new Git(dir);
-  assert.throws(() => g.revParse("no-such-ref"), /no-such-ref|unknown revision|Needed a single revision/i);
+  assert.throws(() => g.revParse("no-such-ref"), /unknown revision|Needed a single revision|fatal/i);
   cleanup();
+});
+
+test("refusal hardening: subdir cwd, global options, branch -d clusters/multiple names", () => {
+  const { dir, cleanup } = makeRepo(); const g = new Git(dir); const base = g.headSha();
+  const sub = path.join(dir, "src");
+  assert.throws(() => g.run(["reset", "--hard"], { cwd: sub }), GitRefusal);
+  assert.throws(() => g.run(["checkout", "-b", "x"], { cwd: sub }), GitRefusal);
+  assert.throws(() => g.run(["-C", dir, "checkout", "x"]), GitRefusal);
+  assert.throws(() => g.run(["--no-pager", "push"]), GitRefusal);
+  g.createBranch("nexus/x", base);
+  for (const args of [["branch", "-fD", "main"], ["branch", "-Df", "main"], ["branch", "-d", "nexus/x", "main"], ["branch", "--delete", "main"]]) {
+    assert.throws(() => g.run(args), GitRefusal, args.join(" "));
+  }
+  assert.equal(g.branchExists("main"), true);
+  assert.doesNotThrow(() => g.run(["branch", "-d", "nexus/x"]));
+  cleanup();
+});
+
+test("mergeNoFF passes through non-conflict failures", () => {
+  const { dir, cleanup } = makeRepo(); const g = new Git(dir); const base = g.headSha();
+  const wt = path.join(dir, ".nexus", "worktrees", "P1"); g.worktreeAdd(wt, "system/S1/P1", base);
+  assert.throws(() => g.mergeNoFF(wt, "nexus/does-not-exist", "m"), /not something we can merge/);
+  g.worktreeRemove(wt, { force: true }); cleanup();
+});
+
+test("worktreeAdd re-creates a registered worktree whose directory vanished", () => {
+  const { dir, cleanup } = makeRepo(); const g = new Git(dir); const base = g.headSha();
+  const wt = path.join(dir, ".nexus", "worktrees", "T1"); g.worktreeAdd(wt, "nexus/T1", base);
+  fs.rmSync(wt, { recursive: true, force: true });
+  g.worktreeAdd(wt, "nexus/T1", base);
+  assert.ok(fs.existsSync(path.join(wt, "README.md")));
+  g.worktreeRemove(wt, { force: true }); cleanup();
 });
