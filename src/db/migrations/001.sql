@@ -54,7 +54,7 @@ CREATE TABLE voyages  (id TEXT PRIMARY KEY, ship_id TEXT NOT NULL REFERENCES shi
 CREATE TABLE verdicts (id INTEGER PRIMARY KEY, moon_id TEXT NOT NULL REFERENCES moons(id), voyage_id TEXT NOT NULL REFERENCES voyages(id),
                        verdict TEXT NOT NULL CHECK (verdict IN ('APPROVE','FIX','REJECT')), delta_spec TEXT, reasoning TEXT, round INTEGER NOT NULL,
                        last_event_id INTEGER NOT NULL REFERENCES events(id));
-CREATE TABLE decisions(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, target_kind TEXT NOT NULL, target_id TEXT NOT NULL,
+CREATE TABLE decisions(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, target_kind TEXT NOT NULL, target_id TEXT NOT NULL, reasoning TEXT,
                        status TEXT NOT NULL CHECK (status IN ('pending','resolved')), opened_ts TEXT NOT NULL, resolved_ts TEXT,
                        human_note TEXT, outcome TEXT,
                        last_event_id INTEGER NOT NULL REFERENCES events(id));

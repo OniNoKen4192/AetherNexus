@@ -72,9 +72,11 @@ test("REJECT -> quarantined + decision; drop -> dropped then moon.cleared -> bar
   assert.equal(db.get("moons.byId", { id: moon }).status, "quarantined");
   append(db, { kind: "voyage.quarantined", ...base, voyage_id: vi, payload: {} });
   append(db, { kind: "decision.opened", ...base, payload: { kind: "reject", target_kind: "moon", target_id: "T1", reasoning: "no" } });
-  const d = db.all("decisions.pending")[0]; assert.equal(d.kind, "reject");
+  const d = db.all("decisions.pending")[0]; assert.equal(d.kind, "reject"); assert.equal(d.reasoning, "no");
   append(db, { kind: "decision.resolved", ...base, payload: { decision_id: d.id, outcome: "drop", human_note: "" } });
   assert.equal(db.all("decisions.pending").length, 0);
+  assert.throws(() => append(db, { kind: "decision.resolved", ...base, payload: { decision_id: d.id, outcome: "retry", human_note: "again" } }), new RegExp(`decision ${d.id} is 'resolved'`));
+  assert.equal(db.get("decisions.byId", { id: d.id }).outcome, "drop");
   append(db, { kind: "moon.dropped", ...base, payload: {} });
   assert.equal(db.get("moons.byId", { id: moon }).status, "dropped");
   append(db, { kind: "moon.cleared", ...base, payload: {} });
