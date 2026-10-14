@@ -16,6 +16,6 @@ export function makeTouchGate(touch: string[], cwd: string): HookCallback {
     if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return deny(`${target} is outside the working directory`);
     const norm = normalizePath(rel);
     if (!matchAny(touch, norm)) return deny(`${norm} is outside this task's touch scope (${touch.join(", ")})`);
-    return {};
+    return { hookSpecificOutput: { hookEventName: "PreToolUse" as const, permissionDecision: "allow" as const, permissionDecisionReason: "inside touch" } };
   };
 }

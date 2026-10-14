@@ -9,7 +9,7 @@ import type { Galaxy } from "./galaxy.js";
 
 export type MoonRow = {
   id: string; planet_id: string; task_id: string; status: string | null; round: number;
-  spec_path: string; spec_sha: string; park_reason: string | null; tier: string | null;
+  spec_path: string; spec_sha: string; park_reason: string | null; tier: string | null; touch?: string | null;
 };
 export type PlanetRow = { id: string; system_id: string; branch: string | null; worktree: string | null };
 export type DispatchOutcome = {
@@ -19,7 +19,7 @@ export type DispatchOutcome = {
   parkReason?: string;
 };
 export type VoyageInput = {
-  role: Role; taskId: string; provider: string; worktree: string;
+  role: Role; taskId: string; provider: string; worktree: string; touch: string[];
   job: Omit<Job, "voyageId">; onEvent?: (e: AgentEvent) => void; timeoutMs?: number;
 };
 
@@ -41,6 +41,13 @@ export function loadMoon(g: Galaxy, taskId: string): MoonRow {
   const moon = g.db.get<MoonRow>("moons.byTask", { task_id: taskId });
   if (!moon) throw new Refusal(`no moon is assigned task '${taskId}'`);
   return moon;
+}
+/** The moon's Touch list (JSON column). Fails closed: an unparseable or empty list is a Refusal. */
+export function moonTouch(moon: MoonRow): string[] {
+  let list: unknown;
+  try { list = JSON.parse(moon.touch ?? "null"); } catch { list = null; }
+  if (!Array.isArray(list) || list.length === 0 || !list.every((x) => typeof x === "string")) throw new Refusal(`moon ${moon.task_id} has no Touch list`);
+  return list as string[];
 }
 export function loadPlanet(g: Galaxy, moon: MoonRow): PlanetRow {
   const planet = g.db.get<PlanetRow>("planets.byId", { id: moon.planet_id });
@@ -100,7 +107,7 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
     try { logEvent({ kind: "tool_use", ts: new Date().toISOString(), data: { name: "git", input: entry.args } }); } catch { /* logging must never break git */ }
   });
   try {
-    for await (const e of adapter.dispatch({ ...input.job, voyageId }, { cwd: input.worktree, touch: [], timeoutMs, signal: ac.signal })) {
+    for await (const e of adapter.dispatch({ ...input.job, voyageId }, { cwd: input.worktree, touch: input.touch, timeoutMs, signal: ac.signal })) {
       out.events++; logEvent(e); input.onEvent?.(e);
       if (e.kind === "usage" && e.data.cost_usd !== undefined) cost = (cost ?? 0) + e.data.cost_usd;
       if (e.kind === "done") out.done = e;

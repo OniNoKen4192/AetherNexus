@@ -22,15 +22,16 @@ const errEvent = (classification: ErrorClass, message: string): AgentEvent => ({
 
 export function buildEnv(cfg: ProviderConfig, base: NodeJS.ProcessEnv): { env: Record<string, string | undefined>; mode: "login" | "api_key" } {
   const env: Record<string, string | undefined> = { ...base };
+  const scrub = (): void => { for (const k of Object.keys(env)) if (k.toUpperCase() === "ANTHROPIC_API_KEY" || k.toUpperCase() === "ANTHROPIC_AUTH_TOKEN") delete env[k]; };
   if (cfg.auth === "api_key") {
     const name = cfg.api_key_env ?? "ANTHROPIC_API_KEY";
     const key = base[name];
     if (!key) throw new Error(`${name} is not set`);
     if (!cfg.max_budget_usd) throw new Error("api_key mode requires max_budget_usd");
-    env["ANTHROPIC_API_KEY"] = key;
+    scrub(); env["ANTHROPIC_API_KEY"] = key;
     return { env, mode: "api_key" };
   }
-  delete env["ANTHROPIC_API_KEY"]; delete env["ANTHROPIC_AUTH_TOKEN"];
+  scrub();
   return { env, mode: "login" };
 }
 
@@ -104,7 +105,7 @@ export function createClaudeAdapter(id: string, cfg: ProviderConfig, deps: { que
       yield text(`auth mode: ${built.mode}`);
       const options: Options = {
         cwd: ctx.cwd, env: built.env, strictMcpConfig: true, settingSources: ["project"], permissionMode: "dontAsk",
-        tools: TOOLS[job.role], maxTurns: cfg.max_turns ?? 60,
+        tools: TOOLS[job.role], allowedTools: TOOLS[job.role], maxTurns: cfg.max_turns ?? 60,
         ...(cfg.max_budget_usd ? { maxBudgetUsd: cfg.max_budget_usd } : {}),
         ...(job.previousSessionId ? { resume: job.previousSessionId } : {}),
         ...(cfg.models?.["frontier"] ? { model: cfg.models["frontier"] } : {}),

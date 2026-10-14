@@ -73,3 +73,19 @@ test("an audit that throws parks the voyage as audit_error instead of stranding 
   assert.equal(w.g.db.get("voyages.byId", { id: r.voyageId }).status, "adrift");
   assert.match(w.g.db.all("decisions.pending")[0].reasoning, /boom/); w.cleanup();
 });
+
+test("the moon's Touch list reaches the adapter's DispatchCtx", async () => {
+  const w = await worldWithMoon("happy", (c) => { c.roles = { implement: ["fake", "probe"], review: ["fake"] }; c.providers.probe = { adapter: "fake" }; });
+  let touch;
+  w.g.adapters.probe = { id: "probe", roles: ["implement", "review"], classify: () => "unknown", fuel: async () => ({ source: "unknown" }),
+    async *dispatch(_job, ctx) { touch = ctx.touch; yield { kind: "done", ts: new Date().toISOString(), data: { report: { status: "IMPLEMENTED", raw: "STATUS: IMPLEMENTED" } } }; } };
+  await launchMoon(w.g, { taskId: "T1", provider: "probe" });
+  assert.deepEqual(touch, ["src/lib/thing.js", "src/lib/thing.test.js"]);
+  w.cleanup();
+});
+
+test("moonTouch fails closed on an empty or invalid Touch list", async () => {
+  const { moonTouch } = await import("../../dist/server/dispatch.js");
+  for (const touch of [null, "[]", "not json", "[1]"]) assert.throws(() => moonTouch({ task_id: "T9", touch }), /moon T9 has no Touch list/);
+  assert.deepEqual(moonTouch({ task_id: "T9", touch: '["a"]' }), ["a"]);
+});

@@ -8,7 +8,7 @@ import type { AgentEvent, ReviewReport } from "../../providers/adapter.js";
 import { appendAmendment, hashSpec } from "../../validate/spec.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
-import { loadMoon, moonScope, parkVoyage, promptPath, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
+import { loadMoon, moonScope, parkVoyage, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
 
 type VoyageRow = { id: string; ship_id: string; status: string; round: number; report: string | null };
 
@@ -56,7 +56,7 @@ export async function inspectMoon(
   const prompt = input.reviewScript ? `FAKE-SCRIPT: ${input.reviewScript}\n${body}` : body;
 
   const outcome = await runVoyage(g, {
-    role: "review", taskId, provider, worktree, ...(input.onEvent ? { onEvent: input.onEvent } : {}),
+    role: "review", taskId, provider, worktree, touch: moonTouch(moon), ...(input.onEvent ? { onEvent: input.onEvent } : {}),
     job: { role: "review", specPath: moon.spec_path, specText, prompt, round: moon.round, auditJson },
   });
   const scope = moonScope(g, moon);

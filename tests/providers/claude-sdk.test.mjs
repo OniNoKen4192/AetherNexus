@@ -7,6 +7,8 @@ const hookIn = (tool_name, file_path, extra = {}) => ({ hook_event_name: "PreToo
 test("login mode deletes an inherited ANTHROPIC_API_KEY; api_key mode requires it", () => {
   const { env, mode } = buildEnv({ adapter: "claude-sdk", auth: "login" }, { PATH: "p", ANTHROPIC_API_KEY: "sk-leak", ANTHROPIC_AUTH_TOKEN: "t" });
   assert.equal(mode, "login"); assert.equal("ANTHROPIC_API_KEY" in env, false); assert.equal("ANTHROPIC_AUTH_TOKEN" in env, false); assert.equal(env.PATH, "p");
+  assert.equal("Anthropic_Api_Key" in buildEnv({ adapter: "claude-sdk", auth: "login" }, { Anthropic_Api_Key: "x", anthropic_auth_token: "y", PATH: "p" }).env, false);
+  assert.equal("anthropic_auth_token" in buildEnv({ adapter: "claude-sdk", auth: "login" }, { anthropic_auth_token: "y" }).env, false);
   assert.throws(() => buildEnv({ adapter: "claude-sdk", auth: "api_key", api_key_env: "MY_KEY", max_budget_usd: 1 }, { PATH: "p" }), /MY_KEY is not set/);
   assert.equal(buildEnv({ adapter: "claude-sdk", auth: "api_key", api_key_env: "MY_KEY", max_budget_usd: 1 }, { MY_KEY: "k" }).env.ANTHROPIC_API_KEY, "k");
   assert.throws(() => buildEnv({ adapter: "claude-sdk", auth: "api_key", api_key_env: "MY_KEY" }, { MY_KEY: "k" }), /api_key mode requires max_budget_usd/);
@@ -15,7 +17,7 @@ test("touch gate denies writes outside touch, allows inside, ignores non-write t
   const gate = makeTouchGate(["src/lib/**"], "/repo/wt");
   const deny = await gate(hookIn("Write", "/repo/wt/README.md"), "1", sig);
   assert.equal(deny.hookSpecificOutput.permissionDecision, "deny"); assert.equal(deny.hookSpecificOutput.hookEventName, "PreToolUse");
-  assert.equal((await gate(hookIn("Edit", "src/lib/x.ts"), "2", sig)).hookSpecificOutput?.permissionDecision ?? "allow", "allow");
+  assert.equal((await gate(hookIn("Edit", "src/lib/x.ts"), "2", sig)).hookSpecificOutput.permissionDecision, "allow");
   assert.equal((await gate(hookIn("Write", "/elsewhere/src/lib/x.ts"), "3", sig)).hookSpecificOutput.permissionDecision, "deny");
   assert.equal((await gate(hookIn("Write", "../src/lib/x.ts"), "4", sig)).hookSpecificOutput.permissionDecision, "deny");
   assert.equal((await gate({ ...hookIn("NotebookEdit", undefined), tool_input: { notebook_path: "/repo/wt/n.ipynb" } }, "5", sig)).hookSpecificOutput.permissionDecision, "deny");
@@ -50,9 +52,9 @@ test("adapter wires query options: cwd, env, strictMcpConfig, settingSources, ho
   const events = await run(a);
   assert.equal(events[0].kind, "text"); assert.match(events[0].data.text, /auth mode: login/);
   assert.equal(seen.options.cwd, "/wt"); assert.equal(seen.options.strictMcpConfig, true); assert.deepEqual(seen.options.settingSources, ["project"]); assert.equal(seen.options.maxTurns, 7); assert.equal(seen.options.resume, "prev"); assert.equal(seen.options.permissionMode, "dontAsk"); assert.equal(seen.options.model, "m1");
-  assert.deepEqual(seen.options.tools, ["Read", "Grep", "Glob", "Bash", "Edit", "Write", "MultiEdit"]);
+  assert.deepEqual(seen.options.tools, ["Read", "Grep", "Glob", "Bash", "Edit", "Write", "MultiEdit"]); assert.deepEqual(seen.options.allowedTools, seen.options.tools);
   assert.ok(seen.options.hooks.PreToolUse.length === 1); assert.equal("ANTHROPIC_API_KEY" in seen.options.env, false);
-  await run(a, { ...job, role: "review" }); assert.deepEqual(seen.options.tools, ["Read", "Grep", "Glob", "Bash"]);
+  await run(a, { ...job, role: "review" }); assert.deepEqual(seen.options.tools, ["Read", "Grep", "Glob", "Bash"]); assert.deepEqual(seen.options.allowedTools, seen.options.tools);
   assert.equal(a.classify(new Error("rate limit exceeded (429)")), "rate_limited"); assert.equal(a.classify(new Error("ECONNRESET")), "backend_failure");
   assert.equal(a.classify(new Error("overloaded")), "capacity"); assert.equal(a.classify(new Error("???")), "unknown");
 });
