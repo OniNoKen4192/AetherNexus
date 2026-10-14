@@ -43,8 +43,10 @@ The metaphor is load-bearing in the UI and in event names. Internals keep plain 
 | A feature/bug run | **System** (solar system) | highway run | The home star is scenery; its light = run health. |
 | Integration branch | **Fleet HQ** | highway/integration | A station orbiting the system's home star. Carriers deliver finished streams here. |
 | Landing on `main` | **The portal** | (human merges) | HQ → `main`, the one trip the human flies. The work leaves the system. |
-| Work stream inside a run | **Planet** | stream | Territory = the planet's surface; disjoint globs = no overlapping orbits. |
-| Task (one spec, one worktree) | **Moon** | task | Orbits its planet. Moon mass = difficulty score. |
+| Work stream inside a run | **Planet** | stream | A stream is *assigned* to an existing planet. Territory = the planet's surface; disjoint globs = no overlapping orbits. |
+| Task (one spec, one worktree) | **Moon** | task | A task is *assigned* to an existing barren moon. Moon mass = difficulty score. Merged → `settled`; dropped → `barren` again. |
+| The bodies themselves | **Terrain** | — | Generated at `system create`: 6 planets inside an **asteroid belt**, 1–4 moons each, all barren. Grows only by **discovery** (a moon captured; a gas giant, ice giant or dwarf planet found beyond the belt). Nothing ever disappears. |
+| Asteroid belt | **the Belt** | — | Human-readable boundary of the inner system; reserved for the idle director's free housekeeping. Never assigned a task. |
 | A named vessel in the roster | **Ship** | — | Classes: **Freighter** (implements; carries a moon's cargo to its planet), **Customs** (reviews; inspects cargo in orbit, issues the verdict), **Carrier** (hauls a finished stream planet → HQ), **Surveyor** (plans). Fleet = provider. |
 | One assignment of a ship | **Voyage** | subagent run | `launched → working → holding → cleared → en_route → docked`. The agent process is the `working` phase. |
 | The orchestrator | **The Nexus** (dispatch) | — | Station at the galactic core. |
@@ -246,7 +248,7 @@ Intelligence this unlocks with plain SQL: FIX-round rate per provider per touch-
 
 1. An intake adapter emits `intake.received` (GitHub issue, Bridge box, whiteboard entry).
 2. `triage` role (cheap) classifies: `feature | bug | duplicate | needs-info | decline`, with a one-paragraph draft brief. Emits `intake.triaged`.
-3. `decompose` role (frontier) writes the **stream map** exactly as Lanes' `/lanes-highway` step 1: planets with id, mission, disjoint territory globs, depends-on, interfaces; records base commit. Emits `system.created`, `system.gated`.
+3. `decompose` role (frontier) writes the **stream map** exactly as Lanes' `/lanes-highway` step 1: streams with id, mission, disjoint territory globs, depends-on, interfaces; records base commit. Emits `system.created` (which generates the system's terrain from a seed — 6 planets, belt, moons), then assigns each stream to a barren planet (`planet.assigned`, discovering a planet beyond the belt if the map has more than 6), then `system.gated`.
 4. **Gate.** At every rung below `autopilot`, the map goes to the Bridge as a `decision(kind: approve_map)`. At `autopilot`, it self-approves unless gravity or restricted space says otherwise (§7).
 
 ### 6.2 Plan fan-out → moons
@@ -379,7 +381,7 @@ The director checks the limiter like everything else; it simply never asks for p
 | Level | Bodies | Visual encodings |
 |---|---|---|
 | **Galaxy** | the Nexus station at center; one star per system, placed on a spiral arm by creation order; landed systems drift outward and dim; systems in flight glow | star color = status (planning/launching/integrating/review/landed/adrift); size = moon count |
-| **System** | home star at center with Fleet HQ (the integration branch) in orbit around it; planets on orbits ordered by dependency (depends-on → outer orbit); moons around planets; the portal at the system's edge | planet ring = territory size; moon mass/scale = gravity; moon surface state = status (barren/emitted, forge-lit/implementing, inspector-lit/review, green/docked, beacon-red/adrift, hazard-striped/quarantined); restricted space = translucent red no-fly volume around affected moons |
+| **System** | home star at center with Fleet HQ (the integration branch) in orbit around it; 6 rocky planets inside the asteroid belt, discovered giants and dwarfs beyond it, in `orbit_index` order; moons around planets; the portal at the system's edge | barren bodies are dim and unlit; assigned bodies carry their stream/task status; settled moons keep a faint city-light glow | planet ring = territory size; moon mass/scale = gravity; moon surface state = status (barren/emitted, forge-lit/implementing, inspector-lit/review, green/docked, beacon-red/adrift, hazard-striped/quarantined); restricted space = translucent red no-fly volume around affected moons |
 | **Planet** | the planet, its moons close up, ships in transit | ships: freighter (implement), inspector (review), surveyor (plan); hull tint by provider (Claude/Codex/Gemini/Grok/local each a fixed tint); engine trail intensity = recent token throughput from `usage` events; a ship *adrift* tumbles slowly with a strobe |
 | **Moon** | the worktree | a panel, not a planet: spec, audit JSON, diff stat, verdict history, fuel spent; the reply box when adrift/quarantined (this *is* the Bridge item, docked in-scene) |
 
@@ -389,7 +391,10 @@ Every `events` row maps to one animation or state change; the client is a pure f
 
 | Event | Animation |
 |---|---|
-| `system.created` | star ignites at the arm's end; planets condense from a disk over ~2s |
+| `system.created` | star ignites at the arm's end; the 6 planets, belt and moons condense from a disk over ~2s — the only time terrain appears in bulk |
+| `planet.assigned` / `moon.assigned` | the body lights up: stream/task label appears, orbit line brightens |
+| `planet.discovered` / `moon.discovered` | a survey flare beyond the belt (or near the planet) resolves into the new body |
+| `moon.settled` | the moon gains a faint city-light glow that persists |
 | `voyage.launched` | the named ship departs the Nexus station, warps to the moon (galaxy-level: a brief lane line from core to system) |
 | `voyage.event:tool_use` (Edit/Write) | forge flash on the moon surface; `file_changed` adds a surface scar in the touched region (hash of path → position) |
 | `voyage.returned` | freighter enters orbit and holds, cargo glyph = report status |

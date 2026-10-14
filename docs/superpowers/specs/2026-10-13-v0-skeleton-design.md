@@ -91,18 +91,28 @@ CREATE TABLE systems  (id TEXT PRIMARY KEY, kind TEXT CHECK (kind IN ('feature',
                        status TEXT NOT NULL CHECK (status IN ('open','landed','dropped')),
                        created_ts TEXT NOT NULL, landed_ts TEXT,
                        last_event_id INTEGER NOT NULL REFERENCES events(id));
-CREATE TABLE planets  (id TEXT PRIMARY KEY, system_id TEXT NOT NULL REFERENCES systems(id), mission TEXT,
-                       territory TEXT NOT NULL CHECK (json_valid(territory)), depends_on TEXT CHECK (json_valid(depends_on)),
-                       branch TEXT NOT NULL, worktree TEXT,
-                       status TEXT NOT NULL CHECK (status IN ('open','merged','adrift','dropped')),
-                       last_event_id INTEGER NOT NULL REFERENCES events(id));
+-- Bodies exist before work (§4.0). The body columns are NOT NULL; the work columns are NULL while the body is barren.
+CREATE TABLE planets  (id TEXT PRIMARY KEY, system_id TEXT NOT NULL REFERENCES systems(id),
+                       name TEXT NOT NULL, orbit_index INTEGER NOT NULL,                       -- 0..5 inner; belt sits between 5 and 6; 6+ discovered
+                       kind TEXT NOT NULL CHECK (kind IN ('rocky','gas_giant','ice_giant','dwarf')),
+                       body_status TEXT NOT NULL CHECK (body_status IN ('barren','assigned','settled')),
+                       stream_id TEXT, mission TEXT,                                           -- work: NULL while barren
+                       territory TEXT CHECK (territory IS NULL OR json_valid(territory)), depends_on TEXT CHECK (depends_on IS NULL OR json_valid(depends_on)),
+                       branch TEXT, worktree TEXT,
+                       status TEXT CHECK (status IS NULL OR status IN ('open','merged','adrift','dropped')),   -- the stream's status
+                       last_event_id INTEGER NOT NULL REFERENCES events(id),
+                       UNIQUE (system_id, orbit_index));
 CREATE TABLE moons    (id TEXT PRIMARY KEY, planet_id TEXT NOT NULL REFERENCES planets(id),
-                       spec_path TEXT NOT NULL, spec_sha TEXT NOT NULL, touch TEXT NOT NULL CHECK (json_valid(touch)),
-                       depends_on TEXT CHECK (json_valid(depends_on)), tier TEXT, round INTEGER NOT NULL DEFAULT 0,
+                       name TEXT NOT NULL, orbit_index INTEGER NOT NULL,
+                       body_status TEXT NOT NULL CHECK (body_status IN ('barren','assigned','settled')),
+                       task_id TEXT UNIQUE,                                                    -- the spec's task id; NULL while barren
+                       spec_path TEXT, spec_sha TEXT, touch TEXT CHECK (touch IS NULL OR json_valid(touch)),
+                       depends_on TEXT CHECK (depends_on IS NULL OR json_valid(depends_on)), tier TEXT, round INTEGER NOT NULL DEFAULT 0,
                        worktree TEXT, branch TEXT,
-                       status TEXT NOT NULL CHECK (status IN ('emitted','gated','implementing','audited','reviewing','merged','adrift','quarantined','dropped')),
+                       status TEXT CHECK (status IS NULL OR status IN ('emitted','gated','implementing','audited','reviewing','merged','adrift','quarantined','dropped')),  -- the task's status
                        park_reason TEXT,
-                       last_event_id INTEGER NOT NULL REFERENCES events(id));
+                       last_event_id INTEGER NOT NULL REFERENCES events(id),
+                       UNIQUE (planet_id, orbit_index));
 CREATE TABLE ships    (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
                        class TEXT NOT NULL CHECK (class IN ('freighter','customs','carrier','surveyor')),  -- surveyor: v1 planning role; in the schema now so it never migrates
                        fleet TEXT NOT NULL,                  -- provider id; hull tint in the viz
@@ -135,7 +145,7 @@ CREATE TABLE query_stats (name TEXT PRIMARY KEY, sql TEXT NOT NULL, calls INTEGE
 2. **Live and rebuild share one code path.** `rebuild` deletes every projection row, then replays `SELECT * FROM events ORDER BY id` through the same reducer functions `append` uses. A test byte-compares a projection dump before and after rebuild.
    **Reducers are pure:** they read only the event row and the current projection rows — never the clock, the filesystem, git, or config. Anything a reducer needs (timestamps, SHAs, paths) is put into the event payload by the command that appends it. This is what makes byte-equivalence hold.
 3. **Payloads are JSON text**, queried with `json_extract`. A hot field is promoted to a column in the *projection*, never by changing `events`.
-4. **IDs are human-readable:** `moon_id` = the spec's task id; `system_id` = `S-<yyyymmdd>-<slug>`; `voyage_id` = `<ship_id>/<moon_id>/<role>/<round>`; `ship_id` = a slug of the ship's name. They appear in branch names and the UI.
+4. **IDs are human-readable:** `system_id` = `S-<yyyymmdd>-<slug>`; `planet_id` = `<system_id>/<planet-name>`; `moon_id` = `<planet_id>/<moon-name>`; `moons.task_id` = the spec's task id; `voyage_id` = `<ship_id>/<task_id>/<role>/<round>`; `ship_id` = a slug of the ship's name. They appear in branch names and the UI.
 5. **Spec immutability:** `moons.spec_sha` is recorded at emit; launch refuses if the file hashes differently. Amendments append under `## Amendments` and re-hash (the Lanes rule, header renamed to `NEXUS-SPEC:`).
 6. **Migrations:** `meta.schema_version`; `src/db/migrations/NNN.sql` applied in order on open; v0 ships `001`.
 7. **Lineage:** every projection row's `last_event_id` is set by the reducer that last touched it.
@@ -149,7 +159,8 @@ CREATE TABLE query_stats (name TEXT PRIMARY KEY, sql TEXT NOT NULL, calls INTEGE
 ### 3.4 Event kinds (v0)
 
 ```
-system.created          planet.created
+system.created (payload: seed + the generated bodies)   planet.discovered   moon.discovered
+planet.assigned   moon.assigned   moon.settled   moon.cleared (dropped task → barren)
 moon.emitted  moon.gated  moon.gate_failed  moon.amended  moon.adrift  moon.quarantined  moon.merged
 ship.registered  ship.assigned  ship.released
 voyage.launched  voyage.event (one normalized AgentEvent)  voyage.returned  voyage.audited
@@ -165,7 +176,25 @@ decision.opened  decision.resolved  human.message
 
 ---
 
-## 4. Ships, voyages, and the moon lifecycle
+## 4. Bodies, ships, voyages, and the moon lifecycle
+
+### 4.0 Bodies are terrain; work is assigned to them
+
+Planets and moons exist *before* any work does, and nothing ever disappears. A system is generated at creation and grows by discovery.
+
+**Creation** (`system create`): a pure generator (`src/core/bodies.ts`, seed in → bodies out, so `rebuild` reproduces the same system) produces **6 planets inside an asteroid belt**, each with a seeded 1–4 moons, all `barren`, with generated names. A small bugfix system looks like a system from the first frame; most of its rocks simply stay untouched.
+
+**Assignment**: `planet assign` puts a work stream on an existing barren planet; `moon assign` puts a spec on an existing barren moon of that planet. Branches and worktrees are created at assignment, not at creation. The spec's task id lives in `moons.task_id`; the body keeps its own id and name.
+
+**Discovery** (automatic, inside `assign`): when an assignment needs a body that does not exist, the system grows, and the growth is an event:
+- a planet with no barren moon → `moon.discovered` (a new moon captured into orbit);
+- a system with no barren planet → `planet.discovered`, placed **outside the belt** in deterministic seed order: gas giants, then ice giants, then dwarf planets at the edge. The 7th planet of any system is always a gas giant.
+
+**After work**: a merged task leaves its moon `settled` (a permanent record that something was built there). A dropped task returns the moon to `barren`; its branch is deleted, the rock remains.
+
+**The asteroid belt** is scenery and a human-readable boundary of the inner system in v0. It is reserved for the idle director's free housekeeping (parent §10); no body in the belt is ever assigned a task.
+
+Body IDs are human-readable like everything else: `planet_id` = `<system-id>/<planet-name>`, `moon_id` = `<planet-id>/<moon-name>`. Task branches stay `nexus/<task-id>`; planet branches stay `system/<system-id>/<planet-name>`.
 
 ### 4.1 Vocabulary correction (supersedes parent §1 where they differ)
 
@@ -219,10 +248,12 @@ Transitions are a table `from → event → to`; anything else is refused with t
 | Object | Branch | Checkout | Created by |
 |---|---|---|---|
 | System (Fleet HQ) | `system/<system-id>/integration` | none | `system create`, from the recorded base SHA |
-| Planet | `system/<system-id>/<planet-id>` | `.nexus/worktrees/<planet-id>` | `planet create`, from the integration branch |
-| Moon | `nexus/<moon-id>` | `.nexus/worktrees/<moon-id>` | `moon launch`, from the planet branch's current HEAD |
+| Planet (assigned) | `system/<system-id>/<planet-name>` | `.nexus/worktrees/<system-id>/<planet-name>` | `planet assign`, from the integration branch |
+| Moon (assigned) | `nexus/<task-id>` | `.nexus/worktrees/<task-id>` | `moon launch`, from the planet branch's current HEAD |
 
-- **Dock:** commit inside the moon worktree (author `<role>/<provider>` so `git log` shows who wrote what) → `git merge --no-ff nexus/<moon-id>` executed in the *planet* worktree → remove the moon worktree. Conflict → voyage `adrift`, reason `merge_conflict`, worktree kept. No auto-resolution.
+Barren bodies have no branch and no worktree; they are rows only.
+
+- **Dock:** commit inside the moon worktree (author `<role>/<provider>` so `git log` shows who wrote what) → `git merge --no-ff nexus/<task-id>` executed in the *planet* worktree → remove the moon worktree. Conflict → voyage `adrift`, reason `merge_conflict`, worktree kept. No auto-resolution.
 - `git` runs via `child_process` with explicit `-C <path>`; never relies on CWD. Every git command is logged as `voyage.event` with `tool: "git"`.
 - **Refusal list**, tested: never `push`; never `checkout`/`switch`/`reset`/`stash` in the main worktree; never `branch -D` outside `nexus/*` and `system/*`; never `worktree remove` on a path outside `.nexus/worktrees/`.
 - **Base SHA** is the working branch's HEAD at `system create`. Later commits on the working branch are not seen by the system; the integration review (v0.5+) reconciles.
@@ -298,14 +329,15 @@ Raw message streams go to `docs/spikes/2026-10-<dd>-sdk-probe/*.jsonl` with a RE
 
 ```
 nexus init                                   # .nexus/config.json, nexus.db, fleet roster, .gitignore entries
-nexus system create <slug> --brief <file>    # records base SHA; creates system/<id>/integration
-nexus planet create <system> <planet-id> --territory <glob>...
-nexus moon emit <planet> <spec-path>         # parse + hash spec; moon row; gate baseline
-nexus moon launch <moon> [--provider fake|codex|claude]   # assigns an idle freighter; worktree; dispatch; streams events
-nexus voyage inspect <moon>                  # launches a customs ship (review) → verdict
-nexus voyage dock <moon>                     # APPROVE only: commit, merge to planet, remove worktree
-nexus moon reply <moon> --note <text>        # adrift/quarantined → amendment appended; new round; ship released
-nexus moon drop <moon>                       # adrift/quarantined → moon dropped; ship released; worktree removed
+nexus system create <slug> --brief <file> [--seed <n>]   # records base SHA; creates system/<id>/integration; generates 6 planets + belt + moons
+nexus planet assign <system> --stream <id> --territory <glob>... [--planet <name>]   # next barren planet (or named); discovers one if none
+nexus moon assign <planet> <spec-path> [--moon <name>]    # next barren moon (or named); discovers one if none; parse + hash spec; gate baseline
+nexus moon launch <task> [--provider fake|codex|claude]   # assigns an idle freighter; worktree; dispatch; streams events
+nexus system show <system>                   # the bodies: orbit, name, kind, what's assigned where
+nexus voyage inspect <task>                  # launches a customs ship (review) → verdict
+nexus voyage dock <task>                     # APPROVE only: commit, merge to planet, remove worktree; moon → settled
+nexus moon reply <task> --note <text>        # adrift/quarantined → amendment appended; new round; ship released
+nexus moon drop <task>                       # adrift/quarantined → task dropped; ship released; worktree + branch removed; moon → barren
 nexus fleet retire <ship>                    # ship never assigned again (the only way the roster shrinks)
 nexus status [<system>]                      # moons, voyages, ship statuses
 nexus events [--since <id>] [--moon <id>] [--follow]
@@ -320,7 +352,7 @@ nexus fleet                                  # roster: idle / assigned / adrift
 
 - `tests/validate/` — the ported vectors.
 - `tests/db/` — append/apply; rebuild byte-equivalence; migrations; statement registry enforcement.
-- `tests/core/` — transition table (every illegal transition refused); git model against a temp repo per test; merge conflict → adrift with worktree kept; the refusal list.
+- `tests/core/` — body generator is deterministic (same seed → identical bodies; 6 rocky planets, 1–4 moons each; the 7th is a gas giant); discovery fires only when no barren body exists; transition table (every illegal transition refused); git model against a temp repo per test; merge conflict → adrift with worktree kept; the refusal list.
 - `tests/e2e/` — the full moon lifecycle with `fake` on every fixture script: happy → merged; scope violation → adrift; rate-limited → adrift; fix round → merged; max rounds → adrift; reject → quarantined; reply → new round.
 - `tests/conformance/` — the Lanes conformance tests that still apply (manifest; no `git push` in `src/`), retargeted.
 - `tests/live/` — skipped unless `NEXUS_LIVE=1`; never in CI.
@@ -336,7 +368,8 @@ One rule: **the log is never wrong about the repo.** Agent failures become event
 - §1 vocabulary: ships/voyages/fleets/cargo; Fleet HQ = integration branch; the star is scenery; the portal = landing on `main`; "Docking" is a ship event.
 - §5: `ships` split into `ships` (roster) + `voyages`; `last_event_id` on projections; `query_stats`.
 - §6.3: `moon.docked` → `voyage.docked` + `moon.merged`; parks and quarantine attach to voyages/ships.
-- §6.3: planet branches are `system/<system-id>/<planet-id>` (namespaced under the system; the parent had `system/<planet-id>`).
+- §1, §5, §6, §11: bodies are terrain. Systems are generated at creation (6 planets + belt + moons) and grow by discovery; work is *assigned* to barren bodies; nothing disappears. The belt is reserved for idle housekeeping.
+- §6.3: planet branches are `system/<system-id>/<planet-name>` (namespaced under the system; the parent had `system/<planet-id>`).
 - §7: integration branch at *every* rung is stated as a deliberate tightening of Lanes.
 - §11: assets rule (`assets/LICENSES.md`); roster names.
 - §14: the v0 row's "done when" is replaced by this spec's §1 (fake adapter in CI is the gate; the real-adapter run is a stretch).
