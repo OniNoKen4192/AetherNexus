@@ -1,0 +1,24 @@
+{
+  "name": "aether-nexus",
+  "version": "0.1.0",
+  "description": "Aether Nexus — an always-on dispatch layer that turns features and bug reports into routed, reviewed, merged work across model providers.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22.13" },
+  "bin": { "nexus": "dist/cli/main.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "pretest": "npm run build",
+    "test": "node --test",
+    "test:validate": "node --test tests/validate/",
+    "selftest": "node dist/cli/main.js validate --selftest"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.299",
+    "@modelcontextprotocol/sdk": "^1.32.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^7.0.2"
+  }
+}
