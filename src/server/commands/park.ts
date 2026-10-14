@@ -13,7 +13,7 @@ const SUPERSEDABLE = new Set(["holding", "cleared", "en_route", "adrift", "quara
 /** Supersede every parked voyage of the moon and free its ship. A moon parked with no voyage (carry-over park) has nothing to do. */
 export function releaseMoonVoyages(g: Galaxy, moon: MoonRow, outcome: "reply" | "drop"): void {
   const scope = moonScope(g, moon);
-  for (const v of g.db.all<VoyageRow>("voyages.byTask", { task_id: moon.task_id })) {
+  for (const v of g.db.all<VoyageRow>("voyages.byAssignment", { assignment_id: moon.assignment_id })) {
     if (!SUPERSEDABLE.has(v.status)) continue;
     const vscope = { ...scope, voyage_id: v.id, ship_id: v.ship_id };
     append(g.db, { kind: "voyage.superseded", ...vscope, payload: {} });
@@ -75,7 +75,7 @@ export function dropMoon(g: Galaxy, input: { taskId: string }): { moonId: string
 export function parkStaleMoon(g: Galaxy, input: { taskId: string; reason: string }): { voyageId: string; reason: string } {
   const moon = loadMoon(g, input.taskId);
   if (moon.status !== "implementing" && moon.status !== "reviewing") throw new Refusal(`moon ${moon.task_id} is '${moon.status}' — only an implementing or reviewing moon has a voyage to park`);
-  const voyages = g.db.all<VoyageRow>("voyages.byTask", { task_id: moon.task_id });
+  const voyages = g.db.all<VoyageRow>("voyages.byAssignment", { assignment_id: moon.assignment_id });
   const latest = voyages[voyages.length - 1];
   if (!latest || (latest.status !== "launched" && latest.status !== "working")) throw new Refusal(`moon ${moon.task_id} has no voyage in flight${latest ? ` (latest ${latest.id} is '${latest.status}')` : ""}`);
   const note = input.reason.replace(/\s+/g, " ").trim();

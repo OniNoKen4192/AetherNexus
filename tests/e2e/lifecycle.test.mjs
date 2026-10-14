@@ -37,3 +37,39 @@ test("drop → assign another spec to the freed body → happy → merged", asyn
   assert.equal(w.g.db.all("verdicts.byTask", { task_id: "T2" }).length, 1);
   settle(w); w.cleanup();
 });
+
+// History is keyed by assignment: the SAME task id re-assigned after a drop must not inherit the dropped assignment's
+// voyages, verdicts, session or events.
+test("drop → re-assign the same task id → happy → merged with clean history", async () => {
+  const fs = await import("node:fs"); const path = await import("node:path"); const { assignMoon } = await import("../../dist/server/commands/assign.js");
+  const w = await worldWithMoon("fix-round");
+  const jobs = []; const real = w.g.adapters.fake;
+  w.g.adapters.fake = { ...real, dispatch: (job, ctx) => { jobs.push(job); return real.dispatch(job, ctx); } };
+  await launchMoon(w.g, { taskId: "T1" }); assert.equal((await inspectMoon(w.g, { taskId: "T1", reviewScript: "review-fix" })).moonStatus, "audited");
+  await launchMoon(w.g, { taskId: "T1" }); assert.equal((await inspectMoon(w.g, { taskId: "T1", reviewScript: "review-reject" })).moonStatus, "quarantined");
+  const first = w.g.db.get("moons.byTask", { task_id: "T1" }).assignment_id;
+  assert.equal(jobs.filter((j) => j.role === "implement").length, 2);
+  const { moonId: m1 } = dropMoon(w.g, { taskId: "T1" });
+  const spec = path.join(w.dir, ".nexus", "specs", "T1.md");
+  fs.writeFileSync(spec, fs.readFileSync(spec, "utf8").replace("FAKE-SCRIPT: fix-round", "FAKE-SCRIPT: happy")); w.git("add", "-A"); w.git("commit", "-qm", "retry T1");
+  const { moonId: m2 } = assignMoon(w.g, { planetId: w.planetId, specPath: ".nexus/specs/T1.md" });
+  assert.equal(m2, m1, "the freed body is reused");
+  const second = w.g.db.get("moons.byTask", { task_id: "T1" }).assignment_id;
+  assert.notEqual(second, first, "a re-assign is a new assignment");
+  assert.equal(w.g.db.all("verdicts.byAssignment", { assignment_id: second }).length, 0, "the dropped assignment's FIX/REJECT is not visible");
+  assert.equal(w.g.db.get("voyages.latestByAssignmentRole", { assignment_id: second, role: "implement" }), undefined);
+  jobs.length = 0;
+  assert.equal((await launchMoon(w.g, { taskId: "T1" })).moonStatus, "audited");
+  assert.equal(jobs.length, 1); assert.equal(jobs[0].role, "implement"); assert.equal(jobs[0].round, 1);
+  assert.equal(jobs[0].previousSessionId, undefined, "the new assignment does not resume the dropped one's session");
+  assert.equal(jobs[0].deltaSpec, undefined);
+  const r = await inspectMoon(w.g, { taskId: "T1" });
+  assert.equal(r.verdict.verdict, "APPROVE"); assert.equal(r.moonStatus, "reviewing", "inspect finds the new assignment's holding freighter");
+  assert.equal(dockMoon(w.g, { taskId: "T1" }).moonStatus, "merged");
+  const voyages = w.g.db.all("voyages.byAssignment", { assignment_id: second });
+  assert.deepEqual(voyages.map((v) => v.role), ["implement", "review"]);
+  assert.deepEqual(w.g.db.all("verdicts.byAssignment", { assignment_id: second }).map((v) => v.verdict), ["APPROVE"]);
+  assert.deepEqual(w.g.db.all("verdicts.byAssignment", { assignment_id: first }).map((v) => v.verdict), ["FIX", "REJECT"], "the dropped history is kept, under its own assignment");
+  assert.ok(w.g.db.all("events.byAssignment", { assignment_id: second }).every((e) => e.task_id === "T1" && e.id > second));
+  settle(w); w.cleanup();
+});

@@ -94,3 +94,30 @@ test("voyage.launched on a ship that is not idle is refused and writes nothing (
   assert.equal(db.all("events.since", { id: 0 }).length, n); assert.equal(db.get("moons.byId", { id: moon }).status, "gated"); assert.equal(db.get("ships.byId", { id: f }).status, "adrift");
   db.close();
 });
+
+test("assignment_id: moon.assigned sets it, moon.cleared nulls it, a voyage after re-assign carries the new id; rebuild matches", () => {
+  const { db, sys, planet, moon } = world(); const base = { system_id: sys, planet_id: planet, moon_id: moon };
+  const first = db.get("moons.byId", { id: moon }).assignment_id;
+  const assignedEv = db.all("events.since", { id: 0 }).filter((e) => e.kind === "moon.assigned").pop();
+  assert.equal(first, assignedEv.id, "assignment_id is the moon.assigned event id");
+  const f = db.get("ships.pickIdle", { class: "freighter", fleet: "fake" }).id;
+  append(db, { kind: "moon.gated", ...base, assignment_id: first, payload: { base_sha: "0".repeat(40), state_path: "s", round: 1 } });
+  append(db, { kind: "voyage.launched", ...base, assignment_id: first, voyage_id: `${f}/T1/implement/1`, ship_id: f, provider: "fake", payload: { role: "implement", round: 1, provider: "fake", ship_id: f, worktree: "w" } });
+  assert.equal(db.get("voyages.byId", { id: `${f}/T1/implement/1` }).assignment_id, first);
+  append(db, { kind: "voyage.adrift", ...base, assignment_id: first, voyage_id: `${f}/T1/implement/1`, payload: { reason: "rate_limited" } });
+  append(db, { kind: "moon.adrift", ...base, assignment_id: first, payload: { reason: "rate_limited" } });
+  append(db, { kind: "ship.released", ship_id: f, payload: { outcome: "drop" } });
+  append(db, { kind: "moon.dropped", ...base, assignment_id: first, payload: {} });
+  append(db, { kind: "moon.cleared", ...base, assignment_id: first, payload: {} });
+  assert.equal(db.get("moons.byId", { id: moon }).assignment_id, null);
+  const again = append(db, { kind: "moon.assigned", ...base, payload: { task_id: "T1", spec_path: ".nexus/specs/T1.md", spec_sha: "abc", touch: ["src/lib/thing.js"], depends_on: [], tier: "terra" } });
+  assert.equal(db.get("moons.byId", { id: moon }).assignment_id, again.id); assert.notEqual(again.id, first);
+  append(db, { kind: "moon.gated", ...base, assignment_id: again.id, payload: { base_sha: "0".repeat(40), state_path: "s", round: 1 } });
+  append(db, { kind: "voyage.launched", ...base, assignment_id: again.id, voyage_id: `${f}/T1/implement/1#2`, ship_id: f, provider: "fake", payload: { role: "implement", round: 1, provider: "fake", ship_id: f, worktree: "w" } });
+  assert.equal(db.get("voyages.byId", { id: `${f}/T1/implement/1#2` }).assignment_id, again.id);
+  assert.deepEqual(db.all("voyages.byAssignment", { assignment_id: again.id }).map((v) => v.id), [`${f}/T1/implement/1#2`]);
+  assert.equal(db.get("voyages.latestByAssignmentRole", { assignment_id: again.id, role: "implement" }).id, `${f}/T1/implement/1#2`);
+  assert.equal(db.all("voyages.byTask", { task_id: "T1" }).length, 2, "by task, both assignments' voyages are visible (display only)");
+  assert.deepEqual(db.all("events.byAssignment", { assignment_id: again.id }).map((e) => e.kind), ["moon.gated", "voyage.launched"]);
+  const before = dumpProjections(db); rebuild(db); assert.equal(dumpProjections(db), before); db.close();
+});

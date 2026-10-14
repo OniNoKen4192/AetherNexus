@@ -8,7 +8,7 @@ import { Refusal } from "./errors.js";
 import type { Galaxy } from "./galaxy.js";
 
 export type MoonRow = {
-  id: string; planet_id: string; task_id: string; status: string | null; round: number;
+  id: string; planet_id: string; task_id: string; assignment_id: number; status: string | null; round: number;
   spec_path: string; spec_sha: string; park_reason: string | null; tier: string | null; touch?: string | null;
 };
 export type PlanetRow = { id: string; system_id: string; branch: string | null; worktree: string | null };
@@ -56,9 +56,9 @@ export function loadPlanet(g: Galaxy, moon: MoonRow): PlanetRow {
   if (!planet) throw new Refusal(`planet '${moon.planet_id}' does not exist`);
   return planet;
 }
-/** Event envelope ids for everything that belongs to a moon. */
-export function moonScope(g: Galaxy, moon: MoonRow): Pick<NexusEvent, "system_id" | "planet_id" | "moon_id" | "task_id"> {
-  return { system_id: loadPlanet(g, moon).system_id, planet_id: moon.planet_id, moon_id: moon.id, task_id: moon.task_id };
+/** Event envelope ids for everything that belongs to a moon's current assignment. */
+export function moonScope(g: Galaxy, moon: MoonRow): Pick<NexusEvent, "system_id" | "planet_id" | "moon_id" | "task_id" | "assignment_id"> {
+  return { system_id: loadPlanet(g, moon).system_id, planet_id: moon.planet_id, moon_id: moon.id, task_id: moon.task_id, assignment_id: moon.assignment_id };
 }
 
 export const shipClassFor = (role: Role): ShipClass => (role === "implement" ? "freighter" : "customs");

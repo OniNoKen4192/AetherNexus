@@ -34,10 +34,10 @@ export async function inspectMoon(
   const { taskId } = input;
   const moon = loadMoon(g, taskId);
   if (moon.status !== "audited") throw new Refusal(`moon ${taskId} is '${moon.status}' — only an 'audited' moon can be inspected`);
-  const freighter = g.db.get<VoyageRow>("voyages.latestByTaskRole", { task_id: taskId, role: "implement" });
+  const freighter = g.db.get<VoyageRow>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
   if (!freighter || freighter.status !== "holding") throw new Refusal(`moon ${taskId} has no holding freighter voyage to inspect`);
 
-  const audited = g.db.all("events.byTask", { task_id: taskId }).map(rowToEvent)
+  const audited = g.db.all("events.byAssignment", { assignment_id: moon.assignment_id }).map(rowToEvent)
     .filter((e) => e.kind === "voyage.audited" && e.voyage_id === freighter.id).pop();
   if (!audited) throw new Refusal(`voyage ${freighter.id} has no audit on record`);
   const auditJson = JSON.stringify(audited.payload["audit"], null, 2);

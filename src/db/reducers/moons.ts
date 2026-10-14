@@ -26,7 +26,7 @@ export const moonReducers: Record<string, Reducer> = {
   "moon.assigned": (db, ev) => {
     const p = ev.payload as { task_id: string; spec_path: string; spec_sha: string; touch: string[]; depends_on: string[]; tier: string };
     nextMoonStatus((moonRow(db, ev.moon_id).status ?? "barren"), "moon.assigned", p.task_id);
-    db.run("moons.assign", { id: ev.moon_id!, task_id: p.task_id, spec_path: p.spec_path, spec_sha: p.spec_sha, touch: JSON.stringify(p.touch), depends_on: JSON.stringify(p.depends_on), tier: p.tier, last_event_id: ev.id });
+    db.run("moons.assign", { id: ev.moon_id!, task_id: p.task_id, spec_path: p.spec_path, spec_sha: p.spec_sha, touch: JSON.stringify(p.touch), depends_on: JSON.stringify(p.depends_on), tier: p.tier, assignment_id: ev.id, last_event_id: ev.id });
   },
   "moon.gated": (db, ev) => {
     transitionMoon(db, ev.moon_id, "moon.gated", ev.id);

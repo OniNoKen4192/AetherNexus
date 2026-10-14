@@ -21,9 +21,9 @@ export function dockMoon(g: Galaxy, input: { taskId: string }): { mergeSha: stri
   const moon = loadMoon(g, taskId);
   const finishing = moon.status === "merged";   // resuming a dock that crashed after moon.merged
   if (moon.status !== "reviewing" && !finishing) throw new Refusal(`moon ${taskId} is '${moon.status}' — only a 'reviewing' moon with an APPROVE verdict can dock`);
-  const verdicts = g.db.all<VerdictRow>("verdicts.byTask", { task_id: taskId });
+  const verdicts = g.db.all<VerdictRow>("verdicts.byAssignment", { assignment_id: moon.assignment_id });
   if (!finishing && verdicts[verdicts.length - 1]?.verdict !== "APPROVE") throw new Refusal(`moon ${taskId} has no APPROVE verdict to dock on`);
-  const voyage = g.db.get<VoyageRow>("voyages.latestByTaskRole", { task_id: taskId, role: "implement" });
+  const voyage = g.db.get<VoyageRow>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
   const resuming = voyage?.status === "docked";   // docked already: only the remaining steps are left
   if (!voyage || (voyage.status !== "cleared" && voyage.status !== "en_route" && !resuming)) throw new Refusal(`moon ${taskId} has no cleared freighter voyage to dock`);
   if (finishing && g.db.get<{ status: string }>("ships.byId", { id: voyage.ship_id })?.status !== "assigned" && !fs.existsSync(path.join(g.paths.worktrees, taskId))) {

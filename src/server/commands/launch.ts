@@ -42,7 +42,7 @@ export class BaselineTampered extends Error {
  * `baseline_sha` the latest moon.gated recorded (else BaselineTampered); Nexus carry-over commits are exempt by exact SHA.
  */
 export function auditTask(g: Galaxy, p: { taskId: string; worktree: string }, auditFn: typeof audit = audit): AuditReport {
-  const gatedEvents = g.db.all("events.byTask", { task_id: p.taskId }).map(rowToEvent).filter((e) => e.kind === "moon.gated");
+  const gatedEvents = g.db.all("events.byAssignment", { assignment_id: loadMoon(g, p.taskId).assignment_id }).map(rowToEvent).filter((e) => e.kind === "moon.gated");
   const statePath = path.join(g.paths.stateDir, `${p.taskId}.json`);
   if (fs.existsSync(statePath)) {
     const expected = gatedEvents[gatedEvents.length - 1]?.payload["baseline_sha"];
@@ -64,10 +64,10 @@ export function runAuditOrPark(g: Galaxy, p: { taskId: string; worktree: string;
   }
 }
 
-/** True when the latest human.message for the task is newer than the latest park (moon.adrift or a REJECT verdict). */
-function repliedSincePark(g: Galaxy, taskId: string): boolean {
+/** True when the latest human.message for the assignment is newer than the latest park (moon.adrift or a REJECT verdict). */
+function repliedSincePark(g: Galaxy, assignmentId: number): boolean {
   let park = 0, reply = 0;
-  for (const e of g.db.all("events.byTask", { task_id: taskId }).map(rowToEvent)) {
+  for (const e of g.db.all("events.byAssignment", { assignment_id: assignmentId }).map(rowToEvent)) {
     if (e.kind === "moon.adrift" || (e.kind === "verdict.issued" && e.payload["verdict"] === "REJECT")) park = e.id;
     else if (e.kind === "human.message") reply = e.id;
   }
@@ -76,9 +76,9 @@ function repliedSincePark(g: Galaxy, taskId: string): boolean {
 
 const violationPaths = (r: AuditReport): string[] => [...r.out_of_scope, ...r.forbidden.map((f) => f.path)];
 
-/** Paths the latest recorded audit of the task flagged (out_of_scope and forbidden). */
-function recordedViolations(g: Galaxy, taskId: string): Set<string> {
-  const audited = g.db.all("events.byTask", { task_id: taskId }).map(rowToEvent).filter((e) => e.kind === "voyage.audited").pop();
+/** Paths the latest recorded audit of the assignment flagged (out_of_scope and forbidden). */
+function recordedViolations(g: Galaxy, assignmentId: number): Set<string> {
+  const audited = g.db.all("events.byAssignment", { assignment_id: assignmentId }).map(rowToEvent).filter((e) => e.kind === "voyage.audited").pop();
   const rec = audited?.payload["audit"] as AuditReport | undefined;
   return new Set(rec ? violationPaths(rec) : []);
 }
@@ -105,13 +105,13 @@ export async function launchMoon(
   const { taskId } = input;
   const moon = loadMoon(g, taskId);
   const status = moon.status;
-  const verdicts = g.db.all<VerdictRow>("verdicts.byTask", { task_id: taskId });
+  const verdicts = g.db.all<VerdictRow>("verdicts.byAssignment", { assignment_id: moon.assignment_id });
   const lastVerdict = verdicts[verdicts.length - 1];
 
   // Precheck 1: state.
   // A parked moon relaunches only after a human reply newer than the park (reply appends moon.amended, then human.message).
   const relaunch = status === "adrift" || status === "quarantined";
-  if (relaunch && !repliedSincePark(g, taskId)) throw new Refusal(`moon ${taskId} is ${status} — use 'nexus moon reply' or 'nexus moon drop'`);
+  if (relaunch && !repliedSincePark(g, moon.assignment_id)) throw new Refusal(`moon ${taskId} is ${status} — use 'nexus moon reply' or 'nexus moon drop'`);
   if (status === "audited") {
     if (lastVerdict?.verdict !== "FIX") throw new Refusal(`moon ${taskId} is 'audited' — run 'nexus moon inspect'; only a FIX verdict reopens it for another launch`);
   } else if (!relaunch && status !== "emitted" && status !== "gated") {
@@ -165,7 +165,7 @@ export async function launchMoon(
     // The human has answered an audit_violations park: put the violations that audit recorded back to the baseline
     // so the new round starts in scope. Only if that leaves the tree clean; otherwise nothing is touched.
     if (relaunch && moon.park_reason === "audit_violations" && carry.verdict === "violations") {
-      const recorded = recordedViolations(g, taskId);
+      const recorded = recordedViolations(g, moon.assignment_id);
       const current = violationPaths(carry);
       const otherwiseDirty = current.some((p) => !recorded.has(p)) || carry.commits_past_base.length > 0 || carry.spec_modified || !!carry.error;
       if (!otherwiseDirty && current.length) {
@@ -193,8 +193,9 @@ export async function launchMoon(
   // Every gate rewrites the state file, so every gate is recorded (gated -> gated included) with the file's hash.
   append(g.db, { kind: "moon.gated", ...scope, payload: { base_sha: gated.base_sha, state_path: gated.state_path, baseline_sha: gated.baseline_sha, round, ...(carriedSha ? { carried_sha: carriedSha } : {}) } });
 
-  // Resume only this task's own session on the same provider: a session id means nothing to another backend.
-  const previous = g.db.get<{ session_id: string | null; provider: string }>("voyages.latestByTaskRole", { task_id: taskId, role: "implement" });
+  // Resume only this assignment's own session on the same provider: a session id means nothing to another backend,
+  // and a dropped assignment of the same task id is a different conversation.
+  const previous = g.db.get<{ session_id: string | null; provider: string }>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
   const resumeId = previous?.provider === provider ? previous.session_id : null;
   const deltaSpec = fixRound ? lastVerdict?.delta_spec ?? undefined : undefined;
   const delta_section = deltaSpec ? `\n## Delta from customs (round ${round})\n\n${deltaSpec}\n\n` : "\n";

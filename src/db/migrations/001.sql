@@ -4,11 +4,13 @@ CREATE TABLE events (
   kind      TEXT    NOT NULL,
   system_id TEXT, planet_id TEXT, moon_id TEXT, voyage_id TEXT, ship_id TEXT,
   task_id   TEXT,
+  assignment_id INTEGER,
   provider  TEXT,
   payload   TEXT    NOT NULL CHECK (json_valid(payload))
 );
 CREATE INDEX events_moon   ON events(moon_id, id);
 CREATE INDEX events_task   ON events(task_id, id);
+CREATE INDEX events_assignment ON events(assignment_id, id);
 CREATE INDEX events_voyage ON events(voyage_id, id);
 CREATE INDEX events_kind   ON events(kind, id);
 
@@ -31,7 +33,7 @@ CREATE TABLE planets  (id TEXT PRIMARY KEY, system_id TEXT NOT NULL REFERENCES s
 CREATE TABLE moons    (id TEXT PRIMARY KEY, planet_id TEXT NOT NULL REFERENCES planets(id),
                        name TEXT NOT NULL, orbit_index INTEGER NOT NULL,
                        body_status TEXT NOT NULL CHECK (body_status IN ('barren','assigned','settled')),
-                       task_id TEXT UNIQUE,
+                       task_id TEXT UNIQUE, assignment_id INTEGER,
                        spec_path TEXT, spec_sha TEXT, touch TEXT CHECK (touch IS NULL OR json_valid(touch)),
                        depends_on TEXT CHECK (depends_on IS NULL OR json_valid(depends_on)), tier TEXT, round INTEGER NOT NULL DEFAULT 0,
                        worktree TEXT, branch TEXT,
@@ -46,14 +48,14 @@ CREATE TABLE ships    (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
                        voyage_count INTEGER NOT NULL DEFAULT 0,
                        last_event_id INTEGER NOT NULL REFERENCES events(id));
 CREATE TABLE voyages  (id TEXT PRIMARY KEY, ship_id TEXT NOT NULL REFERENCES ships(id),
-                       moon_id TEXT REFERENCES moons(id), planet_id TEXT REFERENCES planets(id), task_id TEXT NOT NULL,
+                       moon_id TEXT REFERENCES moons(id), planet_id TEXT REFERENCES planets(id), task_id TEXT NOT NULL, assignment_id INTEGER NOT NULL,
                        role TEXT NOT NULL CHECK (role IN ('implement','review','carry','plan')), round INTEGER NOT NULL,
                        provider TEXT NOT NULL, model TEXT, session_id TEXT,
                        status TEXT NOT NULL CHECK (status IN ('launched','working','holding','cleared','en_route','docked','superseded','adrift','quarantined')),
                        launched_ts TEXT NOT NULL, returned_ts TEXT, docked_ts TEXT,
                        report TEXT CHECK (report IS NULL OR json_valid(report)), cost TEXT CHECK (cost IS NULL OR json_valid(cost)),
                        last_event_id INTEGER NOT NULL REFERENCES events(id));
-CREATE TABLE verdicts (id INTEGER PRIMARY KEY, moon_id TEXT NOT NULL REFERENCES moons(id), task_id TEXT NOT NULL, voyage_id TEXT NOT NULL REFERENCES voyages(id),
+CREATE TABLE verdicts (id INTEGER PRIMARY KEY, moon_id TEXT NOT NULL REFERENCES moons(id), task_id TEXT NOT NULL, assignment_id INTEGER NOT NULL, voyage_id TEXT NOT NULL REFERENCES voyages(id),
                        verdict TEXT NOT NULL CHECK (verdict IN ('APPROVE','FIX','REJECT')), delta_spec TEXT, reasoning TEXT, round INTEGER NOT NULL,
                        last_event_id INTEGER NOT NULL REFERENCES events(id));
 CREATE TABLE decisions(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, target_kind TEXT NOT NULL, target_id TEXT NOT NULL, reasoning TEXT,
