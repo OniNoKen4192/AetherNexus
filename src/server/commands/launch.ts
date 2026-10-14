@@ -6,7 +6,7 @@ import type { MoonStatus } from "../../core/transitions.js";
 import type { AgentEvent, ImplementReport } from "../../providers/adapter.js";
 import { gate } from "../../validate/gate.js";
 import { audit, type AuditReport } from "../../validate/audit.js";
-import { hashSpec } from "../../validate/spec.js";
+import { hashSpec, sha256 } from "../../validate/spec.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
 import { loadMoon, loadPlanet, moonScope, parkVoyage, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
@@ -32,21 +32,42 @@ function pickProvider(g: Galaxy, requested: string | undefined): string {
   return first;
 }
 
-/** Run the audit; if it throws, park the voyage (reason audit_error) instead of stranding the moon in 'implementing'. */
+/** The gate's state file no longer matches the hash moon.gated recorded: the baseline cannot be trusted. */
+export class BaselineTampered extends Error {
+  constructor(message: string) { super(message); this.name = "BaselineTampered"; }
+}
+
+/**
+ * Audit the task's worktree against its gate baseline. The state file is trusted only if its sha256 matches the
+ * `baseline_sha` the latest moon.gated recorded (else BaselineTampered); Nexus carry-over commits are exempt by exact SHA.
+ */
+export function auditTask(g: Galaxy, p: { taskId: string; worktree: string }, auditFn: typeof audit = audit): AuditReport {
+  const gatedEvents = g.db.all("events.byTask", { task_id: p.taskId }).map(rowToEvent).filter((e) => e.kind === "moon.gated");
+  const statePath = path.join(g.paths.stateDir, `${p.taskId}.json`);
+  if (fs.existsSync(statePath)) {
+    const expected = gatedEvents[gatedEvents.length - 1]?.payload["baseline_sha"];
+    if (typeof expected !== "string") throw new BaselineTampered(`no baseline hash is recorded for task ${p.taskId}, but ${statePath} exists`);
+    if (sha256(fs.readFileSync(statePath, "utf8")) !== expected) throw new BaselineTampered(`${statePath} does not match the hash recorded when task ${p.taskId} was gated`);
+  }
+  const ignoreShas = gatedEvents.map((e) => e.payload["carried_sha"]).filter((x): x is string => typeof x === "string");
+  return auditFn({ git: g.git, worktree: p.worktree, taskId: p.taskId, routing: g.config.routing, pipeline: g.config.pipeline, stateDir: g.paths.stateDir, ignoreShas });
+}
+
+/** Run the audit; if it throws, park the voyage (reason audit_error, or baseline_tampered) instead of stranding the moon in 'implementing'. */
 export function runAuditOrPark(g: Galaxy, p: { taskId: string; worktree: string; voyageId: string; shipId: string }, auditFn: typeof audit = audit): AuditReport | null {
   try {
-    return auditFn({ git: g.git, worktree: p.worktree, taskId: p.taskId, routing: g.config.routing, pipeline: g.config.pipeline, stateDir: g.paths.stateDir });
+    return auditTask(g, p, auditFn);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    parkVoyage(g, { taskId: p.taskId, voyageId: p.voyageId, shipId: p.shipId, reason: "audit_error", details: JSON.stringify({ message }) });
+    parkVoyage(g, { taskId: p.taskId, voyageId: p.voyageId, shipId: p.shipId, reason: err instanceof BaselineTampered ? "baseline_tampered" : "audit_error", details: JSON.stringify({ message }) });
     return null;
   }
 }
 
-/** True when the latest human.message for the moon is newer than the latest park (moon.adrift or a REJECT verdict). */
-function repliedSincePark(g: Galaxy, moonId: string): boolean {
+/** True when the latest human.message for the task is newer than the latest park (moon.adrift or a REJECT verdict). */
+function repliedSincePark(g: Galaxy, taskId: string): boolean {
   let park = 0, reply = 0;
-  for (const e of g.db.all("events.byMoon", { moon_id: moonId }).map(rowToEvent)) {
+  for (const e of g.db.all("events.byTask", { task_id: taskId }).map(rowToEvent)) {
     if (e.kind === "moon.adrift" || (e.kind === "verdict.issued" && e.payload["verdict"] === "REJECT")) park = e.id;
     else if (e.kind === "human.message") reply = e.id;
   }
@@ -55,9 +76,9 @@ function repliedSincePark(g: Galaxy, moonId: string): boolean {
 
 const violationPaths = (r: AuditReport): string[] => [...r.out_of_scope, ...r.forbidden.map((f) => f.path)];
 
-/** Paths the latest recorded audit of the moon flagged (out_of_scope and forbidden). */
-function recordedViolations(g: Galaxy, moonId: string): Set<string> {
-  const audited = g.db.all("events.byMoon", { moon_id: moonId }).map(rowToEvent).filter((e) => e.kind === "voyage.audited").pop();
+/** Paths the latest recorded audit of the task flagged (out_of_scope and forbidden). */
+function recordedViolations(g: Galaxy, taskId: string): Set<string> {
+  const audited = g.db.all("events.byTask", { task_id: taskId }).map(rowToEvent).filter((e) => e.kind === "voyage.audited").pop();
   const rec = audited?.payload["audit"] as AuditReport | undefined;
   return new Set(rec ? violationPaths(rec) : []);
 }
@@ -78,19 +99,19 @@ function applyRestore(g: Galaxy, worktree: string, r: { reverted: string[]; dele
 }
 
 export async function launchMoon(
-  g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void },
+  g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void; signal?: AbortSignal },
   deps?: { audit?: typeof audit },
 ): Promise<{ voyageId: string; audit: AuditReport | null; moonStatus: MoonStatus }> {
   const { taskId } = input;
   const moon = loadMoon(g, taskId);
   const status = moon.status;
-  const verdicts = g.db.all<VerdictRow>("verdicts.byMoon", { moon_id: moon.id });
+  const verdicts = g.db.all<VerdictRow>("verdicts.byTask", { task_id: taskId });
   const lastVerdict = verdicts[verdicts.length - 1];
 
   // Precheck 1: state.
   // A parked moon relaunches only after a human reply newer than the park (reply appends moon.amended, then human.message).
   const relaunch = status === "adrift" || status === "quarantined";
-  if (relaunch && !repliedSincePark(g, moon.id)) throw new Refusal(`moon ${taskId} is ${status} — use 'nexus moon reply' or 'nexus moon drop'`);
+  if (relaunch && !repliedSincePark(g, taskId)) throw new Refusal(`moon ${taskId} is ${status} — use 'nexus moon reply' or 'nexus moon drop'`);
   if (status === "audited") {
     if (lastVerdict?.verdict !== "FIX") throw new Refusal(`moon ${taskId} is 'audited' — run 'nexus moon inspect'; only a FIX verdict reopens it for another launch`);
   } else if (!relaunch && status !== "emitted" && status !== "gated") {
@@ -127,12 +148,24 @@ export async function launchMoon(
   if (fixRound || (relaunch && hadWorktree && hasBaseline)) {
     // Re-audit against the round-1 baseline first: anything that changed in the worktree since that audit
     // (customs runs there; a human may edit) would otherwise be committed as 'nexus' and never audited again.
-    const runCarry = (): AuditReport => (deps?.audit ?? audit)({ git: g.git, worktree, taskId, routing: g.config.routing, pipeline: g.config.pipeline, stateDir: g.paths.stateDir });
-    let carry = runCarry();
+    const runCarry = (): AuditReport => auditTask(g, { taskId, worktree }, deps?.audit ?? audit);
+    const parkMoon = (reason: string, details: Record<string, unknown>): { voyageId: string; audit: AuditReport | null; moonStatus: MoonStatus } => {
+      // A moon that is already parked cannot go adrift again: refuse and leave it as it is (fix the worktree, then relaunch).
+      if (relaunch) throw new Refusal(`carry-over audit refused the parked worktree (${reason})`, details);
+      // The previous freighter voyage is already superseded (cannot go adrift), so park the moon itself.
+      append(g.db, { kind: "moon.adrift", ...scope, payload: { reason } });
+      append(g.db, { kind: "decision.opened", ...scope, payload: { kind: "adrift", target_kind: "moon", target_id: taskId, reasoning: `round ${moon.round} work changed after its audit (${reason}): ${JSON.stringify(details)}` } });
+      return { voyageId: "", audit: null, moonStatus: "adrift" };
+    };
+    let carry: AuditReport;
+    try { carry = runCarry(); } catch (err) {
+      if (err instanceof BaselineTampered) return parkMoon("baseline_tampered", { message: err.message });
+      throw err;
+    }
     // The human has answered an audit_violations park: put the violations that audit recorded back to the baseline
     // so the new round starts in scope. Only if that leaves the tree clean; otherwise nothing is touched.
     if (relaunch && moon.park_reason === "audit_violations" && carry.verdict === "violations") {
-      const recorded = recordedViolations(g, moon.id);
+      const recorded = recordedViolations(g, taskId);
       const current = violationPaths(carry);
       const otherwiseDirty = current.some((p) => !recorded.has(p)) || carry.commits_past_base.length > 0 || carry.spec_modified || !!carry.error;
       if (!otherwiseDirty && current.length) {
@@ -144,12 +177,7 @@ export async function launchMoon(
     }
     if (carry.verdict === "violations") {
       const details = { out_of_scope: carry.out_of_scope, forbidden: carry.forbidden, ...(carry.error ? { error: carry.error } : {}) };
-      // A moon that is already parked cannot go adrift again: refuse and leave it as it is (fix the worktree, then relaunch).
-      if (relaunch) throw new Refusal(`carry-over audit found violations in the parked worktree (carryover_violations)`, details);
-      // The round-1 freighter voyage is already superseded (cannot go adrift), so park the moon itself.
-      append(g.db, { kind: "moon.adrift", ...scope, payload: { reason: "carryover_violations" } });
-      append(g.db, { kind: "decision.opened", ...scope, payload: { kind: "adrift", target_kind: "moon", target_id: taskId, reasoning: `round ${moon.round} work changed after its audit (carryover_violations): ${JSON.stringify(details)}` } });
-      return { voyageId: "", audit: carry, moonStatus: "adrift" };
+      return { ...parkMoon("carryover_violations", details), audit: carry };
     }
     carriedSha = g.git.commitAll(worktree, `nexus: ${taskId} round ${moon.round} work`, NEXUS_AUTHOR) ?? g.git.headSha(worktree);
   }
@@ -162,17 +190,20 @@ export async function launchMoon(
     }
     throw new Refusal(`gate failed (${gated.check}): ${gated.reason}`, gated.details);
   }
-  if (status !== "gated") append(g.db, { kind: "moon.gated", ...scope, payload: { base_sha: gated.base_sha, state_path: gated.state_path, round, ...(carriedSha ? { carried_sha: carriedSha } : {}) } });
+  // Every gate rewrites the state file, so every gate is recorded (gated -> gated included) with the file's hash.
+  append(g.db, { kind: "moon.gated", ...scope, payload: { base_sha: gated.base_sha, state_path: gated.state_path, baseline_sha: gated.baseline_sha, round, ...(carriedSha ? { carried_sha: carriedSha } : {}) } });
 
-  const previous = g.db.get<{ session_id: string | null }>("voyages.latestByMoonRole", { moon_id: moon.id, role: "implement" });
+  // Resume only this task's own session on the same provider: a session id means nothing to another backend.
+  const previous = g.db.get<{ session_id: string | null; provider: string }>("voyages.latestByTaskRole", { task_id: taskId, role: "implement" });
+  const resumeId = previous?.provider === provider ? previous.session_id : null;
   const deltaSpec = fixRound ? lastVerdict?.delta_spec ?? undefined : undefined;
   const delta_section = deltaSpec ? `\n## Delta from customs (round ${round})\n\n${deltaSpec}\n\n` : "\n";
   const prompt = renderPrompt(promptPath("implement.md"), { spec_path: moon.spec_path, worktree, spec_text: specText, delta_section });
   const outcome = await runVoyage(g, {
-    role: "implement", taskId, provider, worktree, touch: moonTouch(moon), ...(input.onEvent ? { onEvent: input.onEvent } : {}),
+    role: "implement", taskId, provider, worktree, touch: moonTouch(moon), ...(input.onEvent ? { onEvent: input.onEvent } : {}), ...(input.signal ? { signal: input.signal } : {}),
     job: {
       role: "implement", specPath: moon.spec_path, specText, prompt, round,
-      ...(deltaSpec ? { deltaSpec } : {}), ...(previous?.session_id ? { previousSessionId: previous.session_id } : {}),
+      ...(deltaSpec ? { deltaSpec } : {}), ...(resumeId ? { previousSessionId: resumeId } : {}),
     },
   });
 

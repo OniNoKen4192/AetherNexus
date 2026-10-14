@@ -24,3 +24,10 @@ test("voyage happy paths: freighter and customs", () => {
   assert.equal(nextVoyageStatus("working", "voyage.returned:review", "v"), "docked");
   assert.equal(nextVoyageStatus("holding", "voyage.superseded", "v"), "superseded");
 });
+
+test("minor: voyage.superseded is legal from cleared and en_route; cleared can go adrift (dock pre-commit park); gated can be re-gated", () => {
+  assert.equal(nextVoyageStatus("cleared", "voyage.superseded", "v"), "superseded");
+  assert.equal(nextVoyageStatus("en_route", "voyage.superseded", "v"), "superseded");
+  assert.equal(nextVoyageStatus("cleared", "voyage.adrift", "v"), "adrift");
+  assert.equal(nextMoonStatus("gated", "moon.gated", "m"), "gated");
+});

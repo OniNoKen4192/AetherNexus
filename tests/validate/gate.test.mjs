@@ -44,3 +44,11 @@ test("Review Focus #1: Touch path with backslash and space is normalized and gat
   const s = setup(read("tests/fixtures/specs/good-basic.md").replace("`src/lib/thing.js`", "`src\\lib\\my thing.js`"));
   const r = s.run(); assert.equal(r.ok, true); assert.equal(r.baseline.touch[0], "src/lib/my thing.js"); s.repo.cleanup();
 });
+
+test("gate: a dirty .nexus/config.json is not allowlisted (only specs/tasks/plans/ledger are); baseline_sha is the state file's hash", async () => {
+  const { sha256 } = await import("../../dist/validate/spec.js");
+  let s = setup(); const ok = s.run(); assert.equal(ok.ok, true);
+  assert.equal(ok.baseline_sha, sha256(fs.readFileSync(path.join(s.stateDir, "T1.json"), "utf8"))); s.repo.cleanup();
+  s = setup(); fs.writeFileSync(path.join(s.wt, ".nexus", "config.json"), "{}\n");
+  const r = s.run(); assert.equal(r.ok, false); assert.equal(r.check, "clean_baseline"); assert.deepEqual(r.details.dirty, [".nexus/config.json"]); s.repo.cleanup();
+});

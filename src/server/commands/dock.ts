@@ -4,6 +4,8 @@ import { append } from "../../db/events.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
 import { loadMoon, loadPlanet, moonScope, parkVoyage } from "../dispatch.js";
+import type { AuditReport } from "../../validate/audit.js";
+import { auditTask, BaselineTampered } from "./launch.js";
 
 type VoyageRow = { id: string; ship_id: string; status: string; provider: string };
 type VerdictRow = { verdict: string };
@@ -19,9 +21,9 @@ export function dockMoon(g: Galaxy, input: { taskId: string }): { mergeSha: stri
   const moon = loadMoon(g, taskId);
   const finishing = moon.status === "merged";   // resuming a dock that crashed after moon.merged
   if (moon.status !== "reviewing" && !finishing) throw new Refusal(`moon ${taskId} is '${moon.status}' — only a 'reviewing' moon with an APPROVE verdict can dock`);
-  const verdicts = g.db.all<VerdictRow>("verdicts.byMoon", { moon_id: moon.id });
+  const verdicts = g.db.all<VerdictRow>("verdicts.byTask", { task_id: taskId });
   if (!finishing && verdicts[verdicts.length - 1]?.verdict !== "APPROVE") throw new Refusal(`moon ${taskId} has no APPROVE verdict to dock on`);
-  const voyage = g.db.get<VoyageRow>("voyages.latestByMoonRole", { moon_id: moon.id, role: "implement" });
+  const voyage = g.db.get<VoyageRow>("voyages.latestByTaskRole", { task_id: taskId, role: "implement" });
   const resuming = voyage?.status === "docked";   // docked already: only the remaining steps are left
   if (!voyage || (voyage.status !== "cleared" && voyage.status !== "en_route" && !resuming)) throw new Refusal(`moon ${taskId} has no cleared freighter voyage to dock`);
   if (finishing && g.db.get<{ status: string }>("ships.byId", { id: voyage.ship_id })?.status !== "assigned" && !fs.existsSync(path.join(g.paths.worktrees, taskId))) {
@@ -56,6 +58,21 @@ export function dockMoon(g: Galaxy, input: { taskId: string }): { mergeSha: stri
     g.git.worktreeAdd(planetWorktree, planet.branch, g.git.revParse(planet.branch));
     if (resuming) return finish(planet.branch);
     if (voyage.status === "cleared") {
+      const park = (reason: string, details: unknown): { mergeSha: null; planetBranch: string; moonStatus: "adrift" } => {
+        parkVoyage(g, { taskId, voyageId: voyage.id, shipId: voyage.ship_id, reason, details: JSON.stringify(details) });
+        return { mergeSha: null, planetBranch: planet.branch!, moonStatus: "adrift" };
+      };
+      // Commit only from a registered worktree: from a plain directory git would find (and commit to) the human's repo.
+      if (!g.git.worktreeList().includes(g.git.canon(moonWorktree))) return park("worktree_missing", { worktree: moonWorktree });
+      // Commit only what was audited: anything written after the review (customs, a human, a stray process) parks the dock.
+      let report: AuditReport;
+      try { report = auditTask(g, { taskId, worktree: moonWorktree }); } catch (err) {
+        if (err instanceof BaselineTampered) return park("baseline_tampered", { message: err.message });
+        throw err;
+      }
+      if (report.verdict === "violations") {
+        return park("dock_violations", { out_of_scope: report.out_of_scope, forbidden: report.forbidden, commits_past_base: report.commits_past_base, spec_modified: report.spec_modified, ...(report.error ? { error: report.error } : {}) });
+      }
       const specAbs = path.join(g.repoRoot, moon.spec_path);
       const title = specTitle(fs.existsSync(specAbs) ? fs.readFileSync(specAbs, "utf8") : "", taskId);
       g.git.commitAll(moonWorktree, `${taskId}: ${title}`, { name: `implement/${voyage.provider}`, email: "nexus@local" });

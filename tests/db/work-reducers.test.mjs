@@ -25,23 +25,23 @@ test("full freighter + customs lifecycle through reducers; rebuild matches", () 
   append(db, { kind: "moon.gated", ...base, payload: { base_sha: "0".repeat(40), state_path: ".nexus/state/T1.json", round: 1 } });
   assert.equal(db.get("moons.byId", { id: moon }).round, 1);
   const v1 = `${ship.id}/T1/implement/1`;
-  append(db, { kind: "ship.assigned", ship_id: ship.id, payload: { voyage_id: v1 } });
   append(db, { kind: "voyage.launched", ...base, voyage_id: v1, ship_id: ship.id, provider: "fake", payload: { role: "implement", round: 1, provider: "fake", ship_id: ship.id, worktree: ".nexus/worktrees/T1" } });
   assert.equal(db.get("moons.byId", { id: moon }).status, "implementing"); assert.equal(db.get("voyages.byId", { id: v1 }).status, "launched");
+  assert.equal(db.get("ships.byId", { id: ship.id }).status, "assigned", "voyage.launched takes the ship in the same transaction");
+  assert.equal(db.get("voyages.byId", { id: v1 }).task_id, "T1");
   append(db, { kind: "voyage.event", ...base, voyage_id: v1, payload: { event: { kind: "text", ts: "t", data: "hi" } } });
   assert.equal(db.get("voyages.byId", { id: v1 }).status, "working");
   append(db, { kind: "voyage.returned", ...base, voyage_id: v1, payload: { role: "implement", report: { status: "IMPLEMENTED" } } });
   append(db, { kind: "voyage.audited", ...base, voyage_id: v1, payload: { audit: { verdict: "clean" } } });
   assert.equal(db.get("moons.byId", { id: moon }).status, "audited"); assert.equal(db.get("voyages.byId", { id: v1 }).status, "holding");
   const v2 = `${customs.id}/T1/review/1`;
-  append(db, { kind: "ship.assigned", ship_id: customs.id, payload: { voyage_id: v2 } });
   append(db, { kind: "voyage.launched", ...base, voyage_id: v2, ship_id: customs.id, provider: "fake", payload: { role: "review", round: 1, provider: "fake", ship_id: customs.id, worktree: ".nexus/worktrees/T1" } });
   assert.equal(db.get("moons.byId", { id: moon }).status, "reviewing");
   append(db, { kind: "voyage.event", ...base, voyage_id: v2, payload: { event: { kind: "text", ts: "t", data: "inspecting" } } });
   append(db, { kind: "voyage.returned", ...base, voyage_id: v2, payload: { role: "review", report: { verdict: "APPROVE" } } });
   assert.equal(db.get("voyages.byId", { id: v2 }).status, "docked");
   append(db, { kind: "verdict.issued", ...base, voyage_id: v2, payload: { verdict: "APPROVE", reasoning: "fine", round: 1, voyage_id: v2 } });
-  assert.equal(db.all("verdicts.byMoon", { moon_id: moon }).length, 1);
+  assert.equal(db.all("verdicts.byTask", { task_id: "T1" }).length, 1);
   append(db, { kind: "voyage.cleared", ...base, voyage_id: v1, payload: {} });
   append(db, { kind: "voyage.departed", ...base, voyage_id: v1, payload: {} });
   append(db, { kind: "voyage.docked", ...base, voyage_id: v1, payload: { merge_sha: "1".repeat(40), planet_branch: "x" } });
@@ -81,5 +81,16 @@ test("REJECT -> quarantined + decision; drop -> dropped then moon.cleared -> bar
   assert.equal(db.get("moons.byId", { id: moon }).status, "dropped");
   append(db, { kind: "moon.cleared", ...base, payload: {} });
   const m = db.get("moons.byId", { id: moon }); assert.equal(m.body_status, "barren"); assert.equal(m.task_id, null); assert.equal(m.status, null);
+  db.close();
+});
+
+test("voyage.launched on a ship that is not idle is refused and writes nothing (ship and moon unchanged)", () => {
+  const { db, sys, planet, moon } = world(); const base = { system_id: sys, planet_id: planet, moon_id: moon };
+  const f = db.get("ships.pickIdle", { class: "freighter", fleet: "fake" }).id;
+  append(db, { kind: "moon.gated", ...base, payload: { base_sha: "0".repeat(40), state_path: "s", round: 1 } });
+  append(db, { kind: "ship.adrift", ship_id: f, payload: { voyage_id: "elsewhere" } });
+  const n = db.all("events.since", { id: 0 }).length;
+  assert.throws(() => append(db, { kind: "voyage.launched", ...base, voyage_id: `${f}/T1/implement/1`, ship_id: f, provider: "fake", payload: { role: "implement", round: 1, provider: "fake", ship_id: f, worktree: "w" } }), /not idle/);
+  assert.equal(db.all("events.since", { id: 0 }).length, n); assert.equal(db.get("moons.byId", { id: moon }).status, "gated"); assert.equal(db.get("ships.byId", { id: f }).status, "adrift");
   db.close();
 });

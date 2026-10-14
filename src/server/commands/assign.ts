@@ -93,15 +93,15 @@ export function assignMoon(g: Galaxy, input: { planetId: string; specPath: strin
   }
   const moonId = moon.id;
   append(g.db, {
-    kind: "moon.assigned", system_id: planet.system_id, planet_id: input.planetId, moon_id: moonId,
+    kind: "moon.assigned", system_id: planet.system_id, planet_id: input.planetId, moon_id: moonId, task_id: taskId,
     payload: { task_id: taskId, spec_path: specRel, spec_sha: hashSpec(text).bodySha, touch: spec.touch, depends_on: spec.dependsOn, tier: spec.modelHint ?? "" },
   }, check);
 
   const categories = Object.keys(attention);
   if (categories.length) {
-    append(g.db, { kind: "moon.gate_failed", system_id: planet.system_id, planet_id: input.planetId, moon_id: moonId, payload: { check: "attention", reason: "restricted space", categories } });
+    append(g.db, { kind: "moon.gate_failed", system_id: planet.system_id, planet_id: input.planetId, moon_id: moonId, task_id: taskId, payload: { check: "attention", reason: "restricted space", categories } });
     append(g.db, {
-      kind: "decision.opened", system_id: planet.system_id, planet_id: input.planetId, moon_id: moonId,
+      kind: "decision.opened", system_id: planet.system_id, planet_id: input.planetId, moon_id: moonId, task_id: taskId,
       payload: { kind: "restricted", target_kind: "moon", target_id: taskId, reasoning: `task '${taskId}' touches restricted space: ${categories.join(", ")}` },
     });
   }

@@ -10,7 +10,7 @@ export class TransitionRefused extends Error {
 // Keys are event kinds, qualified as `kind:role` / `kind:verdict` where the payload decides the arrow.
 export const MOON_TRANSITIONS: Record<string, Partial<Record<MoonStatus | "barren", MoonStatus>>> = {
   "moon.assigned": { barren: "emitted" },
-  "moon.gated": { emitted: "gated", adrift: "gated", quarantined: "gated", audited: "gated" },
+  "moon.gated": { emitted: "gated", gated: "gated", adrift: "gated", quarantined: "gated", audited: "gated" },
   "moon.gate_failed": { emitted: "adrift" },
   "voyage.launched:implement": { gated: "implementing" },
   "voyage.audited": { implementing: "audited" },
@@ -31,8 +31,9 @@ export const VOYAGE_TRANSITIONS: Record<string, Partial<Record<VoyageStatus, Voy
   "voyage.cleared": { holding: "cleared" },
   "voyage.departed": { cleared: "en_route" },
   "voyage.docked": { en_route: "docked" },
-  "voyage.superseded": { holding: "superseded", adrift: "superseded", quarantined: "superseded" },
-  "voyage.adrift": { launched: "adrift", working: "adrift", holding: "adrift", en_route: "adrift" },
+  "voyage.superseded": { holding: "superseded", cleared: "superseded", en_route: "superseded", adrift: "superseded", quarantined: "superseded" },
+  // cleared -> adrift: the dock's pre-commit checks (re-audit, worktree registration) can still park an approved voyage
+  "voyage.adrift": { launched: "adrift", working: "adrift", holding: "adrift", cleared: "adrift", en_route: "adrift" },
   "voyage.quarantined": { holding: "quarantined" },
 };
 

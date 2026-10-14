@@ -17,7 +17,7 @@ test("reply after a review-voyage park: freighter voyage superseded, both ships 
   const w = await worldWithMoon("happy"); await launchMoon(w.g, { taskId: "T1", provider: "fake" }); await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-rate-limited" });
   assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).status, "adrift");
   replyMoon(w.g, { taskId: "T1", note: "retry" });
-  assert.ok(w.g.db.all("voyages.byMoon", { moon_id: w.moonId }).every((v) => v.status === "superseded"));
+  assert.ok(w.g.db.all("voyages.byTask", { task_id: "T1" }).every((v) => v.status === "superseded"));
   assert.ok(w.g.db.all("ships.all").every((s) => s.status === "idle"));
   const l2 = await launchMoon(w.g, { taskId: "T1", provider: "fake" }); assert.equal(l2.moonStatus, "audited"); w.cleanup();
 });
@@ -82,3 +82,30 @@ test("a gate_failed park can be replied to and relaunched with a fresh gate", as
   replyMoon(w.g, { taskId: "T1", note: "cleaned" }); fs.rmSync(path.join(wtOf(w), "junk.txt"));
   const l = await launchMoon(w.g, { taskId: "T1", provider: "fake" }); assert.equal(l.moonStatus, "audited"); w.cleanup();
 });
+
+test("I2: moon park parks a voyage whose process is gone (stale:<reason>); refuses when nothing is in flight", async () => {
+  const { parkStaleMoon } = await import("../../dist/server/commands/park.js");
+  const w = await worldWithMoon("happy");
+  assert.throws(() => parkStaleMoon(w.g, { taskId: "T1", reason: "x" }), /only an implementing or reviewing moon/);
+  // A dispatch that never finishes on its own: the moon sits in 'implementing' as if its process had died.
+  let started; const running = new Promise((res) => { started = res; });
+  w.g.adapters.fake = { id: "fake", roles: ["implement", "review"], classify: () => "unknown", fuel: async () => ({ source: "unknown" }),
+    async *dispatch(_job, ctx) { started(); await new Promise((res) => ctx.signal.addEventListener("abort", res, { once: true })); } };
+  const ac = new AbortController(); const launch = launchMoon(w.g, { taskId: "T1", provider: "fake", signal: ac.signal });
+  await running;
+  assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).status, "implementing");
+  const r = parkStaleMoon(w.g, { taskId: "T1", reason: "laptop rebooted" });
+  assert.equal(r.reason, "stale:laptop rebooted");
+  const m = w.g.db.get("moons.byTask", { task_id: "T1" }); assert.equal(m.status, "adrift"); assert.equal(m.park_reason, "stale:laptop rebooted");
+  const v = w.g.db.get("voyages.byId", { id: r.voyageId }); assert.equal(v.status, "adrift");
+  assert.equal(w.g.db.get("ships.byId", { id: v.ship_id }).status, "adrift"); assert.equal(w.g.db.all("decisions.pending").length, 1);
+  assert.throws(() => parkStaleMoon(w.g, { taskId: "T1", reason: "again" }), /only an implementing or reviewing moon/);
+  // If the "dead" process was in fact alive, its late end must not fight the park.
+  ac.abort(); const out = await launch; assert.equal(out.moonStatus, "adrift");
+  assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).park_reason, "stale:laptop rebooted");
+  replyMoon(w.g, { taskId: "T1", note: "go again" });
+  w.g.adapters.fake = (await import("../../dist/providers/fake/index.js")).createFakeAdapter(path.join((await import("../helpers.mjs")).repoRoot, "tests", "fixtures", "scripts"));
+  assert.equal((await launchMoon(w.g, { taskId: "T1", provider: "fake" })).moonStatus, "audited", "a stale park is an ordinary park: reply + relaunch work");
+  w.cleanup();
+});
+

@@ -11,7 +11,7 @@ export function status(g: Galaxy, systemId?: string): { systems: Row[]; moons: R
     for (const p of g.db.all("planets.bySystem", { system_id: s["id"] })) {
       for (const m of g.db.all("moons.byPlanet", { planet_id: p["id"] })) {
         if (m["task_id"] === null || m["task_id"] === undefined) continue;
-        moons.push(m); voyages.push(...g.db.all("voyages.byMoon", { moon_id: m["id"] }));
+        moons.push(m); voyages.push(...g.db.all("voyages.byTask", { task_id: m["task_id"] }));
       }
     }
   }

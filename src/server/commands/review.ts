@@ -29,15 +29,15 @@ function amendmentFor(text: string, round: number, reasoning: string, delta: str
 }
 
 export async function inspectMoon(
-  g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void; reviewScript?: string },
+  g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void; reviewScript?: string; signal?: AbortSignal },
 ): Promise<{ voyageId: string; verdict: ReviewReport | null; moonStatus: MoonStatus }> {
   const { taskId } = input;
   const moon = loadMoon(g, taskId);
   if (moon.status !== "audited") throw new Refusal(`moon ${taskId} is '${moon.status}' — only an 'audited' moon can be inspected`);
-  const freighter = g.db.get<VoyageRow>("voyages.latestByMoonRole", { moon_id: moon.id, role: "implement" });
+  const freighter = g.db.get<VoyageRow>("voyages.latestByTaskRole", { task_id: taskId, role: "implement" });
   if (!freighter || freighter.status !== "holding") throw new Refusal(`moon ${taskId} has no holding freighter voyage to inspect`);
 
-  const audited = g.db.all("events.byMoon", { moon_id: moon.id }).map(rowToEvent)
+  const audited = g.db.all("events.byTask", { task_id: taskId }).map(rowToEvent)
     .filter((e) => e.kind === "voyage.audited" && e.voyage_id === freighter.id).pop();
   if (!audited) throw new Refusal(`voyage ${freighter.id} has no audit on record`);
   const auditJson = JSON.stringify(audited.payload["audit"], null, 2);
@@ -56,7 +56,7 @@ export async function inspectMoon(
   const prompt = input.reviewScript ? `FAKE-SCRIPT: ${input.reviewScript}\n${body}` : body;
 
   const outcome = await runVoyage(g, {
-    role: "review", taskId, provider, worktree, touch: moonTouch(moon), ...(input.onEvent ? { onEvent: input.onEvent } : {}),
+    role: "review", taskId, provider, worktree, touch: moonTouch(moon), ...(input.onEvent ? { onEvent: input.onEvent } : {}), ...(input.signal ? { signal: input.signal } : {}),
     job: { role: "review", specPath: moon.spec_path, specText, prompt, round: moon.round, auditJson },
   });
   const scope = moonScope(g, moon);

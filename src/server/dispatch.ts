@@ -21,6 +21,8 @@ export type DispatchOutcome = {
 export type VoyageInput = {
   role: Role; taskId: string; provider: string; worktree: string; touch: string[];
   job: Omit<Job, "voyageId">; onEvent?: (e: AgentEvent) => void; timeoutMs?: number;
+  /** External abort (the CLI's SIGINT/SIGTERM handler): the voyage parks with reason 'interrupted'. */
+  signal?: AbortSignal;
 };
 
 const PROMPTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "prompts");
@@ -55,8 +57,8 @@ export function loadPlanet(g: Galaxy, moon: MoonRow): PlanetRow {
   return planet;
 }
 /** Event envelope ids for everything that belongs to a moon. */
-export function moonScope(g: Galaxy, moon: MoonRow): Pick<NexusEvent, "system_id" | "planet_id" | "moon_id"> {
-  return { system_id: loadPlanet(g, moon).system_id, planet_id: moon.planet_id, moon_id: moon.id };
+export function moonScope(g: Galaxy, moon: MoonRow): Pick<NexusEvent, "system_id" | "planet_id" | "moon_id" | "task_id"> {
+  return { system_id: loadPlanet(g, moon).system_id, planet_id: moon.planet_id, moon_id: moon.id, task_id: moon.task_id };
 }
 
 export const shipClassFor = (role: Role): ShipClass => (role === "implement" ? "freighter" : "customs");
@@ -74,6 +76,11 @@ export function parkVoyage(g: Galaxy, p: { taskId: string; voyageId: string; shi
   });
 }
 
+/** The human's tree as git sees it: HEAD plus every status path. A voyage must leave it exactly as it found it. */
+function mainTreeSnapshot(g: Galaxy): { head: string; status: string[] } {
+  return { head: g.git.headSha(g.repoRoot), status: g.git.statusPaths(g.repoRoot).sort() };
+}
+
 export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<DispatchOutcome> {
   const moon = loadMoon(g, input.taskId); const scope = moonScope(g, moon);
   const adapter = g.adapters[input.provider];
@@ -81,23 +88,35 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
   const cls = shipClassFor(input.role);
   const ship = pickIdleShip(g.db, cls, input.provider);
   if (!ship) throw new Refusal(`all ${shipsNoun(cls)} in fleet '${input.provider}' are assigned`);
-  const voyageId = `${ship.id}/${input.taskId}/${input.role}/${input.job.round}`;
+  const baseId = `${ship.id}/${input.taskId}/${input.role}/${input.job.round}`;
   const model = input.role === "implement" && moon.tier ? g.config.providers[input.provider]?.models?.[moon.tier] : undefined;
 
-  append(g.db, { kind: "ship.assigned", ...scope, voyage_id: voyageId, ship_id: ship.id, provider: input.provider, payload: { voyage_id: voyageId } }, () => {
+  const before = mainTreeSnapshot(g); // before launch: if git fails here, nothing has been taken yet
+
+  // One transaction: the voyage.launched reducer takes the ship, so a refused launch leaves it idle.
+  const launched: NexusEvent = {
+    kind: "voyage.launched", ...scope, voyage_id: baseId, ship_id: ship.id, provider: input.provider,
+    payload: { role: input.role, round: input.job.round, provider: input.provider, ...(model ? { model } : {}), ship_id: ship.id, worktree: input.worktree },
+  };
+  append(g.db, launched, () => {
     const cur = g.db.get<{ status: string }>("ships.byId", { id: ship.id });
     if (cur?.status !== "idle") throw new Refusal(`ship ${ship.id} is no longer idle`);
+    // A dropped-and-reassigned task restarts its rounds, so the readable id can repeat: suffix #2, #3, ...
+    let id = baseId;
+    for (let n = 2; g.db.get("voyages.byId", { id }); n++) id = `${baseId}#${n}`;
+    launched.voyage_id = id;
   });
-  append(g.db, {
-    kind: "voyage.launched", ...scope, voyage_id: voyageId, ship_id: ship.id, provider: input.provider,
-    payload: { role: input.role, round: input.job.round, provider: input.provider, ...(model ? { model } : {}), ship_id: ship.id, worktree: input.worktree },
-  });
+  const voyageId = launched.voyage_id!;
 
   const out: DispatchOutcome = { voyageId, shipId: ship.id, events: 0 };
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let cost: number | undefined;
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  let abortCause: "timeout" | "interrupted" | undefined;
+  const abortFor = (cause: "timeout" | "interrupted"): void => { if (!ac.signal.aborted) { abortCause = cause; ac.abort(); } };
+  const timer = setTimeout(() => abortFor("timeout"), timeoutMs);
+  const onExternalAbort = (): void => abortFor("interrupted");
+  if (input.signal?.aborted) onExternalAbort(); else input.signal?.addEventListener("abort", onExternalAbort, { once: true });
   const logEvent = (e: AgentEvent): void => { append(g.db, { kind: "voyage.event", ...scope, voyage_id: voyageId, ship_id: ship.id, payload: { event: e } }); };
   // v0 is single-flight (the CLI blocks on one voyage; no daemon until v0.5), so one Galaxy-wide log hook is
   // attributable to exactly one voyage. Concurrent voyages need a per-voyage (AsyncLocalStorage-scoped) hook
@@ -118,7 +137,24 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
     const c = adapter.classify(err);
     out.parkReason = c === "unknown" ? "backend_failure" : c;
   } finally {
-    clearTimeout(timer); g.git.setLog(null);
+    clearTimeout(timer); input.signal?.removeEventListener("abort", onExternalAbort); g.git.setLog(null);
+  }
+
+  // Someone else already parked this voyage (nexus moon park, for a process presumed dead): leave it as it is.
+  const cur = g.db.get<{ status: string }>("voyages.byId", { id: voyageId });
+  if (cur?.status !== "launched" && cur?.status !== "working") {
+    delete out.done; out.parkReason = loadMoon(g, input.taskId).park_reason ?? "parked";
+    return out;
+  }
+
+  // The Bash gap: a delegate's shell can reach outside its worktree. The human's tree must be exactly as it was.
+  const after = mainTreeSnapshot(g);
+  if (after.head !== before.head || JSON.stringify(after.status) !== JSON.stringify(before.status)) {
+    const was = new Set(before.status), now = new Set(after.status);
+    const details = JSON.stringify({ head_before: before.head, head_after: after.head, appeared: after.status.filter((p) => !was.has(p)), vanished: before.status.filter((p) => !now.has(p)) });
+    delete out.done; out.parkReason = "main_tree_modified";
+    parkVoyage(g, { taskId: input.taskId, voyageId, shipId: ship.id, reason: "main_tree_modified", details });
+    return out;
   }
 
   if (out.done) {
@@ -130,8 +166,10 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
     delete out.parkReason;
     return out;
   }
-  const reason = out.parkReason ?? (out.error ? (out.error.data.classification === "unknown" ? "backend_failure" : out.error.data.classification) : "backend_failure");
-  const details = out.threw ?? out.error?.data.message ?? "the stream ended without a result";
+  const reason = abortCause ?? out.parkReason ?? (out.error ? (out.error.data.classification === "unknown" ? "backend_failure" : out.error.data.classification) : "backend_failure");
+  const details = abortCause === "timeout" ? `no result within ${timeoutMs} ms`
+    : abortCause === "interrupted" ? "the dispatching process was interrupted"
+    : out.threw ?? out.error?.data.message ?? "the stream ended without a result";
   out.parkReason = reason;
   parkVoyage(g, { taskId: input.taskId, voyageId, shipId: ship.id, reason, details });
   return out;

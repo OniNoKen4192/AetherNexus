@@ -8,7 +8,7 @@ import { SAFE_ID, idError, parseSpec, sha256, specAppendix, specBody } from "./s
 export type GateBaseline = { task: string; spec_path: string; spec_sha256: string; spec_appendix_sha256: string; touch: string[]; base_sha: string; dispatched_at: string };
 export type GateInput = { git: Git; worktree: string; specPath: string; routing: NexusConfig["routing"]; pipeline: NexusConfig["pipeline"]; stateDir: string; now?: () => string };
 export type GateResult =
-  | { ok: true; task: string; base_sha: string; state_path: string; baseline: GateBaseline }
+  | { ok: true; task: string; base_sha: string; state_path: string; baseline: GateBaseline; /** sha256 of the state file as written */ baseline_sha: string }
   | { ok: false; check: "spec" | "routing" | "clean_baseline" | "security_gate"; reason: string; details?: Record<string, unknown> };
 
 // Fail-closed containment (PATH-MATCHING.md rule 5): resolve the deepest
@@ -37,6 +37,11 @@ function submodulePaths(worktree: string): string[] {
   return out;
 }
 
+/** Pipeline files a task may leave dirty. Deliberately not all of `.nexus`: an edit to `.nexus/config.json` is out of scope. */
+export function pipelineAllowlist(pipeline: NexusConfig["pipeline"]): string[] {
+  return [".nexus/specs", pipeline.tasks_dir, pipeline.plans_dir, pipeline.ledger];
+}
+
 export function gate(input: GateInput): GateResult {
   const { git, worktree, routing, pipeline } = input;
   const fail = (check: Extract<GateResult, { ok: false }>["check"], reason: string, details?: Record<string, unknown>): GateResult =>
@@ -59,7 +64,7 @@ export function gate(input: GateInput): GateResult {
   }
 
   // Clean baseline except pipeline allowlist.
-  const allowlist = [".nexus", pipeline.tasks_dir, pipeline.plans_dir, pipeline.ledger];
+  const allowlist = pipelineAllowlist(pipeline);
   const dirty = git.statusPaths(worktree).filter((p) => !matchAny(allowlist, p));
   if (dirty.length) {
     return fail("clean_baseline", "working tree is not clean — commit or stash these before dispatching so every post-task diff is attributable to the delegate", { dirty });
@@ -92,6 +97,7 @@ export function gate(input: GateInput): GateResult {
   };
   fs.mkdirSync(input.stateDir, { recursive: true });
   const statePath = path.join(input.stateDir, `${spec.taskId}.json`);
-  fs.writeFileSync(statePath, JSON.stringify(baseline, null, 2) + "\n");
-  return { ok: true, task: spec.taskId, base_sha: baseline.base_sha, state_path: statePath, baseline };
+  const stateText = JSON.stringify(baseline, null, 2) + "\n";
+  fs.writeFileSync(statePath, stateText);
+  return { ok: true, task: spec.taskId, base_sha: baseline.base_sha, state_path: statePath, baseline, baseline_sha: sha256(stateText) };
 }

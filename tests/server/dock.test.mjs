@@ -27,7 +27,7 @@ test("dock is idempotent after a crash between merge and event (check-before-act
   // simulate: commit + departed happened, merge happened, but voyage.docked was never written
   const planet = w.g.db.get("planets.byId", { id: w.planetId }); const wt = path.join(w.dir, ".nexus", "worktrees", "T1");
   w.g.git.commitAll(wt, "T1", { name: "implement/fake", email: "nexus@local" });
-  const v = w.g.db.get("voyages.latestByMoonRole", { moon_id: w.moonId, role: "implement" });
+  const v = w.g.db.get("voyages.latestByTaskRole", { task_id: "T1", role: "implement" });
   append(w.g.db, { kind: "voyage.departed", moon_id: w.moonId, voyage_id: v.id, payload: {} });
   w.g.git.mergeNoFF(path.join(w.dir, planet.worktree), "nexus/T1", "manual merge");
   const r = dockMoon(w.g, { taskId: "T1" });          // must not try to merge again
@@ -56,7 +56,7 @@ test("dock refuses before APPROVE", async () => {
 test("dock resumes after a crash past voyage.docked (and past moon.merged)", async () => {
   const w = await approved(); const planet = w.g.db.get("planets.byId", { id: w.planetId }); const wt = path.join(w.dir, ".nexus", "worktrees", "T1");
   w.g.git.commitAll(wt, "T1", { name: "implement/fake", email: "nexus@local" });
-  const v = w.g.db.get("voyages.latestByMoonRole", { moon_id: w.moonId, role: "implement" });
+  const v = w.g.db.get("voyages.latestByTaskRole", { task_id: "T1", role: "implement" });
   append(w.g.db, { kind: "voyage.departed", moon_id: w.moonId, voyage_id: v.id, payload: {} });
   const m = w.g.git.mergeNoFF(path.join(w.dir, planet.worktree), "nexus/T1", "manual merge");
   append(w.g.db, { kind: "voyage.docked", moon_id: w.moonId, voyage_id: v.id, payload: { merge_sha: m.sha, planet_branch: planet.branch } });
@@ -69,4 +69,25 @@ test("dock resumes when only the worktree removal is left (moon merged, ship rel
   dockMoon(w.g, { taskId: "T1" });
   const planet = w.g.db.get("planets.byId", { id: w.planetId }); w.g.git.worktreeAdd(wt, "nexus/T1", w.g.git.revParse(planet.branch));
   const r = dockMoon(w.g, { taskId: "T1" }); assert.equal(r.moonStatus, "merged"); assert.equal(fs.existsSync(wt), false); w.cleanup();
+});
+
+test("I3: a file written into the moon worktree after APPROVE parks the dock as dock_violations; nothing is committed or merged", async () => {
+  const w = await approved(); const planet = w.g.db.get("planets.byId", { id: w.planetId }); const before = w.git("rev-parse", planet.branch);
+  const wt = path.join(w.dir, ".nexus", "worktrees", "T1"); const branchHead = w.git("rev-parse", "nexus/T1");
+  fs.writeFileSync(path.join(wt, "README.md"), "written after the review\n");
+  const r = dockMoon(w.g, { taskId: "T1" });
+  assert.equal(r.moonStatus, "adrift"); assert.equal(r.mergeSha, null);
+  const m = w.g.db.get("moons.byTask", { task_id: "T1" }); assert.equal(m.park_reason, "dock_violations");
+  const v = w.g.db.get("voyages.latestByTaskRole", { task_id: "T1", role: "implement" }); assert.equal(v.status, "adrift");
+  assert.deepEqual(JSON.parse(JSON.parse(v.report).adrift.details).out_of_scope, ["README.md"]);
+  assert.equal(w.git("rev-parse", planet.branch), before, "planet branch untouched"); assert.equal(w.git("rev-parse", "nexus/T1"), branchHead, "nothing committed");
+  assert.equal(w.g.db.all("decisions.pending").length, 1); w.cleanup();
+});
+
+test("C2: dock refuses to commit from an unregistered moon worktree (parks worktree_missing); main untouched", async () => {
+  const w = await approved(); const wt = path.join(w.dir, ".nexus", "worktrees", "T1"); const mainHead = w.git("rev-parse", "main");
+  w.git("worktree", "remove", "--force", wt); fs.mkdirSync(path.join(wt, "src"), { recursive: true }); fs.writeFileSync(path.join(wt, "src", "x.js"), "x\n");
+  const r = dockMoon(w.g, { taskId: "T1" });
+  assert.equal(r.moonStatus, "adrift"); assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).park_reason, "worktree_missing");
+  assert.equal(w.git("rev-parse", "main"), mainHead); assert.equal(w.git("status", "--porcelain"), ""); w.cleanup();
 });

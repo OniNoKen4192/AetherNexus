@@ -4,16 +4,16 @@ import { append } from "../../db/events.js";
 import { appendAmendment, hashSpec } from "../../validate/spec.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
-import { loadMoon, moonScope, type MoonRow } from "../dispatch.js";
+import { loadMoon, moonScope, parkVoyage, type MoonRow } from "../dispatch.js";
 
 type VoyageRow = { id: string; ship_id: string; status: string };
 type DecisionRow = { id: number };
-const SUPERSEDABLE = new Set(["holding", "adrift", "quarantined"]);
+const SUPERSEDABLE = new Set(["holding", "cleared", "en_route", "adrift", "quarantined"]);
 
 /** Supersede every parked voyage of the moon and free its ship. A moon parked with no voyage (carry-over park) has nothing to do. */
 export function releaseMoonVoyages(g: Galaxy, moon: MoonRow, outcome: "reply" | "drop"): void {
   const scope = moonScope(g, moon);
-  for (const v of g.db.all<VoyageRow>("voyages.byMoon", { moon_id: moon.id })) {
+  for (const v of g.db.all<VoyageRow>("voyages.byTask", { task_id: moon.task_id })) {
     if (!SUPERSEDABLE.has(v.status)) continue;
     const vscope = { ...scope, voyage_id: v.id, ship_id: v.ship_id };
     append(g.db, { kind: "voyage.superseded", ...vscope, payload: {} });
@@ -66,6 +66,23 @@ export function dropMoon(g: Galaxy, input: { taskId: string }): { moonId: string
   append(g.db, { kind: "moon.dropped", ...scope, payload: {} });
   append(g.db, { kind: "moon.cleared", ...scope, payload: {} });
   return { moonId: moon.id };
+}
+
+/**
+ * Park a moon whose voyage's process died (crash, kill -9, reboot): the voyage is still 'launched'/'working' in the log
+ * but nothing is driving it. Human-invoked; appends the standard park sequence with reason `stale:<text>`.
+ */
+export function parkStaleMoon(g: Galaxy, input: { taskId: string; reason: string }): { voyageId: string; reason: string } {
+  const moon = loadMoon(g, input.taskId);
+  if (moon.status !== "implementing" && moon.status !== "reviewing") throw new Refusal(`moon ${moon.task_id} is '${moon.status}' — only an implementing or reviewing moon has a voyage to park`);
+  const voyages = g.db.all<VoyageRow>("voyages.byTask", { task_id: moon.task_id });
+  const latest = voyages[voyages.length - 1];
+  if (!latest || (latest.status !== "launched" && latest.status !== "working")) throw new Refusal(`moon ${moon.task_id} has no voyage in flight${latest ? ` (latest ${latest.id} is '${latest.status}')` : ""}`);
+  const note = input.reason.replace(/\s+/g, " ").trim();
+  if (!note) throw new Refusal("a reason is required");
+  const reason = `stale:${note}`;
+  parkVoyage(g, { taskId: moon.task_id, voyageId: latest.id, shipId: latest.ship_id, reason, details: "parked by hand: the voyage's process is gone" });
+  return { voyageId: latest.id, reason };
 }
 
 export function retireShip(g: Galaxy, input: { shipId: string; reason: string }): void {

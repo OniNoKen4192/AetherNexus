@@ -8,7 +8,7 @@ test("APPROVE: verdict recorded, freighter cleared, moon stays reviewing until d
   assert.equal(r.verdict.verdict, "APPROVE"); assert.equal(r.moonStatus, "reviewing");
   assert.equal(w.g.db.get("voyages.byId", { id: l.voyageId }).status, "cleared");
   assert.equal(w.g.db.get("voyages.byId", { id: r.voyageId }).status, "docked");     // customs returned
-  assert.equal(w.g.db.all("verdicts.byMoon", { moon_id: w.moonId })[0].verdict, "APPROVE"); w.cleanup();
+  assert.equal(w.g.db.all("verdicts.byTask", { task_id: "T1" })[0].verdict, "APPROVE"); w.cleanup();
 });
 
 test("FIX: freighter superseded + released, spec amended, body edit refused; round 2 passes", async () => {
@@ -76,5 +76,5 @@ test("a review voyage that parks reports verdict null, moon adrift, and writes n
   const w = await worldWithMoon("happy"); await launchMoon(w.g, { taskId: "T1", provider: "fake" });
   const r = await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-rate-limited" });
   assert.equal(r.verdict, null); assert.equal(r.moonStatus, "adrift");
-  assert.equal(w.g.db.all("verdicts.byMoon", { moon_id: w.moonId }).length, 0); w.cleanup();
+  assert.equal(w.g.db.all("verdicts.byTask", { task_id: "T1" }).length, 0); w.cleanup();
 });

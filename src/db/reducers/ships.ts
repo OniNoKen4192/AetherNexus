@@ -6,7 +6,6 @@ export const shipReducers: Record<string, Reducer> = {
     const ship = (ev.payload as { ship: GeneratedShip }).ship;
     db.run("ships.insert", { id: ship.id, name: ship.name, class: ship.class, fleet: ship.fleet, last_event_id: ev.id });
   },
-  "ship.assigned": setStatus("assigned"),
   "ship.released": (db, ev) => {
     const outcome = (ev.payload as { outcome?: string }).outcome;
     db.run("ships.release", { id: ev.ship_id!, inc: outcome === "docked" || outcome === "superseded" ? 1 : 0, last_event_id: ev.id });

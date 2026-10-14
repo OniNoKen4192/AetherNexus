@@ -17,7 +17,15 @@ export const voyageReducers: Record<string, Reducer> = {
   "voyage.launched": (db, ev) => {
     const p = ev.payload as { role: string; round: number; provider: string; model?: string; ship_id: string; session_id?: string };
     transitionMoon(db, ev.moon_id, `voyage.launched:${p.role}`, ev.id);
-    db.run("voyages.insert", { id: ev.voyage_id!, ship_id: p.ship_id ?? ev.ship_id, moon_id: ev.moon_id ?? null, planet_id: ev.planet_id ?? null, role: p.role, round: p.round, provider: p.provider ?? ev.provider, model: p.model ?? null, session_id: p.session_id ?? null, launched_ts: ev.ts, last_event_id: ev.id });
+    // History is keyed by task, not by body: a body is reused after a drop.
+    const taskId = db.get<{ task_id: string | null }>("moons.byId", { id: ev.moon_id })?.task_id;
+    if (!taskId) throw new Error(`moon '${ev.moon_id}' has no task`);
+    // Launch is one transaction: the ship is taken here, so a refused launch leaves it idle.
+    const shipId = p.ship_id ?? ev.ship_id;
+    const ship = db.get<{ status: string }>("ships.byId", { id: shipId });
+    if (ship?.status !== "idle") throw new Error(`ship '${shipId}' is ${ship ? `'${ship.status}'` : "unknown"}, not idle`);
+    db.run("ships.setStatus", { id: shipId, status: "assigned", last_event_id: ev.id });
+    db.run("voyages.insert", { id: ev.voyage_id!, ship_id: shipId, moon_id: ev.moon_id ?? null, planet_id: ev.planet_id ?? null, task_id: taskId, role: p.role, round: p.round, provider: p.provider ?? ev.provider, model: p.model ?? null, session_id: p.session_id ?? null, launched_ts: ev.ts, last_event_id: ev.id });
   },
   "voyage.event": set("voyage.event"),
   "voyage.returned": (db, ev) => {

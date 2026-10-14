@@ -4,7 +4,7 @@ import type { Git } from "../core/git.js";
 import type { NexusConfig } from "../config/schema.js";
 import { matchAny } from "./match.js";
 import { SAFE_ID, idError, sha256, specAppendix, specBody } from "./spec.js";
-import type { GateBaseline } from "./gate.js";
+import { pipelineAllowlist, type GateBaseline } from "./gate.js";
 
 export type AuditReport = {
   task: string; base_sha: string; spec_modified: boolean; spec_appendix_modified: boolean;
@@ -14,7 +14,9 @@ export type AuditReport = {
 };
 export type AuditInput = {
   git: Git; worktree: string; taskId: string; routing: NexusConfig["routing"]; pipeline: NexusConfig["pipeline"];
-  stateDir: string; specText?: string; ignoreAuthors?: string[];
+  stateDir: string; specText?: string;
+  /** Exact commit SHAs exempt from commits_past_base: the Nexus's own carry-over commits (moon.gated carried_sha). */
+  ignoreShas?: string[];
 };
 
 export function audit(input: AuditInput): AuditReport {
@@ -39,13 +41,11 @@ export function audit(input: AuditInput): AuditReport {
     ...git.untrackedPaths(worktree),
   ]);
 
-  const ignore = input.ignoreAuthors ?? ["nexus"];
-  const commits = git.run(["log", "--format=%H %ae", `${state.base_sha}..HEAD`], { cwd: worktree })
-    .split(/\r?\n/).filter(Boolean)
-    .filter((line) => { const email = line.slice(line.indexOf(" ") + 1); return !ignore.includes(email.split("@")[0]!); })
-    .map((line) => line.split(" ")[0]!);
+  const ignore = new Set(input.ignoreShas ?? []);
+  const commits = git.run(["log", "--format=%H", `${state.base_sha}..HEAD`], { cwd: worktree })
+    .split(/\r?\n/).filter(Boolean).filter((sha) => !ignore.has(sha));
 
-  const allowlist = [".nexus", pipeline.tasks_dir, pipeline.plans_dir, pipeline.ledger];
+  const allowlist = pipelineAllowlist(pipeline);
   const report: AuditReport = {
     task: state.task,
     base_sha: state.base_sha,
