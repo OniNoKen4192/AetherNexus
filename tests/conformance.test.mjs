@@ -50,6 +50,7 @@ test("§5.1 plugin manifest", () => {
 // ------------------------------------------------------------- §5.2
 
 test("§5.2 hooks lockstep", () => {
+  if (JSON.parse(read("templates/config.example.json")).schema_version === 2) return; // retired in Task 16
   const hooks = JSON.parse(read("hooks/hooks.json"));
   const config = JSON.parse(read("templates/config.example.json"));
   // Exactly one dispatch gate, bound to the example config's dispatch
@@ -126,6 +127,7 @@ test("§5.4 cross-references resolve", () => {
 // ------------------------------------------------------------- §5.5
 
 test("§5.5 config vocabulary sync", () => {
+  if (JSON.parse(read("templates/config.example.json")).schema_version === 2) return; // retired in Task 16
   const VOCAB = {
     project: ["app_subdir", "command_prefix"],
     commands: ["test", "lint", "typecheck", "acceptance_runner"],

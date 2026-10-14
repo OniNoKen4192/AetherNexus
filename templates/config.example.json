@@ -1,96 +1,93 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project": {
-    "app_subdir": "wisconsin-ice-exchange",
-    "command_prefix": "cd wisconsin-ice-exchange &&"
+    "app_subdir": "",
+    "command_prefix": ""
   },
   "commands": {
-    "test": "pnpm vitest run",
-    "lint": "pnpm eslint",
-    "typecheck": "pnpm tsc --noEmit",
-    "acceptance_runner": "pnpm vitest run"
+    "test": "npm test",
+    "lint": "",
+    "typecheck": "",
+    "acceptance_runner": "npm test"
   },
-  "backend": {
-    "name": "codex-mcp",
-    "dispatch_tool": "mcp__codex__codex",
-    "reply_tool": "mcp__codex__codex-reply",
-    "approval_mode": "pilot",
-    "tiers": [
-      "sol",
-      "terra",
-      "luna"
+  "providers": {
+    "fake": {
+      "adapter": "fake"
+    },
+    "codex": {
+      "adapter": "codex-mcp",
+      "tiers": [
+        "sol",
+        "terra",
+        "luna"
+      ],
+      "ratelimit_signal": [
+        "usage limit",
+        "rate limit",
+        "429"
+      ],
+      "pool": {
+        "kind": "window",
+        "reserve_floor": 0.1
+      }
+    },
+    "claude": {
+      "adapter": "claude-sdk",
+      "auth": "login",
+      "models": {
+        "frontier": "claude-opus-5-5",
+        "fast": "claude-haiku-5-5"
+      },
+      "pool": {
+        "kind": "window",
+        "reserve_floor": 0.25
+      },
+      "max_turns": 60
+    }
+  },
+  "roles": {
+    "implement": [
+      "codex",
+      "fake"
     ],
-    "ratelimit_signal": [
-      "usage-cap",
-      "429",
-      "rate limit"
-    ],
-    "failover_tiers": [
-      "opus",
-      "sonnet",
-      "haiku"
+    "review": [
+      "claude",
+      "fake"
     ]
   },
   "routing": {
     "security_routed": [
-      "wisconsin-ice-exchange/src/auth.ts",
-      "wisconsin-ice-exchange/src/lib/authz.ts",
-      "wisconsin-ice-exchange/src/lib/availability.ts",
-      "wisconsin-ice-exchange/prisma/schema.prisma",
-      "wisconsin-ice-exchange/prisma/migrations/**"
+      "src/auth/**"
     ],
-    "do_not_touch": [
-      "wisconsin-ice-exchange/src/components/ui/**",
-      "wisconsin-ice-exchange/pnpm-lock.yaml",
-      "wisconsin-ice-exchange/.env",
-      "wisconsin-ice-exchange/.env.example"
-    ],
+    "do_not_touch": [],
     "attention": {
       "billing": [
-        "wisconsin-ice-exchange/src/lib/billing/**"
-      ]
-    }
-  },
-  "review_suite": {
-    "suite_command": "pnpm test:ux",
-    "id_pattern": "<id>-",
-    "id_index": "docs/workflows.md",
-    "route_map": {
-      "wisconsin-ice-exchange/src/app/admin/**": [
-        "a1",
-        "a2",
-        "a3",
-        "a4",
-        "a5",
-        "a6",
-        "a7",
-        "a8"
-      ],
-      "wisconsin-ice-exchange/src/app/org/**": [
-        "o1",
-        "o2",
-        "o3",
-        "o4"
-      ],
-      "wisconsin-ice-exchange/src/app/teams/**": [
-        "s5",
-        "s6",
-        "s7",
-        "s10",
-        "v2"
-      ],
-      "wisconsin-ice-exchange/src/app/account/**": [
-        "s11"
+        "src/billing/**"
       ]
     }
   },
   "pipeline": {
-    "plans_dir": "docs/superpowers/plans",
-    "tasks_dir": "docs/superpowers/tasks",
-    "ledger": ".superpowers/sdd/progress.md"
+    "plans_dir": ".nexus/plans",
+    "tasks_dir": ".nexus/specs",
+    "ledger": "docs/nexus/manifest.md"
   },
   "automation": {
     "level": "manual",
     "max_fix_rounds": 2
+  },
+  "scheduler": {
+    "max_concurrent_ships": 6,
+    "max_concurrent_systems": 1,
+    "per_provider_max": {}
+  },
+  "db": {
+    "stats": false
+  },
+  "fleet": {
+    "freighters": 6,
+    "customs": 2,
+    "carriers": 1,
+    "surveyors": 1,
+    "name_theme": "classic"
   }
 }
