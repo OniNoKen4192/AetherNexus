@@ -50,6 +50,9 @@ function dropUnknown(args: Record<string, unknown>, schema: unknown): { kept: Re
   return { kept, dropped };
 }
 
+/** Customs never writes: a review runs in Codex's read-only sandbox. */
+const sandboxFor = (job: Job): string => (job.role === "review" ? "read-only" : "workspace-write");
+
 /** Builds the tool arguments (first call -> `codex`, round > 1 -> `codex-reply`) and drops keys the server's schema does not advertise. */
 export function buildCodexArgs(job: Job, ctx: DispatchCtx, schema: unknown, cfg?: ProviderConfig): Record<string, unknown> {
   return buildWithDropped(job, ctx, schema, cfg).kept;
@@ -59,7 +62,7 @@ function buildWithDropped(job: Job, ctx: DispatchCtx, schema: unknown, cfg?: Pro
   if (job.previousSessionId) return dropUnknown({ prompt: job.prompt, threadId: job.previousSessionId }, schema);
   const hint = modelHintOf(job.specText);
   const model = (hint ? cfg?.models?.[hint] : undefined) ?? cfg?.models?.["default"];
-  return dropUnknown({ prompt: job.prompt, cwd: ctx.cwd, sandbox: "workspace-write", "approval-policy": "never", ...(model ? { model } : {}) }, schema);
+  return dropUnknown({ prompt: job.prompt, cwd: ctx.cwd, sandbox: sandboxFor(job), "approval-policy": "never", ...(model ? { model } : {}) }, schema);
 }
 
 /** Parse `git status --porcelain -z`: "XY path\0"; renames/copies are followed by an extra "origpath\0". */
@@ -101,7 +104,7 @@ export function createCodexAdapter(id: string, cfg: ProviderConfig, deps: Deps =
       let client: McpClientLike | undefined;
       try {
         const tool = job.previousSessionId ? "codex-reply" : "codex";
-        yield text(`dispatching to codex mcp-server (tool ${tool}, sandbox workspace-write)`);
+        yield text(`dispatching to codex mcp-server (tool ${tool}, sandbox ${sandboxFor(job)})`);
         client = await make(ctx.cwd, onStderr);
         const listed = await client.listTools();
         const { kept, dropped } = buildWithDropped(job, ctx, listed.tools.find((t) => t.name === tool)?.inputSchema, cfg);

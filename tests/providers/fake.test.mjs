@@ -42,3 +42,26 @@ test("report parsers", () => {
   assert.equal(parseReviewReport("…\nVERDICT: REJECT\nreason here").verdict, "REJECT");
   assert.deepEqual(parseReviewReport("no verdict").verdict, "FIX");
 });
+
+test("I6: parseReviewReport splits reasoning from a multi-line DELTA SPEC block", () => {
+  const text = [
+    "I re-ran the acceptance tests and read the diff.",
+    "",
+    "VERDICT: FIX",
+    "The implementation adds X but the test only checks the happy path.",
+    "Edge case for an empty input is missing.",
+    "",
+    "DELTA SPEC:",
+    "- Add a test for thing() with an empty array.",
+    "- thing([]) must return 0.",
+    "",
+  ].join("\n");
+  const r = parseReviewReport(text);
+  assert.equal(r.verdict, "FIX");
+  assert.equal(r.reasoning, "The implementation adds X but the test only checks the happy path.\nEdge case for an empty input is missing.");
+  assert.equal(r.delta_spec, "- Add a test for thing() with an empty array.\n- thing([]) must return 0.");
+  assert.equal(r.raw, text);
+  const inline = parseReviewReport("VERDICT: FIX\nneeds a test\nDELTA SPEC: add a test for []");
+  assert.equal(inline.reasoning, "needs a test"); assert.equal(inline.delta_spec, "add a test for []");
+  const approve = parseReviewReport("VERDICT: APPROVE\nall good"); assert.equal(approve.reasoning, "all good"); assert.equal("delta_spec" in approve, false);
+});

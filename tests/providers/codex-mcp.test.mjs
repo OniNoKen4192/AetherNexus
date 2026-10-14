@@ -82,3 +82,14 @@ test("abort: closes the client and emits no done", async () => {
   } finally { repo.cleanup(); }
 });
 test("textOf joins text blocks", () => assert.equal(textOf({ content: [{ type: "text", text: "a" }, { type: "image" }, { type: "text", text: "b" }] }), "ab"));
+
+test("I3: review-role calls run in Codex's read-only sandbox", async () => {
+  const repo = makeRepo(); const s = stub({ result: { content: [{ type: "text", text: "VERDICT: APPROVE\nfine" }] } });
+  try {
+    const a = createCodexAdapter("codex", cfg, { makeClient: async () => s.client });
+    const ev = await run(a, { ...baseJob, role: "review" }, mkCtx(repo.dir));
+    assert.equal(s.calls[0].arguments.sandbox, "read-only"); assert.match(ev[0].data.text, /sandbox read-only/);
+    assert.equal(buildCodexArgs({ ...baseJob, role: "review" }, mkCtx(repo.dir), SCHEMA, cfg).sandbox, "read-only");
+    assert.equal(buildCodexArgs(baseJob, mkCtx(repo.dir), SCHEMA, cfg).sandbox, "workspace-write");
+  } finally { repo.cleanup(); }
+});

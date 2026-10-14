@@ -3,9 +3,9 @@ import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { ProviderConfig } from "../../config/schema.js";
 import { parseImplementReport, parseReviewReport } from "../adapter.js";
 import type { AgentEvent, ErrorClass, FuelReading, Job, DispatchCtx, ProviderAdapter, Role } from "../adapter.js";
-import { makeTouchGate, WRITE_TOOLS } from "./gate-hook.js";
+import { makeBashGitGate, makeTouchGate, WRITE_TOOLS } from "./gate-hook.js";
 
-export { makeTouchGate };
+export { makeBashGitGate, makeTouchGate };
 
 /**
  * Per-role tool allowlists. The spike (docs/spikes/2026-10-14-sdk-probe/README.md §1) proved `tools: [...]` is a
@@ -109,7 +109,10 @@ export function createClaudeAdapter(id: string, cfg: ProviderConfig, deps: { que
         ...(cfg.max_budget_usd ? { maxBudgetUsd: cfg.max_budget_usd } : {}),
         ...(job.previousSessionId ? { resume: job.previousSessionId } : {}),
         ...(cfg.models?.["frontier"] ? { model: cfg.models["frontier"] } : {}),
-        hooks: { PreToolUse: [{ matcher: "Write|Edit|MultiEdit|NotebookEdit", hooks: [makeTouchGate(ctx.touch, ctx.cwd)] }] },
+        hooks: { PreToolUse: [
+          { matcher: "Write|Edit|MultiEdit|NotebookEdit", hooks: [makeTouchGate(ctx.touch, ctx.cwd)] },
+          { matcher: "Bash", hooks: [makeBashGitGate()] },
+        ] },
       };
       let q: Q;
       try { q = run({ prompt: job.prompt, options }) as Q; } catch (e) { yield text(String(e)); yield errEvent(classify(e), e instanceof Error ? e.message : String(e)); return; }

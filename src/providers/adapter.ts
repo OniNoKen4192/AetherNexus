@@ -42,6 +42,11 @@ export function parseImplementReport(text: string): ImplementReport {
 export function parseReviewReport(text: string): ReviewReport {
   const m = text.match(/VERDICT:\s*(APPROVE|FIX|REJECT)\b/);
   if (!m) return { verdict: "FIX", reasoning: "no verdict line in report", raw: text };
-  const after = text.slice((m.index ?? 0) + m[0].length).trim();
-  return { verdict: m[1] as ReviewReport["verdict"], reasoning: after, raw: text };
+  const verdict = m[1] as ReviewReport["verdict"];
+  const after = text.slice((m.index ?? 0) + m[0].length);
+  // Everything after a "DELTA SPEC:" line (or the text following the label on that line) is the delta; before it, reasoning.
+  const d = /^[ \t]*DELTA SPEC:[ \t]*/m.exec(after);
+  if (!d) return { verdict, reasoning: after.trim(), raw: text };
+  const delta = after.slice(d.index + d[0].length).trim();
+  return { verdict, reasoning: after.slice(0, d.index).trim(), ...(delta ? { delta_spec: delta } : {}), raw: text };
 }

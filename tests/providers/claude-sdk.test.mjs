@@ -53,7 +53,7 @@ test("adapter wires query options: cwd, env, strictMcpConfig, settingSources, ho
   assert.equal(events[0].kind, "text"); assert.match(events[0].data.text, /auth mode: login/);
   assert.equal(seen.options.cwd, "/wt"); assert.equal(seen.options.strictMcpConfig, true); assert.deepEqual(seen.options.settingSources, ["project"]); assert.equal(seen.options.maxTurns, 7); assert.equal(seen.options.resume, "prev"); assert.equal(seen.options.permissionMode, "dontAsk"); assert.equal(seen.options.model, "m1");
   assert.deepEqual(seen.options.tools, ["Read", "Grep", "Glob", "Bash", "Edit", "Write", "MultiEdit"]); assert.deepEqual(seen.options.allowedTools, seen.options.tools);
-  assert.ok(seen.options.hooks.PreToolUse.length === 1); assert.equal("ANTHROPIC_API_KEY" in seen.options.env, false);
+  assert.deepEqual(seen.options.hooks.PreToolUse.map((h) => h.matcher), ["Write|Edit|MultiEdit|NotebookEdit", "Bash"]); assert.equal("ANTHROPIC_API_KEY" in seen.options.env, false);
   await run(a, { ...job, role: "review" }); assert.deepEqual(seen.options.tools, ["Read", "Grep", "Glob", "Bash"]); assert.deepEqual(seen.options.allowedTools, seen.options.tools);
   assert.equal(a.classify(new Error("rate limit exceeded (429)")), "rate_limited"); assert.equal(a.classify(new Error("ECONNRESET")), "backend_failure");
   assert.equal(a.classify(new Error("overloaded")), "capacity"); assert.equal(a.classify(new Error("???")), "unknown");
@@ -76,4 +76,14 @@ test("abort calls interrupt and stops", async () => {
   q.interrupt = async () => { interrupted = true; };
   const p = run(createClaudeAdapter("claude", { adapter: "claude-sdk", auth: "login" }, { query: () => q }), job, ctx(ac.signal));
   setTimeout(() => ac.abort(), 10); await p; assert.equal(interrupted, true);
+});
+
+test("I4c: the Bash hook denies git state changes and passes inspection and other commands", async () => {
+  const { makeBashGitGate } = await import("../../dist/providers/claude-sdk/index.js");
+  const hook = makeBashGitGate(); const bash = (command) => hook({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command }, tool_use_id: "1", session_id: "s", cwd: "/wt" }, "1", sig);
+  for (const c of ["git commit -m x", "cd sub && git push origin main", "git checkout main", "git switch -c x", "git reset --hard", "git rebase main", "git merge x", "git stash", "git branch -D x", "git branch -m a b", "git worktree add ../x", "git clean -fdx", "git  commit --amend"]) {
+    const r = await bash(c); assert.equal(r.hookSpecificOutput?.permissionDecision, "deny", c); assert.equal(r.hookSpecificOutput.permissionDecisionReason, "git state is owned by the Nexus");
+  }
+  for (const c of ["git status", "git log --oneline", "git diff HEAD", "git branch --list", "git show HEAD:src/a.js", "npm test", "echo committed"]) assert.deepEqual(await bash(c), {}, c);
+  assert.deepEqual(await hook({ hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { command: "git commit" }, tool_use_id: "1", session_id: "s", cwd: "/wt" }, "1", sig), {});
 });

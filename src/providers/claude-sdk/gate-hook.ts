@@ -19,3 +19,16 @@ export function makeTouchGate(touch: string[], cwd: string): HookCallback {
     return { hookSpecificOutput: { hookEventName: "PreToolUse" as const, permissionDecision: "allow" as const, permissionDecisionReason: "inside touch" } };
   };
 }
+
+/** Git commands that change repository state. The Nexus owns git state; a delegate's shell may only inspect it. */
+export const GIT_STATE_COMMAND = /\bgit\s+(push|commit|checkout|switch|reset|rebase|merge|stash|branch\s+-[dDfm]|worktree|clean)\b/;
+
+/** PreToolUse hook on Bash: deny commands that would change git state (the touch gate cannot see shell writes). */
+export function makeBashGitGate(): HookCallback {
+  return async (input) => {
+    if (input.hook_event_name !== "PreToolUse" || input.tool_name !== "Bash") return {};
+    const command = String(((input.tool_input ?? {}) as Record<string, unknown>)["command"] ?? "");
+    if (!GIT_STATE_COMMAND.test(command)) return {};
+    return { hookSpecificOutput: { hookEventName: "PreToolUse" as const, permissionDecision: "deny" as const, permissionDecisionReason: "git state is owned by the Nexus" } };
+  };
+}
