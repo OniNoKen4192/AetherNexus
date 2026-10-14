@@ -94,3 +94,16 @@ function tryParse(s) {
 }
 
 export const tmpDb = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "nexus-db-")), "nexus.db");
+
+export function makeRepo() {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nexus-repo-")));
+  const git = (...args) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" }).trimEnd();
+  git("init", "-q", "-b", "main"); git("config", "user.email", "fixture@example.com"); git("config", "user.name", "fixture");
+  fs.mkdirSync(path.join(dir, "src", "lib"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "src", "lib", "thing.js"), "export const thing = 1;\n");
+  fs.writeFileSync(path.join(dir, "src", "auth.ts"), "export const guard = true;\n");
+  fs.writeFileSync(path.join(dir, "README.md"), "# fixture\n");
+  git("add", "-A"); git("commit", "-qm", "fixture baseline");
+  const cleanup = () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} };
+  return { dir, git, cleanup, write: (rel, text) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), text); } };
+}
