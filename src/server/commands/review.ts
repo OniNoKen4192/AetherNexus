@@ -30,7 +30,7 @@ function amendmentFor(text: string, round: number, reasoning: string, delta: str
 
 export async function inspectMoon(
   g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void; reviewScript?: string },
-): Promise<{ voyageId: string; verdict: ReviewReport; moonStatus: MoonStatus }> {
+): Promise<{ voyageId: string; verdict: ReviewReport | null; moonStatus: MoonStatus }> {
   const { taskId } = input;
   const moon = loadMoon(g, taskId);
   if (moon.status !== "audited") throw new Refusal(`moon ${taskId} is '${moon.status}' — only an 'audited' moon can be inspected`);
@@ -61,9 +61,8 @@ export async function inspectMoon(
   });
   const scope = moonScope(g, moon);
   if (!outcome.done) {
-    // runVoyage parked the review voyage and the moon; surface the state as-is.
-    const verdict: ReviewReport = { verdict: "FIX", reasoning: `review voyage parked: ${outcome.parkReason ?? "unknown"}`, raw: "" };
-    return { voyageId: outcome.voyageId, verdict, moonStatus: loadMoon(g, taskId).status as MoonStatus };
+    // runVoyage parked the review voyage and the moon: no verdict was issued, so none is reported.
+    return { voyageId: outcome.voyageId, verdict: null, moonStatus: loadMoon(g, taskId).status as MoonStatus };
   }
 
   const verdict = outcome.done.data.report as ReviewReport;

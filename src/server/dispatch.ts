@@ -92,6 +92,9 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   const logEvent = (e: AgentEvent): void => { append(g.db, { kind: "voyage.event", ...scope, voyage_id: voyageId, ship_id: ship.id, payload: { event: e } }); };
+  // v0 is single-flight (the CLI blocks on one voyage; no daemon until v0.5), so one Galaxy-wide log hook is
+  // attributable to exactly one voyage. Concurrent voyages need a per-voyage (AsyncLocalStorage-scoped) hook
+  // before v0.5 enables them.
   // Every git command issued while the voyage is in flight becomes a tool_use event on it.
   g.git.setLog((entry) => {
     try { logEvent({ kind: "tool_use", ts: new Date().toISOString(), data: { name: "git", input: entry.args } }); } catch { /* logging must never break git */ }

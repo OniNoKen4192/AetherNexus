@@ -64,3 +64,12 @@ test("renderPrompt substitutes in one pass and throws on an unknown variable", (
   assert.throws(() => renderPrompt(tmp, { x: "1" }), /unknown variable '\{\{y\}\}'/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("an audit that throws parks the voyage as audit_error instead of stranding the moon", async () => {
+  const w = await worldWithMoon("happy");
+  const r = await launchMoon(w.g, { taskId: "T1", provider: "fake" }, { audit: () => { throw new Error("boom"); } });
+  assert.equal(r.audit, null); assert.equal(r.moonStatus, "adrift");
+  assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).park_reason, "audit_error");
+  assert.equal(w.g.db.get("voyages.byId", { id: r.voyageId }).status, "adrift");
+  assert.match(w.g.db.all("decisions.pending")[0].reasoning, /boom/); w.cleanup();
+});

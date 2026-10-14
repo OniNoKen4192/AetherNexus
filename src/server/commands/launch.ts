@@ -32,8 +32,20 @@ function pickProvider(g: Galaxy, requested: string | undefined): string {
   return first;
 }
 
+/** Run the audit; if it throws, park the voyage (reason audit_error) instead of stranding the moon in 'implementing'. */
+export function runAuditOrPark(g: Galaxy, p: { taskId: string; worktree: string; voyageId: string; shipId: string }, auditFn: typeof audit = audit): AuditReport | null {
+  try {
+    return auditFn({ git: g.git, worktree: p.worktree, taskId: p.taskId, routing: g.config.routing, pipeline: g.config.pipeline, stateDir: g.paths.stateDir });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    parkVoyage(g, { taskId: p.taskId, voyageId: p.voyageId, shipId: p.shipId, reason: "audit_error", details: JSON.stringify({ message }) });
+    return null;
+  }
+}
+
 export async function launchMoon(
   g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void },
+  deps?: { audit?: typeof audit },
 ): Promise<{ voyageId: string; audit: AuditReport | null; moonStatus: MoonStatus }> {
   const { taskId } = input;
   const moon = loadMoon(g, taskId);
@@ -71,7 +83,20 @@ export async function launchMoon(
   syncIn(specAbs, path.join(worktree, moon.spec_path));
   // A FIX round starts from a clean baseline: the previous round's work becomes a nexus-authored commit
   // (the audit ignores nexus commits), so this round's audit shows only this round's changes.
-  if (fixRound) g.git.commitAll(worktree, `nexus: ${taskId} round ${moon.round} work`, NEXUS_AUTHOR);
+  let carriedSha: string | undefined;
+  if (fixRound) {
+    // Re-audit against the round-1 baseline first: anything that changed in the worktree since that audit
+    // (customs runs there; a human may edit) would otherwise be committed as 'nexus' and never audited again.
+    const carry = (deps?.audit ?? audit)({ git: g.git, worktree, taskId, routing: g.config.routing, pipeline: g.config.pipeline, stateDir: g.paths.stateDir });
+    if (carry.verdict === "violations") {
+      // The round-1 freighter voyage is already superseded (cannot go adrift), so park the moon itself.
+      const details = { out_of_scope: carry.out_of_scope, forbidden: carry.forbidden, ...(carry.error ? { error: carry.error } : {}) };
+      append(g.db, { kind: "moon.adrift", ...scope, payload: { reason: "carryover_violations" } });
+      append(g.db, { kind: "decision.opened", ...scope, payload: { kind: "adrift", target_kind: "moon", target_id: taskId, reasoning: `round ${moon.round} work changed after its audit (carryover_violations): ${JSON.stringify(details)}` } });
+      return { voyageId: "", audit: carry, moonStatus: "adrift" };
+    }
+    carriedSha = g.git.commitAll(worktree, `nexus: ${taskId} round ${moon.round} work`, NEXUS_AUTHOR) ?? g.git.headSha(worktree);
+  }
 
   const gated = gate({ git: g.git, worktree, specPath: moon.spec_path, routing: g.config.routing, pipeline: g.config.pipeline, stateDir: g.paths.stateDir });
   if (!gated.ok) {
@@ -81,7 +106,7 @@ export async function launchMoon(
     }
     throw new Refusal(`gate failed (${gated.check}): ${gated.reason}`, gated.details);
   }
-  if (status !== "gated") append(g.db, { kind: "moon.gated", ...scope, payload: { base_sha: gated.base_sha, state_path: gated.state_path, round } });
+  if (status !== "gated") append(g.db, { kind: "moon.gated", ...scope, payload: { base_sha: gated.base_sha, state_path: gated.state_path, round, ...(carriedSha ? { carried_sha: carriedSha } : {}) } });
 
   const previous = g.db.get<{ session_id: string | null }>("voyages.latestByMoonRole", { moon_id: moon.id, role: "implement" });
   const deltaSpec = fixRound ? lastVerdict?.delta_spec ?? undefined : undefined;
@@ -97,7 +122,8 @@ export async function launchMoon(
 
   let report: AuditReport | null = null;
   if (outcome.done) {
-    report = audit({ git: g.git, worktree, taskId, routing: g.config.routing, pipeline: g.config.pipeline, stateDir: g.paths.stateDir });
+    report = runAuditOrPark(g, { taskId, worktree, voyageId: outcome.voyageId, shipId: outcome.shipId }, deps?.audit ?? audit);
+    if (!report) return { voyageId: outcome.voyageId, audit: null, moonStatus: loadMoon(g, taskId).status as MoonStatus };
     append(g.db, { kind: "voyage.audited", ...scope, voyage_id: outcome.voyageId, ship_id: outcome.shipId, payload: { audit: report } });
     const impl = outcome.done.data.report as ImplementReport;
     if (PARK_STATUSES.has(impl.status)) {

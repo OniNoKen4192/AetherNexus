@@ -132,11 +132,8 @@ re-derive glob matches by judgment. For the diff content itself, use
      dispatch: reality is recorded by APPENDING an amendment, never by
      rewriting the contract — a polished history that forgets how the
      task changed is worse than the deviation it hides. You have no
-     Write tool: emit the complete amendment entry in the SPEC_UPDATE
-     section of your verdict for the controller to append under the
-     spec's `## Amendments` section (created at the file's end on
-     first use). Never mark a deviation accepted without its
-     SPEC_UPDATE entry.
+     Write tool, and the Nexus applies amendments itself: note the
+     accepted deviation and your reasoning in the verdict text.
    - **Rejected** — the deviation is wrong. It becomes a line item in
      the FIX delta spec.
 4. **Existing tests modified?** If the diff edits a pre-existing test,
@@ -204,7 +201,7 @@ suite is then the entire regression gate for this project.
 Exactly one of the three, as the first line of your report:
 
 **VERDICT: APPROVE** — scope clean, contracts match, all reruns green,
-all deviations ruled Accepted (with SPEC_UPDATE entries). Include:
+all deviations ruled Accepted. Include:
 
 - The ledger line, ready to append to the project's ledger (`ledger`
   field, `.nexus/config.json`), matching its existing format exactly:
@@ -245,18 +242,6 @@ Every verdict also includes, after the first line:
     SCOPE: <changed files vs Touch list — clean | violations listed>
     CONTRACT: <criteria traceability + interface match summary>
     DEVIATIONS_RULED: <each entry: accepted | rejected, one line each — or "none declared">
-    SPEC_UPDATE: <for each accepted deviation, the complete amendment
-      entry to APPEND under the spec's `## Amendments` section — or
-      "none". Append-only: never edits to the sections above the
-      marker. Entry format:
-
-      ### A<n> — <YYYY-MM-DD> — accepted deviation
-      - **Original sha256**: <spec_sha256 from .nexus/state/<task-id>.json>
-      - **Verdict ref**: <this verdict + task id + customs>
-      - **Deviation**: <what was done differently>
-      - **Reason accepted**: <why>
-      - **Affected paths**: <paths involved>
-      - **Acceptance criteria**: <replacement criteria, or "unchanged">
     RERUN_EVIDENCE: <each command you ran with its tail output/counts —
       acceptance, unit, typecheck, lint, and e2e if applicable (or the
       no-review_suite fallback line from Phase 4 if not). Real output
@@ -275,15 +260,10 @@ Every verdict also includes, after the first line:
   tests + one file outside Touch = FIX or REJECT, every time.
 - **One review per invocation.** If you're handed two tasks' worth of
   diff, that's a REJECT (planner must split), not two reviews.
-- **The ONE file exception:** accepted deviations require an amendment
-  APPENDED to the spec file — but via the SPEC_UPDATE entry in your
-  verdict for the controller to append, never by you, and never as an
-  edit to the sections above the `## Amendments` marker. The validator
-  hashes only the content above the marker, so appended amendments
-  never trip the audit's `spec_modified` tamper check — a body edit
-  still does. The spec file the controller amends is always the
-  MAIN-tree working copy; a worktree's copy is a synced snapshot,
-  refreshed only when a worktree is (re)created.
+- **The spec is never edited by you.** The Nexus appends FIX deltas to
+  the `## Amendments` section itself; the validator hashes only the
+  content above the marker, so a body edit trips the audit's
+  `spec_modified` check.
 
 # Output
 
