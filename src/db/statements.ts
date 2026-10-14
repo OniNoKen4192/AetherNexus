@@ -23,5 +23,11 @@ export const STATEMENTS = {
   "moons.byTask": "SELECT * FROM moons WHERE task_id = @task_id",
   "moons.byPlanet": "SELECT * FROM moons WHERE planet_id = @planet_id ORDER BY orbit_index",
   "moons.firstBarren": "SELECT * FROM moons WHERE planet_id = @planet_id AND body_status = 'barren' ORDER BY orbit_index LIMIT 1",
+  "ships.insert": "INSERT INTO ships(id, name, class, fleet, status, voyage_count, last_event_id) VALUES (@id, @name, @class, @fleet, 'idle', 0, @last_event_id)",
+  "ships.byId": "SELECT * FROM ships WHERE id = @id",
+  "ships.all": "SELECT * FROM ships ORDER BY fleet, class, name",
+  "ships.pickIdle": "SELECT * FROM ships WHERE class = @class AND fleet = @fleet AND status = 'idle' ORDER BY voyage_count, name LIMIT 1",
+  "ships.setStatus": "UPDATE ships SET status = @status, last_event_id = @last_event_id WHERE id = @id",
+  "ships.release": "UPDATE ships SET status = 'idle', voyage_count = voyage_count + @inc, last_event_id = @last_event_id WHERE id = @id",
 } as const satisfies Record<string, string>;
 export type StatementName = keyof typeof STATEMENTS;
