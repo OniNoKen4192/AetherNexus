@@ -26,7 +26,5 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
-      - name: Validator selftest
-        run: node bin/lanes-validate.mjs selftest
-      - name: Conformance suite
-        run: node --test
+      - run: npm ci
+      - run: npm test

@@ -15,16 +15,21 @@ Fork of Lanes (https://github.com/OniNoKen4192/Lanes), a Claude Code plugin for 
 - Keep diffs scoped to the task. No drive-by refactors; flag them instead.
 - Fix root causes, not symptoms. Don't suppress errors or skip hooks/tests to get green.
 - Commit only when asked. Work on feature branches, never directly on `main`.
+- Every third-party file (3D model, texture, font, sound) gets a line in `assets/LICENSES.md` — source URL and license — in the same commit that adds it.
 
 ## Fork notes
 - `origin` = OniNoKen4192/AetherNexus, `upstream` = OniNoKen4192/Lanes. Sync with `git fetch upstream` + merge/rebase. Push to `upstream` is disabled locally.
 - Record divergences from upstream here as they're decided (architecture, renamed modules, dropped features).
+- v0 (2026-10-14): `bin/lanes-validate.mjs` and `hooks/` retired; ported to `src/validate`, `src/core/git.ts`, `src/providers/claude-sdk/gate-hook.ts`.
 
 ## Commands
-- No dependencies to install; plain Node (CI tests Node 22 and 24).
-- Validator selftest: `node bin/lanes-validate.mjs selftest`
-- Full suite: `node --test` (~2 min). Single file: `node --test tests/<file>`
-- CI (`.github/workflows/ci.yml`) runs both on Linux, Windows and macOS.
+- `npm install` (SDK + MCP client deps); `npm run build` (tsc to `dist/`).
+- `npm test`: full suite, ~70 s, builds first. One area: `npm test -- "tests/<dir>/*.test.mjs"` (Node 22.14 rejects a bare directory argument).
+- Real adapters: `NEXUS_LIVE=1 npm test -- "tests/live/*.test.mjs"`. Never CI; spends the user's pool, so ask first.
+- Validator selftest: `node dist/cli/main.js validate --selftest`
+- CI (`.github/workflows/ci.yml`) runs the suite on Linux, Windows and macOS.
 
 ## Gotchas
-- The upstream Lanes plugin (`lanes@lanes`) is installed in this Claude Code environment; editing files here does not change it. This fork's plugin is named `nexus` so the two can load side by side. Command/agent/config names inside are still `lanes-*` until ported (see `docs/2026-10-10-aether-nexus-design.md` §12).
+- `npm test` builds first; a stale `dist/` is the usual cause of a test importing a function that "does not exist".
+- `node:sqlite` prints an ExperimentalWarning unless run via the npm scripts or the `nexus` entry.
+- The upstream Lanes plugin (`lanes@lanes`) is installed in this Claude Code environment; editing files here does not change it.

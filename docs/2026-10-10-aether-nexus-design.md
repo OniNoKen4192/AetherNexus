@@ -35,21 +35,28 @@ Everything below was settled in conversation. Anything *not* in this table is a 
 
 The metaphor is load-bearing in the UI and in event names. Internals keep plain names where Lanes already has them (`worktree`, `spec`, `verdict`) so the validator and tests port cleanly.
 
+**Places don't move; ships do.** Galaxies, systems, planets and moons are places with a status. Ships are the units of motion: persistent, named entities in a per-galaxy roster, each belonging to a fleet (one fleet per provider; the hull tint). A **voyage** is one assignment of a ship to a moon or planet in one role; a ship outlives any single agent process, which is a *phase* of a voyage. Finished work is **cargo**, and a ship carries it upward. *(Revised 2026-10-13; see `docs/superpowers/specs/2026-10-13-v0-skeleton-design.md` §4.)*
+
 | Concept | Aether Nexus term | Lanes term | Notes |
 |---|---|---|---|
 | Project (one repo, one server) | **Galaxy** | project | One server instance = one galaxy. |
-| A feature/bug run (one integration branch) | **System** (solar system) | highway run | Star = the integration branch; its light = run health. |
-| Work stream inside a run | **Planet** | stream | Territory = the planet's surface; disjoint globs = no overlapping orbits. |
-| Task (one spec, one worktree) | **Moon** | task | Orbits its planet. Moon mass = difficulty score. |
-| Agent in flight (implementer/reviewer/planner) | **Ship** | subagent | Freighter = implementer, Inspector = reviewer, Surveyor = planner. Hull color = provider. |
-| The orchestrator | **The Nexus** (dispatch HQ) | — | Station at the galactic core. |
+| A feature/bug run | **System** (solar system) | highway run | The home star is scenery; its light = run health. |
+| Integration branch | **Fleet HQ** | highway/integration | A station orbiting the system's home star. Carriers deliver finished streams here. |
+| Landing on `main` | **The portal** | (human merges) | HQ → `main`, the one trip the human flies. The work leaves the system. |
+| Work stream inside a run | **Planet** | stream | A stream is *assigned* to an existing planet. Territory = the planet's surface; disjoint globs = no overlapping orbits. |
+| Task (one spec, one worktree) | **Moon** | task | A task is *assigned* to an existing barren moon. Moon mass = difficulty score. Merged → `settled`; dropped → `barren` again. |
+| The bodies themselves | **Terrain** | — | Generated at `system create`: 6 planets inside an **asteroid belt**, 1–4 moons each, all barren. Grows only by **discovery** (a moon captured; a gas giant, ice giant or dwarf planet found beyond the belt). Nothing ever disappears. |
+| Asteroid belt | **the Belt** | — | Human-readable boundary of the inner system; reserved for the idle director's free housekeeping. Never assigned a task. |
+| A named vessel in the roster | **Ship** | — | Classes: **Freighter** (implements; carries a moon's cargo to its planet), **Customs** (reviews; inspects cargo in orbit, issues the verdict), **Carrier** (hauls a finished stream planet → HQ), **Surveyor** (plans). Fleet = provider. |
+| One assignment of a ship | **Voyage** | subagent run | `launched → working → holding → cleared → en_route → docked`. The agent process is the `working` phase. |
+| The orchestrator | **The Nexus** (dispatch) | — | Station at the galactic core. |
 | Provider usage pool | **Fuel** (per provider: Claude fuel, Codex fuel, OpenRouter credits, local = reactor) | quota | Reserve floor = "reserve tanks." |
-| Parked work | **Adrift** | parked | Ship adrift, beacon on, waiting for a human. |
-| REJECT | **Quarantined** | REJECT | Moon flagged; nothing lands until the human clears it. |
+| Parked work | **Adrift** | parked | A *ship* goes adrift, beacon on, waiting for a human. |
+| REJECT | **Quarantined** | REJECT | The freighter and its cargo are held at the moon; the moon is flagged because something unsafe is parked there. |
 | Security/attention-routed work | **Restricted space** | security_routed / attention | Always human-gated; shown as a no-fly zone. |
 | Human decision queue | **Bridge** | — | The human's console in the browser. |
 | Difficulty score | **Gravity** | — | §9. |
-| Landing merged work | **Docking** | merge | Moon → planet docking = task merge to stream; planet → star = stream merge to integration. |
+| Delivering cargo | **Docking** | merge | A *ship* docks: freighter at a planet = task merge to stream; carrier at Fleet HQ = stream merge to integration. |
 | Session close-out | **Drydock** | rest stop | Same ritual, renamed. |
 | Ledger | **Manifest** | ledger / triplog | §5 table, plus the markdown export Lanes writes. |
 
@@ -209,21 +216,27 @@ Event-sourced. `events` is append-only; every other table is rebuildable from it
 ```sql
 events(id INTEGER PK, ts, kind, system_id, planet_id, moon_id, ship_id, provider, payload JSON)
 -- kinds (dotted): intake.received, intake.triaged, system.created, system.gated, system.approved,
---   planet.planned, planet.plan_checked, moon.emitted, moon.gated, moon.scored, ship.launched,
---   ship.event (normalized AgentEvent), ship.returned, verdict.issued, moon.docked, moon.adrift,
---   moon.quarantined, planet.docked, system.reviewed, system.landed, human.decision, human.message,
+--   planet.planned, planet.plan_checked, moon.emitted, moon.gated, moon.scored,
+--   ship.registered, ship.assigned, ship.released,
+--   voyage.launched, voyage.event (normalized AgentEvent), voyage.returned, voyage.audited, voyage.cleared,
+--   voyage.departed, voyage.docked, voyage.adrift, voyage.quarantined, verdict.issued, moon.merged, moon.adrift,
+--   moon.quarantined, planet.merged, system.reviewed, system.landed, human.decision, human.message,
 --   fuel.reading, limiter.held, limiter.rerouted, idle.tick, drydock.closed
 
 systems(id, kind feature|bug, title, brief, base_sha, integration_branch, status, created_ts, landed_ts)
 planets(id, system_id, mission, territory JSON, depends_on JSON, interfaces, plan_path, branch, status)
 moons(id, planet_id, spec_path, spec_sha, touch JSON, depends_on JSON, tier, gravity, status, worktree, branch)
-ships(id, moon_id, role, provider, model, session_id, launched_ts, returned_ts, status, report JSON, cost JSON)
-verdicts(id, moon_id, ship_id, verdict APPROVE|FIX|REJECT, delta_spec, reasoning, round)
+ships(id, name UNIQUE, class freighter|customs|carrier|surveyor, fleet, status idle|assigned|adrift|quarantined|retired, voyage_count)
+voyages(id, ship_id, moon_id|planet_id, role, round, provider, model, session_id, status, launched_ts, returned_ts, docked_ts, report JSON, cost JSON)
+verdicts(id, moon_id, voyage_id, verdict APPROVE|FIX|REJECT, delta_spec, reasoning, round)
 decisions(id, kind, target_id, status pending|resolved, opened_ts, resolved_ts, human_note, outcome)
 fuel(provider, ts, remaining, window_resets_ts, source estimated|reported)
 routing_matrix(role, provider, enabled, priority)
 gravity_history(moon_id, ts, score, inputs JSON)
+query_stats(name, sql, calls, total_ms, max_ms, last_rows, last_ts)   -- opt-in; the SQLite stand-in for Query Store
 ```
+
+Every projection row carries `last_event_id` (the event that last touched it) for debugging; it can be dropped once the rebuild path is trusted. Event kinds that were `ship.*` are now `voyage.*` with `ship_id` carried alongside, plus `ship.registered / ship.assigned / ship.released`. *(Revised 2026-10-13.)*
 
 Intelligence this unlocks with plain SQL: FIX-round rate per provider per touch-glob; park rate vs. gravity; cost per landed moon per provider; which attention categories park most; whether a provider's RATE_LIMITED correlates with time-of-day. These become Bridge panels later, not v1.
 
@@ -235,7 +248,7 @@ Intelligence this unlocks with plain SQL: FIX-round rate per provider per touch-
 
 1. An intake adapter emits `intake.received` (GitHub issue, Bridge box, whiteboard entry).
 2. `triage` role (cheap) classifies: `feature | bug | duplicate | needs-info | decline`, with a one-paragraph draft brief. Emits `intake.triaged`.
-3. `decompose` role (frontier) writes the **stream map** exactly as Lanes' `/lanes-highway` step 1: planets with id, mission, disjoint territory globs, depends-on, interfaces; records base commit. Emits `system.created`, `system.gated`.
+3. `decompose` role (frontier) writes the **stream map** exactly as Lanes' `/lanes-highway` step 1: streams with id, mission, disjoint territory globs, depends-on, interfaces; records base commit. Emits `system.created` (which generates the system's terrain from a seed — 6 planets, belt, moons), then assigns each stream to a barren planet (`planet.assigned`, discovering a planet beyond the belt if the map has more than 6), then `system.gated`.
 4. **Gate.** At every rung below `autopilot`, the map goes to the Bridge as a `decision(kind: approve_map)`. At `autopilot`, it self-approves unless gravity or restricted space says otherwise (§7).
 
 ### 6.2 Plan fan-out → moons
@@ -245,15 +258,19 @@ Per planet, a `plan` ship writes the stream plan (ported `lanes-stream-planner`)
 ### 6.3 Moon lifecycle
 
 ```
-emitted → scored → (gate_above? → decision) → gated → launched(implement) → returned
-        → launched(review) → verdict
-             APPROVE → docked (merge lanes/<moon> → planet branch, worktree removed)
-             FIX     → re-launch implement with delta spec (≤ max_fix_rounds) → …
+moon:    emitted → scored → (gate_above? → decision) → gated → implementing → audited → reviewing → verdict
+             APPROVE → merged   (the freighter docks at the planet: merge nexus/<moon> → planet branch, worktree removed)
+             FIX     → gated    (a new freighter voyage, round+1, with the delta spec; ≤ max_fix_rounds, then adrift)
              REJECT  → quarantined → decision(kind: reject)
-        any BLOCKED / BACKEND_FAILURE / RATE_LIMITED-after-failover / attention / security → adrift → decision
+         any BLOCKED / BACKEND_FAILURE / RATE_LIMITED-after-failover / attention / security → adrift → decision
+
+freighter voyage:  launched → working → holding (in orbit with cargo) → cleared → en_route → docked
+customs voyage:    launched → working → docked (returns to the Nexus with the verdict)
 ```
 
-Ported verbatim from Lanes: gate (`LANES-SPEC:` header → `NEXUS-SPEC:`), audit after every implementer return (the audit JSON — not the agent's claim — is what review sees), spec immutability + `## Amendments`, worktree-per-moon on `nexus/<moon-id>`, planet worktrees on `system/<planet-id>`, integration on `system/<system-id>/integration`. Claude-failover (RATE_LIMITED → one re-dispatch to a Claude implementer, mapped by tier index, mandatory audit re-run, no dry-state latch) ports as a general **failover edge in the routing matrix**: any provider may declare a failover provider per tier.
+Parks and quarantine attach to the *voyage* (and its ship); the moon's status mirrors them so it can be queried either way. *(Revised 2026-10-13.)*
+
+Ported verbatim from Lanes: gate (`LANES-SPEC:` header → `NEXUS-SPEC:`), audit after every implementer return (the audit JSON — not the agent's claim — is what review sees), spec immutability + `## Amendments`, worktree-per-moon on `nexus/<moon-id>`, planet worktrees on `system/<system-id>/<planet-id>`, integration on `system/<system-id>/integration`. Claude-failover (RATE_LIMITED → one re-dispatch to a Claude implementer, mapped by tier index, mandatory audit re-run, no dry-state latch) ports as a general **failover edge in the routing matrix**: any provider may declare a failover provider per tier.
 
 **Parallelism rule:** planets run concurrently (disjoint territories make this safe, as in Lanes). Within a planet, Lanes ran moons serially; here the scheduler launches every moon whose `depends_on` have docked, up to the concurrency caps — parallel where the DAG allows, serial where it doesn't. Each moon's worktree is cut from the planet branch at launch, so two sibling moons docking in sequence means the second merge may conflict; a conflict on dock parks the moon (`adrift`, reason `merge_conflict`) rather than auto-resolving.
 
@@ -299,7 +316,7 @@ Lanes' four rungs port unchanged in meaning. One new rung on top.
 | **`autopilot`** | answer the Bridge | intake → triage → decompose → **self-approved map** → everything |
 
 Safety floor at every rung, including autopilot (ported, plus two additions):
-- Restricted space (security/attention) always parks. REJECT is always human. Nothing is ever pushed. The human's working branch is never touched; a system's product is its integration branch + review doc.
+- Restricted space (security/attention) always parks. REJECT is always human. Nothing is ever pushed. The human's working branch is never touched; a system's product is its integration branch (Fleet HQ) + review doc. **This is a deliberate tightening of Lanes**, which merged into the working branch at every rung below `highways`: here every system gets an integration branch even at `manual`, because the server, not a prompt, does the merging.
 - **New:** gravity ≥ `gate_above` parks pre-launch even at autopilot.
 - **New:** the limiter can hold any launch; it never overrides to spend reserve.
 
@@ -355,6 +372,7 @@ The director checks the limiter like everything else; it simply never asks for p
 ### 11.1 Stack
 
 - **Three.js** (r17x) + `three/examples/jsm` controls, **postprocessing** for bloom (stars, engine trails). No framework requirement; vanilla TS + Vite is enough. If a component layer is wanted for the Bridge panel, Svelte or Preact — keep the scene imperative regardless.
+- **Assets:** procedural geometry first (primitives + emissive materials + instancing; no files, trivially recolored per fleet). CC0 sources (Kenney space kits, NASA imagery, Google Fonts) only when a hand-built shape looks too crude. Every third-party file gets a row in `assets/LICENSES.md` in the commit that adds it. Ship names come from a seeded generator with themed lists; pop-culture callbacks are fine as *names* — no logos or art.
 - **WebSocket** feed of `events` from a cursor (replay on connect: the client asks for events since its last id; cold start replays the projection snapshot then tails).
 - **Camera levels** with a tween between them: Galaxy → System → Planet → Moon. `OrbitControls` within a level; double-click a body to descend; Esc ascends. URL hash encodes `#system/<id>/planet/<id>` so a Bridge decision deep-links to its moon.
 
@@ -363,7 +381,7 @@ The director checks the limiter like everything else; it simply never asks for p
 | Level | Bodies | Visual encodings |
 |---|---|---|
 | **Galaxy** | the Nexus station at center; one star per system, placed on a spiral arm by creation order; landed systems drift outward and dim; systems in flight glow | star color = status (planning/launching/integrating/review/landed/adrift); size = moon count |
-| **System** | star = integration branch; planets on orbits ordered by dependency (depends-on → outer orbit); moons around planets | planet ring = territory size; moon mass/scale = gravity; moon surface state = status (barren/emitted, forge-lit/implementing, inspector-lit/review, green/docked, beacon-red/adrift, hazard-striped/quarantined); restricted space = translucent red no-fly volume around affected moons |
+| **System** | home star at center with Fleet HQ (the integration branch) in orbit around it; 6 rocky planets inside the asteroid belt, discovered giants and dwarfs beyond it, in `orbit_index` order; moons around planets; the portal at the system's edge | barren bodies are dim and unlit; assigned bodies carry their stream/task status; settled moons keep a faint city-light glow | planet ring = territory size; moon mass/scale = gravity; moon surface state = status (barren/emitted, forge-lit/implementing, inspector-lit/review, green/docked, beacon-red/adrift, hazard-striped/quarantined); restricted space = translucent red no-fly volume around affected moons |
 | **Planet** | the planet, its moons close up, ships in transit | ships: freighter (implement), inspector (review), surveyor (plan); hull tint by provider (Claude/Codex/Gemini/Grok/local each a fixed tint); engine trail intensity = recent token throughput from `usage` events; a ship *adrift* tumbles slowly with a strobe |
 | **Moon** | the worktree | a panel, not a planet: spec, audit JSON, diff stat, verdict history, fuel spent; the reply box when adrift/quarantined (this *is* the Bridge item, docked in-scene) |
 
@@ -373,14 +391,17 @@ Every `events` row maps to one animation or state change; the client is a pure f
 
 | Event | Animation |
 |---|---|
-| `system.created` | star ignites at the arm's end; planets condense from a disk over ~2s |
-| `ship.launched` | ship departs the Nexus station, warps to the moon (galaxy-level: a brief lane line from core to star) |
-| `ship.event:tool_use` (Edit/Write) | forge flash on the moon surface; `file_changed` adds a surface scar in the touched region (hash of path → position) |
-| `ship.returned` | ship enters orbit, cargo glyph = status |
-| `verdict.issued` APPROVE | inspector stamps; moon turns green |
-| `moon.docked` | moon spirals into the planet's ring and merges (planet ring thickens) |
-| `planet.docked` | planet streams into the star; star brightens |
-| `moon.adrift` / `quarantined` | ship cuts engines, tumbles, beacon strobe; Bridge counter increments; a soft chime (toggleable) |
+| `system.created` | star ignites at the arm's end; the 6 planets, belt and moons condense from a disk over ~2s — the only time terrain appears in bulk |
+| `planet.assigned` / `moon.assigned` | the body lights up: stream/task label appears, orbit line brightens |
+| `planet.discovered` / `moon.discovered` | a survey flare beyond the belt (or near the planet) resolves into the new body |
+| `moon.settled` | the moon gains a faint city-light glow that persists |
+| `voyage.launched` | the named ship departs the Nexus station, warps to the moon (galaxy-level: a brief lane line from core to system) |
+| `voyage.event:tool_use` (Edit/Write) | forge flash on the moon surface; `file_changed` adds a surface scar in the touched region (hash of path → position) |
+| `voyage.returned` | freighter enters orbit and holds, cargo glyph = report status |
+| `verdict.issued` APPROVE | customs ship stamps; freighter's cargo glyph turns green |
+| `voyage.departed` → `voyage.docked` (freighter) | freighter leaves orbit, flies to the planet, docks; planet ring thickens; ship returns to the Nexus and goes idle |
+| `voyage.docked` (carrier) | carrier delivers the stream to Fleet HQ; HQ brightens |
+| `voyage.adrift` / `voyage.quarantined` | ship cuts engines, tumbles, beacon strobe; Bridge counter increments; a soft chime (toggleable) |
 | `limiter.held` | ship sits at the station with "fuel" overlay; fuel gauge on the station flashes the floor |
 | `limiter.rerouted` | ship repaints its hull mid-dock to the new provider's tint |
 | `fuel.reading` | the station's tanks (one per provider) update; reserve floor drawn as a line |
@@ -439,7 +460,7 @@ Stress-test target: 15 ships in flight, ~50 moons across 3 systems, 60 fps on a 
 
 | Phase | Deliverable | Done when |
 |---|---|---|
-| **v0 — skeleton** | server boots per galaxy; SQLite + events; ported validator; Claude-SDK adapter + Codex-MCP adapter; fake adapter; one moon end-to-end at `manual` (launch → audit → review → dock) from a CLI | a real spec lands on a planet branch; rate-limit events captured from both real adapters |
+| **v0 — skeleton** | server boots per galaxy; SQLite + events; ported validator; fake adapter; Claude-SDK adapter + Codex-MCP adapter; one moon end-to-end at `manual` (launch → audit → review → dock) from a CLI. Spec: `docs/superpowers/specs/2026-10-13-v0-skeleton-design.md` | the full moon lifecycle passes in CI with the fake adapter on Windows/Linux/macOS; the SDK/MCP spike's logs are committed. *Stretch:* a real spec lands on a planet branch via Codex; rate-limit shapes are captured opportunistically, not forced |
 | **v0.5 — Bridge** | WebSocket feed; Bridge panel (decisions, matrix, fuel, rung) with no 3D; reply-to-adrift works | a REJECT is handled entirely from the browser |
 | **v1 — Nexus** | intake adapters; triage/decompose/plan roles; `highways` + `autopilot`; limiter; gravity; bug path with repro invariant; Drydock | an issue labeled `nexus` becomes a landed integration branch unattended, with every park visible on the Bridge |
 | **v1.5 — Galaxy** | Three.js scene, four camera levels, event→animation table, replay, idle cosmetic layer | last night's run replays at 20× and you can find the adrift moon by looking |

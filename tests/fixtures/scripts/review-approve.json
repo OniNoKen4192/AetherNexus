@@ -1,0 +1,4 @@
+{ "name": "review-approve", "role": "review", "steps": [
+  { "text": "Reviewing the diff." },
+  { "done": { "verdict": "APPROVE", "reasoning": "touch respected; acceptance passes" } }
+] }

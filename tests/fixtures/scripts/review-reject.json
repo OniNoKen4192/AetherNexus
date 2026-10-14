@@ -1,0 +1,4 @@
+{ "name": "review-reject", "role": "review", "steps": [
+  { "text": "Reviewing the diff." },
+  { "done": { "verdict": "REJECT", "reasoning": "spec cannot be satisfied as written" } }
+] }

@@ -1,0 +1,4 @@
+{ "name": "review-rate-limited", "role": "review", "steps": [
+  { "text": "Reviewing the diff." },
+  { "error": { "classification": "rate_limited", "message": "usage limit" } }
+] }
