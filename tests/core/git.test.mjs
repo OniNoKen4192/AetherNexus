@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs"; import path from "node:path";
+import fs from "node:fs"; import path from "node:path"; import { execFileSync } from "node:child_process";
 import { Git, GitRefusal } from "../../dist/core/git.js";
 import { makeRepo } from "../helpers.mjs";
 
@@ -143,4 +143,24 @@ test("an inherited GIT_DIR does not redirect a worktree command to the main repo
 test("Git.childEnv strips repo-redirecting GIT_* variables case-insensitively and sets the ceiling", () => {
   const env = Git.childEnv("/r/.nexus/worktrees", { PATH: "p", git_dir: "x", GIT_WORK_TREE: "y", Git_Index_File: "z", GIT_COMMON_DIR: "c", GIT_OBJECT_DIRECTORY: "o", GIT_NAMESPACE: "n", GIT_ALTERNATE_OBJECT_DIRECTORIES: "a", GIT_CEILING_DIRECTORIES: "old", GIT_AUTHOR_NAME: "kept" });
   assert.deepEqual(env, { PATH: "p", GIT_AUTHOR_NAME: "kept", GIT_CEILING_DIRECTORIES: "/r/.nexus/worktrees" });
+});
+
+test("8.3 short-form repoRoot: worktreeAdd + commitAll succeed; isAncestor/worktreeList agree with git's long form", { skip: process.platform !== "win32" && "win32 only" }, (ctx) => {
+  const { dir, cleanup } = makeRepo();
+  try {
+    const long = fs.realpathSync.native(dir);
+    const short = execFileSync("cmd", ["/d", "/s", "/c", `"for %I in ("${long}") do @echo %~sI"`], { encoding: "utf8", windowsVerbatimArguments: true }).trim();
+    if (short.toLowerCase() === long.toLowerCase()) return ctx.skip("no distinct 8.3 form for this path");
+    const g = new Git(short); const base = g.headSha();
+    const wt = path.join(short, ".nexus", "worktrees", "T1");
+    g.worktreeAdd(wt, "nexus/T1", base);
+    assert.ok(g.worktreeList().includes(g.canon(wt)));
+    assert.ok(g.worktreeList().includes(g.canon(path.join(long, ".nexus", "worktrees", "T1"))));
+    fs.writeFileSync(path.join(wt, "new.txt"), "x\n");
+    const sha = g.commitAll(wt, "add new", { name: "t", email: "t@example.com" });
+    assert.ok(sha);
+    assert.equal(g.isAncestor(base, "nexus/T1"), true);
+    assert.equal(g.isAncestor(sha, base), false);
+    g.worktreeRemove(wt, { force: true });
+  } finally { cleanup(); }
 });

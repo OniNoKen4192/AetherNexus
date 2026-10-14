@@ -61,12 +61,31 @@ function firstPositional(args: string[], valueFlags: string[] = []): string | un
   return undefined;
 }
 
+/**
+ * Resolve symlinks and Windows 8.3 short names (realpathSync.native expands them; plain realpathSync does not) so paths
+ * compare equal to what git prints. A not-yet-existing path is resolved via its deepest existing ancestor.
+ */
+export function realPath(p: string): string {
+  const abs = path.resolve(p);
+  const rest: string[] = [];
+  for (let cur = abs; ; ) {
+    try { return path.join(fs.realpathSync.native(cur), ...rest); } catch {}
+    try { return path.join(fs.realpathSync(cur), ...rest); } catch {}
+    const parent = path.dirname(cur);
+    if (parent === cur) return abs;
+    rest.unshift(path.basename(cur));
+    cur = parent;
+  }
+}
+
 export class Git {
   private readonly wtRoot: string;
   private readonly ceiling: string;
-  constructor(public readonly repoRoot: string, private opts: { log?: GitLog } = {}) {
-    this.wtRoot = this.canon(path.join(repoRoot, ".nexus", "worktrees"));
-    this.ceiling = path.join(repoRoot, ".nexus", "worktrees");
+  public readonly repoRoot: string;
+  constructor(repoRoot: string, private opts: { log?: GitLog } = {}) {
+    this.repoRoot = realPath(path.resolve(repoRoot));
+    this.wtRoot = this.canon(path.join(this.repoRoot, ".nexus", "worktrees"));
+    this.ceiling = path.join(this.repoRoot, ".nexus", "worktrees");
   }
   /**
    * The child env: process.env minus every repo-redirecting GIT_* variable (case-insensitive, for Windows), plus a
@@ -83,7 +102,7 @@ export class Git {
   /** Install (or clear, with null) the command log hook. */
   setLog(log: GitLog | null): void { this.opts = log ? { log } : {}; }
   canon(p: string): string {
-    const abs = normalizePath(path.resolve(this.repoRoot, p)).replace(/\/+$/, "");
+    const abs = normalizePath(realPath(path.resolve(this.repoRoot, p))).replace(/\/+$/, "");
     return process.platform === "win32" ? abs.toLowerCase() : abs;
   }
   // The human's tree is the repo root and everything under it except the nexus worktrees.

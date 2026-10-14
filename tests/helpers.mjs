@@ -13,12 +13,12 @@ export function read(relPath) {
 
 const tempDirs = new Set();
 process.on("exit", () => { for (const d of tempDirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} } });
-function trackedTmp(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); tempDirs.add(d); return d; }
+function trackedTmp(prefix) { const d = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix))); tempDirs.add(d); return d; }
 
 export const tmpDb = () => path.join(trackedTmp("nexus-db-"), "nexus.db");
 
 export function makeRepo() {
-  const dir = fs.realpathSync(trackedTmp("nexus-repo-"));
+  const dir = fs.realpathSync.native(trackedTmp("nexus-repo-"));
   const git = (...args) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" }).trimEnd();
   git("init", "-q", "-b", "main"); git("config", "core.autocrlf", "false"); git("config", "user.email", "fixture@example.com"); git("config", "user.name", "fixture");
   fs.mkdirSync(path.join(dir, "src", "lib"), { recursive: true });

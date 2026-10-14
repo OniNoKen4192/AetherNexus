@@ -24,7 +24,7 @@ function resolvedInsideRepo(p: string, rootReal: string): boolean {
     deepest = parent;
   }
   let real: string;
-  try { real = normalizePath(fs.realpathSync(deepest)).toLowerCase(); }
+  try { real = normalizePath(fs.realpathSync.native(deepest)).toLowerCase(); }
   catch { return false; }
   return real === rootReal || real.startsWith(rootReal + "/");
 }
@@ -46,7 +46,7 @@ export function gate(input: GateInput): GateResult {
   const { git, worktree, routing, pipeline } = input;
   const fail = (check: Extract<GateResult, { ok: false }>["check"], reason: string, details?: Record<string, unknown>): GateResult =>
     ({ ok: false, check, reason, ...(details ? { details } : {}) });
-  const rootReal = normalizePath(fs.realpathSync(worktree)).toLowerCase();
+  const rootReal = normalizePath(fs.realpathSync.native(worktree)).toLowerCase();
   const abs = (rel: string) => path.join(worktree, rel);
 
   const specPath = normalizePath(input.specPath);
