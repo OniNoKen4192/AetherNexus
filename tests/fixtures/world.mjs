@@ -18,10 +18,11 @@ export function seedFleet(db, fleets = ["fake"]) {
 }
 
 // A galaxy with one system, one planet and one assigned moon (task T1) whose spec names the fake implement script.
-export async function worldWithMoon(script = "happy", patch) {
+export async function worldWithMoon(script = "happy", patch, patchSpec) {
   const w = await makeGalaxy(patch); const { systemId } = createSystem(w.g, { slug: "s", title: "t", brief: "b", seed: 1 });
   const { planetId } = assignPlanet(w.g, { systemId, streamId: "P1", mission: "m", territory: ["src/**"] });
-  const text = read("tests/fixtures/specs/good-basic.md").replace("# TASK: thing-add-x", `# TASK: thing-add-x\n<!-- FAKE-SCRIPT: ${script} -->`);
+  let text = read("tests/fixtures/specs/good-basic.md").replace("# TASK: thing-add-x", `# TASK: thing-add-x\n<!-- FAKE-SCRIPT: ${script} -->`);
+  if (patchSpec) text = patchSpec(text);
   const spec = writeSpec(w.dir, "T1", text); w.git("add", "-A"); w.git("commit", "-qm", "spec");
   const { moonId } = assignMoon(w.g, { planetId, specPath: spec });
   return { ...w, systemId, planetId, moonId };
