@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { withGitLog, withoutGitLog, type GitLog } from "../../core/git.js";
 import { append } from "../../db/events.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
@@ -34,14 +35,15 @@ export function dockMoon(g: Galaxy, input: { taskId: string }): { mergeSha: stri
   const fscope = { ...scope, voyage_id: voyage.id, ship_id: voyage.ship_id };
   const planet = loadPlanet(g, moon);
   if (!planet.branch || !planet.worktree) throw new Refusal(`planet '${planet.id}' has no branch`);
+  const planetBranch: string = planet.branch;
   const branch = `nexus/${taskId}`;
   const moonWorktree = path.join(g.paths.worktrees, taskId);
   const planetWorktree = path.resolve(g.repoRoot, planet.worktree);
 
-  // v0 is single-flight (see dispatch.ts runVoyage): one Galaxy-wide git log hook is attributable to this voyage.
-  g.git.setLog((entry) => {
+  // Every git command this dock issues becomes a tool_use event on the voyage.
+  const gitLog: GitLog = (entry) => {
     try { append(g.db, { kind: "voyage.event", ...fscope, payload: { event: { kind: "tool_use", ts: new Date().toISOString(), data: { name: "git", input: entry.args } } } }); } catch { /* logging must never break git */ }
-  });
+  };
   // Idempotent tail of the dock: each step runs only if it has not happened yet.
   const finish = (planetBranch: string, sha?: string): { mergeSha: string | null; planetBranch: string; moonStatus: "merged" } => {
     const mergeSha = sha ?? g.git.revParse(planetBranch);
@@ -49,18 +51,17 @@ export function dockMoon(g: Galaxy, input: { taskId: string }): { mergeSha: stri
     if (g.db.get<{ status: string }>("ships.byId", { id: voyage.ship_id })?.status === "assigned") {
       append(g.db, { kind: "ship.released", ...fscope, payload: { voyage_id: voyage.id, outcome: "docked" } });
     }
-    g.git.setLog(null); // the voyage is docked: it takes no more events
-    g.git.worktreeRemove(moonWorktree);
+    withoutGitLog(() => g.git.worktreeRemove(moonWorktree)); // the voyage is docked: it takes no more events
     return { mergeSha, planetBranch, moonStatus: "merged" };
   };
-  try {
+  return withGitLog(gitLog, () => {
     // Recreates the planet worktree if it was deleted by hand.
-    g.git.worktreeAdd(planetWorktree, planet.branch, g.git.revParse(planet.branch));
-    if (resuming) return finish(planet.branch);
+    g.git.worktreeAdd(planetWorktree, planetBranch, g.git.revParse(planetBranch));
+    if (resuming) return finish(planetBranch);
     if (voyage.status === "cleared") {
       const park = (reason: string, details: unknown): { mergeSha: null; planetBranch: string; moonStatus: "adrift" } => {
         parkVoyage(g, { taskId, voyageId: voyage.id, shipId: voyage.ship_id, reason, details: JSON.stringify(details) });
-        return { mergeSha: null, planetBranch: planet.branch!, moonStatus: "adrift" };
+        return { mergeSha: null, planetBranch: planetBranch, moonStatus: "adrift" };
       };
       // Commit only from a registered worktree: from a plain directory git would find (and commit to) the human's repo.
       if (!g.git.worktreeList().includes(g.git.canon(moonWorktree))) return park("worktree_missing", { worktree: moonWorktree });
@@ -80,19 +81,17 @@ export function dockMoon(g: Galaxy, input: { taskId: string }): { mergeSha: stri
     }
     // Check-before-act: a crash between the merge and its event must not merge twice.
     let mergeSha: string;
-    if (g.git.isAncestor(g.git.revParse(branch), planet.branch)) {
-      mergeSha = g.git.revParse(planet.branch);
+    if (g.git.isAncestor(g.git.revParse(branch), planetBranch)) {
+      mergeSha = g.git.revParse(planetBranch);
     } else {
       const merged = g.git.mergeNoFF(planetWorktree, branch, `dock ${taskId} (${voyage.id})`);
       if (!merged.ok) {
         parkVoyage(g, { taskId, voyageId: voyage.id, shipId: voyage.ship_id, reason: "merge_conflict", details: JSON.stringify({ files: merged.files }) });
-        return { mergeSha: null, planetBranch: planet.branch, moonStatus: "adrift" };
+        return { mergeSha: null, planetBranch: planetBranch, moonStatus: "adrift" };
       }
       mergeSha = merged.sha;
     }
-    append(g.db, { kind: "voyage.docked", ...fscope, payload: { merge_sha: mergeSha, planet_branch: planet.branch } });
-    return finish(planet.branch, mergeSha);
-  } finally {
-    g.git.setLog(null);
-  }
+    append(g.db, { kind: "voyage.docked", ...fscope, payload: { merge_sha: mergeSha, planet_branch: planetBranch } });
+    return finish(planetBranch, mergeSha);
+  });
 }

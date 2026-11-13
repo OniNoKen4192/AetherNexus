@@ -37,7 +37,7 @@ export function openGalaxy(repoRoot: string, opts: { scriptsDir?: string } = {})
   try { config = loadConfig(repoRoot); } catch (err) { throw new Refusal((err as Error).message); }
   const paths = galaxyPaths(repoRoot, config);
   const db = openDb(paths.dbFile, { stats: config.db.stats });
-  const git = new Git(repoRoot, { log: () => {} }); // Task 12 wires git logging into voyage.event
+  const git = new Git(repoRoot);
   const adapters = buildAdapters(config, { scriptsDir: opts.scriptsDir ?? defaultScriptsDir(repoRoot) });
   return { repoRoot, config, db, git, adapters, paths, close: () => db.close() };
 }

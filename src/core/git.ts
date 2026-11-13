@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { normalizePath } from "../validate/match.js";
 
 export class GitRefusal extends Error {
@@ -11,6 +12,14 @@ export class GitRefusal extends Error {
   }
 }
 export type GitLog = (entry: { args: string[]; cwd: string; ms: number; ok: boolean; stderr?: string }) => void;
+
+// The log for the async context a git command is issued in: each voyage scopes its own, so overlapping voyages
+// never see each other's commands.
+const gitLogContext = new AsyncLocalStorage<GitLog | undefined>();
+/** Run `fn` (sync or async) with `log` receiving every git command issued inside it. */
+export function withGitLog<T>(log: GitLog, fn: () => T): T { return gitLogContext.run(log, fn); }
+/** Run `fn` with no context log, even inside an enclosing withGitLog. */
+export function withoutGitLog<T>(fn: () => T): T { return gitLogContext.run(undefined, fn); }
 
 const OWNED_BRANCH = /^(nexus|system)\//;
 const EXCLUDE_LINE = ".nexus/worktrees/";
@@ -82,7 +91,7 @@ export class Git {
   private readonly wtRoot: string;
   private readonly ceiling: string;
   public readonly repoRoot: string;
-  constructor(repoRoot: string, private opts: { log?: GitLog } = {}) {
+  constructor(repoRoot: string, private readonly opts: { log?: GitLog } = {}) {
     this.repoRoot = realPath(path.resolve(repoRoot));
     this.wtRoot = this.canon(path.join(this.repoRoot, ".nexus", "worktrees"));
     this.ceiling = path.join(this.repoRoot, ".nexus", "worktrees");
@@ -99,8 +108,6 @@ export class Git {
     env["GIT_CEILING_DIRECTORIES"] = ceiling;
     return env;
   }
-  /** Install (or clear, with null) the command log hook. */
-  setLog(log: GitLog | null): void { this.opts = log ? { log } : {}; }
   canon(p: string): string {
     const abs = normalizePath(realPath(path.resolve(this.repoRoot, p))).replace(/\/+$/, "");
     return process.platform === "win32" ? abs.toLowerCase() : abs;
@@ -151,17 +158,22 @@ export class Git {
     return undefined;
   }
 
+  private emit(entry: Parameters<GitLog>[0]): void {
+    gitLogContext.getStore()?.(entry);
+    this.opts.log?.(entry);
+  }
+
   runRaw(args: string[], o: { cwd?: string } = {}): string {
     const cwd = o.cwd ?? this.repoRoot;
     this.refuse(args, cwd);
     const t0 = performance.now();
     try {
       const out = execFileSync("git", ["-c", "core.quotepath=false", "-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: Git.childEnv(this.ceiling) });
-      this.opts.log?.({ args, cwd, ms: performance.now() - t0, ok: true });
+      this.emit({ args, cwd, ms: performance.now() - t0, ok: true });
       return out;
     } catch (err) {
       const e = err as { stderr?: string; message: string };
-      this.opts.log?.({ args, cwd, ms: performance.now() - t0, ok: false, ...(e.stderr ? { stderr: e.stderr } : {}) });
+      this.emit({ args, cwd, ms: performance.now() - t0, ok: false, ...(e.stderr ? { stderr: e.stderr } : {}) });
       throw new Error(`git ${args.join(" ")} failed: ${(e.stderr || e.message).trim()}`);
     }
   }

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { append, type NexusEvent } from "../db/events.js";
+import { withGitLog, type GitLog } from "../core/git.js";
 import { pickIdleShip, type ShipClass } from "../core/fleet.js";
 import type { AgentEvent, Job, Role } from "../providers/adapter.js";
 import { Refusal } from "./errors.js";
@@ -118,26 +119,25 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
   const onExternalAbort = (): void => abortFor("interrupted");
   if (input.signal?.aborted) onExternalAbort(); else input.signal?.addEventListener("abort", onExternalAbort, { once: true });
   const logEvent = (e: AgentEvent): void => { append(g.db, { kind: "voyage.event", ...scope, voyage_id: voyageId, ship_id: ship.id, payload: { event: e } }); };
-  // v0 is single-flight (the CLI blocks on one voyage; no daemon until v0.5), so one Galaxy-wide log hook is
-  // attributable to exactly one voyage. Concurrent voyages need a per-voyage (AsyncLocalStorage-scoped) hook
-  // before v0.5 enables them.
   // Every git command issued while the voyage is in flight becomes a tool_use event on it.
-  g.git.setLog((entry) => {
+  const gitLog: GitLog = (entry) => {
     try { logEvent({ kind: "tool_use", ts: new Date().toISOString(), data: { name: "git", input: entry.args } }); } catch { /* logging must never break git */ }
-  });
+  };
   try {
-    for await (const e of adapter.dispatch({ ...input.job, voyageId }, { cwd: input.worktree, touch: input.touch, timeoutMs, signal: ac.signal })) {
-      out.events++; logEvent(e); input.onEvent?.(e);
-      if (e.kind === "usage" && e.data.cost_usd !== undefined) cost = (cost ?? 0) + e.data.cost_usd;
-      if (e.kind === "done") out.done = e;
-      if (e.kind === "error") out.error = e;
-    }
+    await withGitLog(gitLog, async () => {
+      for await (const e of adapter.dispatch({ ...input.job, voyageId }, { cwd: input.worktree, touch: input.touch, timeoutMs, signal: ac.signal })) {
+        out.events++; logEvent(e); input.onEvent?.(e);
+        if (e.kind === "usage" && e.data.cost_usd !== undefined) cost = (cost ?? 0) + e.data.cost_usd;
+        if (e.kind === "done") out.done = e;
+        if (e.kind === "error") out.error = e;
+      }
+    });
   } catch (err) {
     out.threw = err instanceof Error ? err.message : String(err);
     const c = adapter.classify(err);
     out.parkReason = c === "unknown" ? "backend_failure" : c;
   } finally {
-    clearTimeout(timer); input.signal?.removeEventListener("abort", onExternalAbort); g.git.setLog(null);
+    clearTimeout(timer); input.signal?.removeEventListener("abort", onExternalAbort);
   }
 
   // Someone else already parked this voyage (nexus moon park, for a process presumed dead): leave it as it is.
