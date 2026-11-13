@@ -78,3 +78,24 @@ test("a review voyage that parks reports verdict null, moon adrift, and writes n
   assert.equal(r.verdict, null); assert.equal(r.moonStatus, "adrift");
   assert.equal(w.g.db.all("verdicts.byTask", { task_id: "T1" }).length, 0); w.cleanup();
 });
+
+test("launch refuses an audited moon whose FIX round is not reviewed yet; inspect and dock still work", async () => {
+  const { dockMoon } = await import("../../dist/server/commands/dock.js"); const { rebuild, dumpProjections } = await import("../../dist/db/rebuild.js");
+  const w = await worldWithMoon("fix-round"); await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
+  // right after the FIX verdict the moon is reopened for another launch
+  const l2 = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  assert.equal(l2.moonStatus, "audited"); assert.match(l2.voyageId, /\/T1\/implement\/2$/);
+  const assigned = () => w.g.db.all("ships.all").filter((s) => s.status === "assigned").map((s) => s.id).sort();
+  const maxEvent = () => Math.max(...w.g.db.all("events.byMoon", { moon_id: w.moonId }).map((e) => e.id));
+  const implVoyages = () => w.g.db.all("voyages.byTask", { task_id: "T1" }).filter((v) => v.role === "implement");
+  const ships = assigned(), last = maxEvent();
+  await assert.rejects(launchMoon(w.g, { taskId: "T1", provider: "fake" }), /round 2 has not been reviewed yet/);
+  assert.equal(implVoyages().length, 2); assert.deepEqual(assigned(), ships); assert.equal(maxEvent(), last);
+  const before = dumpProjections(w.g.db); rebuild(w.g.db); assert.equal(dumpProjections(w.g.db), before, "rebuild is byte-equal");
+  // the legitimate path is untouched
+  const r2 = await inspectMoon(w.g, { taskId: "T1", provider: "fake" });
+  assert.equal(r2.verdict.verdict, "APPROVE");
+  assert.equal(dockMoon(w.g, { taskId: "T1" }).moonStatus, "merged");
+  w.cleanup();
+});

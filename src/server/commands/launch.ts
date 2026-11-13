@@ -116,6 +116,10 @@ export async function launchMoon(
   if (relaunch && !repliedSincePark(g, moon.assignment_id)) throw new Refusal(`moon ${taskId} is ${status} — use 'nexus moon reply' or 'nexus moon drop'`);
   if (status === "audited") {
     if (lastVerdict?.verdict !== "FIX") throw new Refusal(`moon ${taskId} is 'audited' — run 'nexus moon inspect'; only a FIX verdict reopens it for another launch`);
+      // Complement of inspectMoon's precondition (latest implement voyage 'holding'): a holding freighter is an unreviewed round,
+      // and the FIX verdict on record belongs to an earlier one (a FIX verdict supersedes the freighter it reviewed).
+      const latestImpl = g.db.get<{ status: string; round: number }>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
+      if (latestImpl?.status === "holding") throw new Refusal(`moon ${taskId} is 'audited' — run 'nexus moon inspect'; round ${latestImpl.round} has not been reviewed yet`);
   } else if (!relaunch && status !== "emitted" && status !== "gated") {
     throw new Refusal(`moon ${taskId} is '${status}' — it cannot be launched from there`);
   }
