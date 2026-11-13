@@ -9,7 +9,7 @@ import { audit, type AuditReport } from "../../validate/audit.js";
 import { hashSpec, sha256 } from "../../validate/spec.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
-import { loadMoon, loadPlanet, moonScope, parkVoyage, providerAtCap, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
+import { loadMoon, loadPlanet, moonScope, parkVoyage, providerAtCap, refuseIfAtCap, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
 
 const NEXUS_AUTHOR = { name: "nexus", email: "nexus@nexus.local" };
 const PARK_STATUSES = new Set(["BLOCKED", "BACKEND_FAILURE", "RATE_LIMITED"]);
@@ -129,6 +129,7 @@ export async function launchMoon(
   // Precheck 3: a free ship, before any side effect.
   const provider = pickProvider(g, input.provider);
   if (!g.adapters[provider]) throw new Refusal(`provider '${provider}' is not configured`);
+  refuseIfAtCap(g, provider);
   if (!pickIdleShip(g.db, "freighter", provider)) throw new Refusal(`all ${shipsNoun("freighter")} in fleet '${provider}' are assigned`);
 
   const scope = moonScope(g, moon);

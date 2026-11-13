@@ -72,6 +72,11 @@ export function providerAtCap(g: Galaxy, provider: string): boolean {
   return g.db.all<InFlightRow>("voyages.inFlight").filter((v) => v.provider === provider).length >= max;
 }
 
+/** Advisory early refusal with the same wording as the authoritative check in the voyage.launched transaction, so a cap wins over "no idle ship". */
+export function refuseIfAtCap(g: Galaxy, provider: string): void {
+  if (providerAtCap(g, provider)) throw new Refusal(`provider '${provider}' is at its limit of ${g.config.scheduler.per_provider_max[provider]} (scheduler.per_provider_max)`);
+}
+
 export const shipClassFor = (role: Role): ShipClass => (role === "implement" ? "freighter" : "customs");
 export const shipsNoun = (cls: ShipClass): string => (cls === "customs" ? "customs" : `${cls}s`);
 
@@ -97,6 +102,7 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
   const adapter = g.adapters[input.provider];
   if (!adapter) throw new Refusal(`provider '${input.provider}' is not configured`);
   const cls = shipClassFor(input.role);
+  refuseIfAtCap(g, input.provider);
   const ship = pickIdleShip(g.db, cls, input.provider);
   if (!ship) throw new Refusal(`all ${shipsNoun(cls)} in fleet '${input.provider}' are assigned`);
   const baseId = `${ship.id}/${input.taskId}/${input.role}/${input.job.round}`;
@@ -126,7 +132,9 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
     }
   });
   const voyageId = launched.voyage_id!;
-  input.onLaunched?.(voyageId);
+  // A throwing callback must not strand a launched voyage: report it and run on.
+  try { input.onLaunched?.(voyageId); } catch (err) { process.stderr.write(`onLaunched callback threw for voyage ${voyageId}: ${err instanceof Error ? err.message : String(err)}
+`); }
 
   const out: DispatchOutcome = { voyageId, shipId: ship.id, events: 0 };
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
