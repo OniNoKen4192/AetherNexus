@@ -9,11 +9,13 @@ import { acquireServerLock } from "../lock.js";
 import { moonDetail, snapshot } from "../commands/query.js";
 import { COOKIE_NAME, checkRequest, isApiPath, rawPath, tokenMatches } from "./auth.js";
 import { createFeed, type Feed } from "./feed.js";
+import { BadRequest, errorResponse, runCommand } from "./commands.js";
+import { createVoyageRunner, type VoyageRunner } from "./runner.js";
 
 export { checkRequest } from "./auth.js";
 
 export type NexusServer = { port: number; token: string; url: string; close(): Promise<void> };
-export type ApiContext = { g: Galaxy; req: http.IncomingMessage; res: http.ServerResponse; query: URLSearchParams; feed: Feed };
+export type ApiContext = { g: Galaxy; req: http.IncomingMessage; res: http.ServerResponse; query: URLSearchParams; feed: Feed; runner: VoyageRunner };
 export type ApiHandler = (ctx: ApiContext) => void | Promise<void>;
 
 export function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
@@ -32,7 +34,7 @@ function sendText(res: http.ServerResponse, status: number, text: string, extra:
  */
 const API_ROUTES: Record<string, ApiHandler> = {
   "GET /api/ping": ({ res }) => sendJson(res, 200, { ok: true }),
-  "GET /api/snapshot": ({ g, res }) => sendJson(res, 200, snapshot(g, { ownPid: process.pid, failures: [] })),
+  "GET /api/snapshot": ({ g, res, runner }) => sendJson(res, 200, snapshot(g, { ownPid: process.pid, failures: runner.failures() })),
   "GET /api/events": ({ req, res, query, feed }) => feed.handle(req, res, query),
 };
 type PrefixApiHandler = (ctx: ApiContext, remainder: string) => void | Promise<void>;
@@ -41,7 +43,44 @@ const API_PREFIX_ROUTES: Record<string, PrefixApiHandler> = {
     try { sendJson(res, 200, moonDetail(g, taskId, { ownPid: process.pid })); }
     catch (e) { if (e instanceof Refusal) return sendJson(res, 404, { error: e.message }); throw e; }
   },
+  "POST /api/commands/": async ({ g, req, res, runner }, name) => {
+    const contentType = req.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
+    if (contentType !== "application/json") return sendJson(res, 415, { error: "content-type must be application/json" });
+    try {
+      const read = await readJsonBody(req);
+      if (read.tooLarge) return sendJson(res, 413, { error: "request body is too large" });
+      const outcome = await runCommand(g, runner, name, read.body);
+      sendJson(res, outcome.status, outcome.body);
+    } catch (e) {
+      const response = errorResponse(e);
+      sendJson(res, response.status, response.body);
+    }
+  },
 };
+
+const MAX_COMMAND_BODY = 1024 * 1024;
+async function readJsonBody(req: http.IncomingMessage): Promise<{ tooLarge: true } | { tooLarge: false; body: unknown }> {
+  return await new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const onData = (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_COMMAND_BODY) {
+        req.off("data", onData);
+        req.on("data", () => { /* discard the remainder without buffering it */ });
+        req.resume();
+        resolve({ tooLarge: true });
+      } else chunks.push(chunk);
+    };
+    req.on("data", onData);
+    req.once("end", () => {
+      if (size > MAX_COMMAND_BODY) return;
+      try { resolve({ tooLarge: false, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) }); }
+      catch { reject(new BadRequest("body is not valid JSON")); }
+    });
+    req.once("error", reject);
+  });
+}
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
@@ -84,23 +123,24 @@ export async function startServer(g: Galaxy, opts: { port?: number; token?: stri
   const lock = acquireServerLock(g, { port: wantPort });
   const state = { port: wantPort, token };
   const feed = createFeed(g, { pollMs: opts.pollMs ?? 250 });
+  const runner = createVoyageRunner({ onFailure: () => feed.notify() });
 
   async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const gate = checkRequest(req, state);
     if (!gate.ok) return sendJson(res, gate.status, { error: gate.message });
     const pathname = rawPath(req.url);
-    const query = new URL(pathname + (req.url?.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""), "http://127.0.0.1").searchParams;
+    const query = new URLSearchParams(req.url?.includes("?") ? req.url.slice(req.url.indexOf("?") + 1) : "");
     if (isApiPath(pathname)) {
       const key = `${req.method} ${pathname}`;
       const handler = Object.hasOwn(API_ROUTES, key) ? API_ROUTES[key] : undefined;
-      if (handler) return await handler({ g, req, res, query, feed });
+      if (handler) return await handler({ g, req, res, query, feed, runner });
       for (const prefixKey of Object.keys(API_PREFIX_ROUTES)) {
         if (!key.startsWith(prefixKey) || !Object.hasOwn(API_PREFIX_ROUTES, prefixKey)) continue;
         const raw = key.slice(prefixKey.length);
         let remainder: string;
         try { remainder = decodeURIComponent(raw); } catch { return sendJson(res, 404, { error: "not found" }); }
         if (!remainder || remainder.includes("/")) return sendJson(res, 404, { error: "not found" });
-        return await API_PREFIX_ROUTES[prefixKey]!({ g, req, res, query, feed }, remainder);
+        return await API_PREFIX_ROUTES[prefixKey]!({ g, req, res, query, feed, runner }, remainder);
       }
       return sendJson(res, 404, { error: "not found" });
     }
@@ -114,7 +154,7 @@ export async function startServer(g: Galaxy, opts: { port?: number; token?: stri
 
   const server = http.createServer((req, res) => {
     res.setHeader("x-content-type-options", "nosniff");
-    handle(req, res).catch((e) => { if (!res.headersSent) sendJson(res, 500, { error: (e as Error).message }); else res.destroy(); });
+    handle(req, res).catch((e) => { console.error(e); if (!res.headersSent) sendJson(res, 500, { error: "internal error" }); else res.destroy(); });
   });
 
   try {
@@ -135,12 +175,13 @@ export async function startServer(g: Galaxy, opts: { port?: number; token?: stri
   let closing: Promise<void> | undefined;
   return {
     port, token, url: `http://127.0.0.1:${port}/?token=${token}`,
-    close: () => {
+    close: () => closing ??= (async () => {
+      await runner.abortAll();
       feed.close();
-      return closing ??= new Promise<void>((resolve) => {
+      await new Promise<void>((resolve) => {
         server.close(() => { lock.release(); resolve(); });
         server.closeAllConnections();
       });
-    },
+    })(),
   };
 }
