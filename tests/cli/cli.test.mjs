@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { makeRepo, writeSpec, repoRoot } from "../helpers.mjs";
+import { makeRepo, writeSpec, read, repoRoot } from "../helpers.mjs";
 
 const CLI = path.join(repoRoot, "dist", "cli", "main.js");
 const ENV = { ...process.env, NEXUS_FAKE_SCRIPTS: path.join(repoRoot, "tests", "fixtures", "scripts") };
@@ -56,5 +56,24 @@ test("planet assign --planet <name> puts the stream on that planet; moon park is
   nexus(dir, "moon", "assign", JSON.parse(p.out).planetId, spec);
   const help = nexus(dir, "--help"); assert.match(help.out, /moon park <task-id> --reason <text>/); assert.match(help.out, /process died/);
   const r = nexus(dir, "moon", "park", "T1", "--reason", "gone"); assert.equal(r.code, 2); assert.match(r.err, /only an implementing or reviewing moon/);
+  cleanup();
+});
+
+test("decision answer: a stray write in the main tree opens a question; --mine exits 0, both flags exit 2", () => {
+  const { dir, git, cleanup } = makeRepo();
+  assert.equal(nexus(dir, "init").code, 0); git("add", "-A"); git("commit", "-qm", "init");
+  const sys = JSON.parse(nexus(dir, "system", "create", "demo", "--title", "Demo", "--brief-text", "b", "--seed", "1", "--json").out);
+  const planet = JSON.parse(nexus(dir, "planet", "assign", sys.systemId, "--stream", "P1", "--territory", "src/**", "--json").out);
+  const spec = writeSpec(dir, "T1", read("tests/fixtures/specs/good-basic.md").replace("# TASK: thing-add-x", "# TASK: thing-add-x\n<!-- FAKE-SCRIPT: escapes-worktree -->"));
+  git("add", "-A"); git("commit", "-qm", "spec");
+  nexus(dir, "moon", "assign", planet.planetId, spec, "--json");
+  const l = nexus(dir, "moon", "launch", "T1", "--provider", "fake", "--json", "--quiet");
+  assert.equal(l.code, 0, l.err); assert.equal(JSON.parse(l.out).moonStatus, "audited");
+  assert.deepEqual(JSON.parse(nexus(dir, "status", "--json").out).decisions.map((d) => [d.id, d.kind]), [[1, "main_tree_changed"]]);
+  const blocked = nexus(dir, "voyage", "inspect", "T1", "--provider", "fake", "--quiet"); assert.equal(blocked.code, 2); assert.match(blocked.err, /unanswered main-tree question \(decision 1\)/);
+  const both = nexus(dir, "decision", "answer", "1", "--mine", "--not-mine"); assert.equal(both.code, 2); assert.match(both.err, /exactly one/);
+  assert.equal(nexus(dir, "decision", "answer", "1").code, 2);
+  const ok = nexus(dir, "decision", "answer", "1", "--mine", "--json"); assert.equal(ok.code, 0, ok.err); assert.deepEqual(JSON.parse(ok.out), { moonStatus: "audited", parked: false });
+  assert.equal(nexus(dir, "voyage", "inspect", "T1", "--provider", "fake", "--quiet").code, 0);
   cleanup();
 });

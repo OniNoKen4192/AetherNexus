@@ -1,0 +1,7 @@
+{ "name": "escapes-worktree", "role": "implement", "steps": [
+  { "text": "Writing outside the worktree, as a delegate's shell can." },
+  { "write": { "path": "../../../stray.txt", "content": "written via Bash\n" } },
+  { "write": { "path": "src/lib/thing.js", "content": "export const thing = 2;\n" } },
+  { "write": { "path": "src/lib/thing.test.js", "content": "import assert from 'node:assert'; import { thing } from './thing.js'; assert.equal(thing, 2);\n" } },
+  { "done": { "status": "IMPLEMENTED" } }
+] }

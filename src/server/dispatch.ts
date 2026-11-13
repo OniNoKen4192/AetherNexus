@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { append, type NexusEvent } from "../db/events.js";
+import { append, rowToEvent, type NexusEvent } from "../db/events.js";
 import { withGitLog, type GitLog } from "../core/git.js";
 import { pickIdleShip, type ShipClass } from "../core/fleet.js";
 import type { AgentEvent, Job, Role } from "../providers/adapter.js";
@@ -92,6 +92,11 @@ export function parkVoyage(g: Galaxy, p: { taskId: string; voyageId: string; shi
   });
 }
 
+/** Record, before the write, that the system is about to write these repo-relative paths into the main tree, so no voyage mistakes them for a foreign change. */
+export function recordTreeWrite(g: Galaxy, paths: string[]): void {
+  append(g.db, { kind: "tree.written", payload: { paths: paths.map((p) => p.replaceAll("\\", "/")) } });
+}
+
 /** The human's tree as git sees it: HEAD plus every status path. A voyage must leave it exactly as it found it. */
 function mainTreeSnapshot(g: Galaxy): { head: string; status: string[] } {
   return { head: g.git.headSha(g.repoRoot), status: g.git.statusPaths(g.repoRoot).sort() };
@@ -115,7 +120,7 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
     kind: "voyage.launched", ...scope, voyage_id: baseId, ship_id: ship.id, provider: input.provider,
     payload: { role: input.role, round: input.job.round, provider: input.provider, ...(model ? { model } : {}), ship_id: ship.id, worktree: input.worktree, owner_pid: process.pid },
   };
-  append(g.db, launched, () => {
+  const launchedRow = append(g.db, launched, () => {
     const cur = g.db.get<{ status: string }>("ships.byId", { id: ship.id });
     if (cur?.status !== "idle") throw new Refusal(`ship ${ship.id} is no longer idle`);
     // A dropped-and-reassigned task restarts its rounds, so the readable id can repeat: suffix #2, #3, ...
@@ -174,14 +179,20 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
     return out;
   }
 
-  // The Bash gap: a delegate's shell can reach outside its worktree. The human's tree must be exactly as it was.
+  // The Bash gap: a delegate's shell can reach outside its worktree. Anything but the system's own recorded writes
+  // opens a question for the human; the voyage carries on as if the tree were unchanged.
   const after = mainTreeSnapshot(g);
-  if (after.head !== before.head || JSON.stringify(after.status) !== JSON.stringify(before.status)) {
-    const was = new Set(before.status), now = new Set(after.status);
-    const details = JSON.stringify({ head_before: before.head, head_after: after.head, appeared: after.status.filter((p) => !was.has(p)), vanished: before.status.filter((p) => !now.has(p)) });
-    delete out.done; out.parkReason = "main_tree_modified";
-    parkVoyage(g, { taskId: input.taskId, voyageId, shipId: ship.id, reason: "main_tree_modified", details });
-    return out;
+  const was = new Set(before.status), now = new Set(after.status);
+  const own = new Set<string>();
+  for (const row of g.db.all("events.kindSince", { kind: "tree.written", id: launchedRow.id })) {
+    for (const p of (rowToEvent(row).payload["paths"] as string[] | undefined) ?? []) own.add(p);
+  }
+  const appeared = after.status.filter((p) => !was.has(p) && !own.has(p)), vanished = before.status.filter((p) => !now.has(p));
+  if (after.head !== before.head || appeared.length > 0 || vanished.length > 0) {
+    append(g.db, {
+      kind: "decision.opened", ...scope,
+      payload: { kind: "main_tree_changed", target_kind: "moon", target_id: input.taskId, reasoning: JSON.stringify({ voyage_id: voyageId, head_before: before.head, head_after: after.head, appeared, vanished }) },
+    });
   }
 
   if (out.done) {

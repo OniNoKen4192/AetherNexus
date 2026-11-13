@@ -9,6 +9,7 @@ import { audit, type AuditReport } from "../../validate/audit.js";
 import { hashSpec, sha256 } from "../../validate/spec.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
+import { requireTreeAnswered } from "./decision.js";
 import { loadMoon, loadPlanet, moonScope, parkVoyage, providerAtCap, refuseIfAtCap, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
 
 const NEXUS_AUTHOR = { name: "nexus", email: "nexus@nexus.local" };
@@ -103,6 +104,7 @@ export async function launchMoon(
   deps?: { audit?: typeof audit },
 ): Promise<{ voyageId: string; audit: AuditReport | null; moonStatus: MoonStatus }> {
   const { taskId } = input;
+  requireTreeAnswered(g, taskId);
   const moon = loadMoon(g, taskId);
   const status = moon.status;
   const verdicts = g.db.all<VerdictRow>("verdicts.byAssignment", { assignment_id: moon.assignment_id });

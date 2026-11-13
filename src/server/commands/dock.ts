@@ -6,6 +6,7 @@ import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
 import { loadMoon, loadPlanet, moonScope, parkVoyage } from "../dispatch.js";
 import type { AuditReport } from "../../validate/audit.js";
+import { requireTreeAnswered } from "./decision.js";
 import { auditTask, BaselineTampered } from "./launch.js";
 
 type VoyageRow = { id: string; ship_id: string; status: string; provider: string };
@@ -19,6 +20,7 @@ function specTitle(text: string, taskId: string): string {
 
 export function dockMoon(g: Galaxy, input: { taskId: string }): { mergeSha: string | null; planetBranch: string; moonStatus: "merged" | "adrift" } {
   const { taskId } = input;
+  requireTreeAnswered(g, taskId);
   const moon = loadMoon(g, taskId);
   const finishing = moon.status === "merged";   // resuming a dock that crashed after moon.merged
   if (moon.status !== "reviewing" && !finishing) throw new Refusal(`moon ${taskId} is '${moon.status}' — only a 'reviewing' moon with an APPROVE verdict can dock`);

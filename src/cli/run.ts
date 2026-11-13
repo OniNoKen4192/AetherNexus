@@ -13,6 +13,7 @@ import { launchMoon } from "../server/commands/launch.js";
 import { inspectMoon } from "../server/commands/review.js";
 import { dockMoon } from "../server/commands/dock.js";
 import { replyMoon, dropMoon, retireShip, parkStaleMoon } from "../server/commands/park.js";
+import { answerDecision } from "../server/commands/decision.js";
 import { status, events, fleet } from "../server/commands/query.js";
 import { rebuild } from "../db/rebuild.js";
 import { STATEMENTS, type StatementName } from "../db/statements.js";
@@ -35,6 +36,8 @@ const USAGE = `usage: nexus [--json] <command>
   moon drop <task-id>
   moon park <task-id> --reason <text>      for a voyage whose process died (crash, kill, reboot):
                                            parks it as 'stale:<text>' so reply/drop can proceed
+  decision answer <decision-id> --mine | --not-mine
+                                           answer a main-tree question (was that change yours?)
   voyage inspect <task-id> [--provider <p>] [--quiet]
   voyage dock <task-id>
   status [<system-id>]
@@ -99,7 +102,7 @@ function parse(argv: string[]) {
     return parseArgs({
       args: argv, allowPositionals: true, strict: true,
       options: {
-        json: { type: "boolean" }, quiet: { type: "boolean" }, force: { type: "boolean" }, selftest: { type: "boolean" }, help: { type: "boolean", short: "h" }, follow: { type: "boolean" },
+        json: { type: "boolean" }, quiet: { type: "boolean" }, force: { type: "boolean" }, selftest: { type: "boolean" }, help: { type: "boolean", short: "h" }, follow: { type: "boolean" }, mine: { type: "boolean" }, "not-mine": { type: "boolean" },
         title: { type: "string" }, brief: { type: "string" }, "brief-text": { type: "string" }, kind: { type: "string" }, seed: { type: "string" },
         stream: { type: "string" }, mission: { type: "string" }, territory: { type: "string", multiple: true }, moon: { type: "string" }, planet: { type: "string" },
         provider: { type: "string" }, note: { type: "string" }, since: { type: "string" }, reason: { type: "string" },
@@ -128,7 +131,7 @@ async function run(argv: string[]): Promise<void> {
     out(r, () => `initialized ${r.configPath} (${r.ships} ships); commit .nexus/config.json and .nexus/.gitignore`);
     return;
   }
-  if (!["system", "planet", "moon", "voyage", "status", "events", "fleet", "db", "validate"].includes(c0)) throw new Usage();
+  if (!["system", "planet", "moon", "voyage", "status", "events", "fleet", "db", "validate", "decision"].includes(c0)) throw new Usage();
 
   const g = openGalaxy(process.cwd(), process.env["NEXUS_FAKE_SCRIPTS"] ? { scriptsDir: process.env["NEXUS_FAKE_SCRIPTS"] } : {});
   try {
@@ -206,6 +209,13 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
     case "moon drop": {
       const r = dropMoon(g, { taskId: need(rest[0], "<task-id>") });
       return out(r, () => `dropped ${r.moonId}`);
+    }
+    case "decision answer": {
+      if (o.mine === o["not-mine"]) throw new Refusal("give exactly one of --mine or --not-mine");
+      const id = Number(need(rest[0], "<decision-id>"));
+      if (!Number.isInteger(id)) throw new Refusal("<decision-id> must be a number");
+      const r = answerDecision(g, { decisionId: id, answer: o.mine ? "mine" : "not_mine" });
+      return out(r, () => r.parked ? `resolved; moon parked (${r.moonStatus})` : `resolved; moon ${r.moonStatus}`);
     }
     case "fleet retire": {
       const shipId = need(rest[0], "<ship-id>"); retireShip(g, { shipId, reason: need(o.reason, "--reason") });

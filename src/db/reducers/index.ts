@@ -6,4 +6,6 @@ import { shipReducers } from "./ships.js";
 import { voyageReducers } from "./voyages.js";
 import { verdictReducers } from "./verdicts.js";
 import { decisionReducers } from "./decisions.js";
-export const REDUCERS: Record<string, Reducer> = { ...systemReducers, ...planetReducers, ...moonReducers, ...shipReducers, ...voyageReducers, ...verdictReducers, ...decisionReducers };
+// tree.written only marks a path the system itself wrote into the main tree; nothing is projected from it.
+const treeReducers: Record<string, Reducer> = { "tree.written": () => {} };
+export const REDUCERS: Record<string, Reducer> = { ...treeReducers, ...systemReducers, ...planetReducers, ...moonReducers, ...shipReducers, ...voyageReducers, ...verdictReducers, ...decisionReducers };
