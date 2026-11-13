@@ -110,3 +110,53 @@ test("nexus events --follow --json prints an event appended after startup", asyn
     cleanup();
   }
 });
+
+test("nexus events --follow table mode prints the header once", async () => {
+  const { dir, g, cleanup } = await makeGalaxy();
+  const child = spawn(process.execPath, [CLI, "events", "--follow"], {
+    cwd: dir,
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  try {
+    await waitFor(
+      () => stdout.split(/\r?\n/).some((text) => text.includes("ship.registered")),
+      `CLI did not print the existing ship.registered row; stderr: ${stderr}`,
+      5000,
+    );
+    assert.equal(child.exitCode, null, `CLI exited before following; stderr: ${stderr}`);
+
+    const first = append(g.db, event(["table-follow-marker-one"]));
+    const firstLine = await waitFor(
+      () => stdout.split(/\r?\n/).find((text) => text.includes("table-follow-marker-one")),
+      `CLI did not print the first appended event; stderr: ${stderr}`,
+      5000,
+    );
+    assert.ok(firstLine.startsWith(String(first.id)));
+
+    const second = append(g.db, event(["table-follow-marker-two"]));
+    const secondLine = await waitFor(
+      () => stdout.split(/\r?\n/).find((text) => text.includes("table-follow-marker-two")),
+      `CLI did not print the second appended event; stderr: ${stderr}`,
+      5000,
+    );
+    assert.ok(secondLine.startsWith(String(second.id)));
+
+    const headerLines = stdout.split(/\r?\n/).filter((text) => /^id\s+ts\s+kind\s+moon\s+payload\s*$/.test(text));
+    assert.equal(headerLines.length, 1);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGINT");
+    await Promise.race([
+      new Promise((resolve) => child.once("exit", resolve)),
+      new Promise((resolve) => setTimeout(resolve, 1000)),
+    ]);
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    cleanup();
+  }
+});

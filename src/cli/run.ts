@@ -152,6 +152,7 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
   }
   if (c0 === "events") {
     if (o.follow) {
+      let tableHeaderPrinted = false;
       const follower = followEvents(g.db, {
         since: o.since === undefined ? 0 : Number(o.since),
         pollMs: 250,
@@ -159,7 +160,11 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
           const selected = o.moon ? rows.filter((row) => row.moon_id === o.moon) : rows;
           if (selected.length === 0) return;
           if (o.json) for (const row of selected) console.log(JSON.stringify(row));
-          else console.log(eventsTable(selected));
+          else {
+            const lines = eventsTable(selected).split("\n");
+            console.log(tableHeaderPrinted ? lines.slice(1).join("\n") : lines.join("\n"));
+            tableHeaderPrinted = true;
+          }
         },
       });
       const keepAlive = setInterval(() => {}, 0x7fffffff);
