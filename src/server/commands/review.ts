@@ -8,14 +8,14 @@ import type { AgentEvent, ReviewReport } from "../../providers/adapter.js";
 import { appendAmendment, hashSpec } from "../../validate/spec.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
-import { loadMoon, moonScope, parkVoyage, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
+import { loadMoon, moonScope, parkVoyage, providerAtCap, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
 
 type VoyageRow = { id: string; ship_id: string; status: string; round: number; report: string | null };
 
 function pickProvider(g: Galaxy, requested: string | undefined): string {
   if (requested) return requested;
   const ids = g.config.roles.review;
-  const first = ids.find((id) => g.adapters[id] && pickIdleShip(g.db, "customs", id)) ?? ids[0];
+  const first = ids.find((id) => g.adapters[id] && !providerAtCap(g, id) && pickIdleShip(g.db, "customs", id)) ?? ids[0];
   if (!first) throw new Refusal("no provider is configured for the review role");
   return first;
 }
@@ -29,7 +29,7 @@ function amendmentFor(text: string, round: number, reasoning: string, delta: str
 }
 
 export async function inspectMoon(
-  g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void; reviewScript?: string; signal?: AbortSignal },
+  g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void; reviewScript?: string; signal?: AbortSignal; onLaunched?: (voyageId: string) => void },
 ): Promise<{ voyageId: string; verdict: ReviewReport | null; moonStatus: MoonStatus }> {
   const { taskId } = input;
   const moon = loadMoon(g, taskId);
@@ -56,7 +56,7 @@ export async function inspectMoon(
   const prompt = input.reviewScript ? `FAKE-SCRIPT: ${input.reviewScript}\n${body}` : body;
 
   const outcome = await runVoyage(g, {
-    role: "review", taskId, provider, worktree, touch: moonTouch(moon), ...(input.onEvent ? { onEvent: input.onEvent } : {}), ...(input.signal ? { signal: input.signal } : {}),
+    role: "review", taskId, provider, worktree, touch: moonTouch(moon), ...(input.onEvent ? { onEvent: input.onEvent } : {}), ...(input.signal ? { signal: input.signal } : {}), ...(input.onLaunched ? { onLaunched: input.onLaunched } : {}),
     job: { role: "review", specPath: moon.spec_path, specText, prompt, round: moon.round, auditJson },
   });
   const scope = moonScope(g, moon);

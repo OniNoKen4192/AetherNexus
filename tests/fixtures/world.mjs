@@ -27,3 +27,13 @@ export async function worldWithMoon(script = "happy", patch, patchSpec) {
   const { moonId } = assignMoon(w.g, { planetId, specPath: spec });
   return { ...w, systemId, planetId, moonId };
 }
+
+// Two moons (T1, T2) on the same planet; each spec names its own fake implement script.
+export async function worldWithTwoMoons(scriptA = "happy", scriptB = "happy", patch) {
+  const w = await makeGalaxy(patch); const { systemId } = createSystem(w.g, { slug: "s", title: "t", brief: "b", seed: 1 });
+  const { planetId } = assignPlanet(w.g, { systemId, streamId: "P1", mission: "m", territory: ["src/**"] });
+  const mk = (id, script) => writeSpec(w.dir, id, read("tests/fixtures/specs/good-basic.md").replace("# TASK: thing-add-x", `# TASK: thing-add-x\n<!-- FAKE-SCRIPT: ${script} -->`));
+  const s1 = mk("T1", scriptA), s2 = mk("T2", scriptB); w.git("add", "-A"); w.git("commit", "-qm", "specs");
+  assignMoon(w.g, { planetId, specPath: s1 }); assignMoon(w.g, { planetId, specPath: s2 });
+  return { ...w, systemId, planetId };
+}

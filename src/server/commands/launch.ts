@@ -9,7 +9,7 @@ import { audit, type AuditReport } from "../../validate/audit.js";
 import { hashSpec, sha256 } from "../../validate/spec.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
-import { loadMoon, loadPlanet, moonScope, parkVoyage, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
+import { loadMoon, loadPlanet, moonScope, parkVoyage, providerAtCap, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
 
 const NEXUS_AUTHOR = { name: "nexus", email: "nexus@nexus.local" };
 const PARK_STATUSES = new Set(["BLOCKED", "BACKEND_FAILURE", "RATE_LIMITED"]);
@@ -26,7 +26,7 @@ function syncIn(srcAbs: string, destAbs: string): void {
 function pickProvider(g: Galaxy, requested: string | undefined): string {
   if (requested) return requested;
   const ids = g.config.roles.implement;
-  const idle = ids.find((id) => g.adapters[id] && pickIdleShip(g.db, "freighter", id));
+  const idle = ids.find((id) => g.adapters[id] && !providerAtCap(g, id) && pickIdleShip(g.db, "freighter", id));
   const first = idle ?? ids[0];
   if (!first) throw new Refusal("no provider is configured for the implement role");
   return first;
@@ -99,7 +99,7 @@ function applyRestore(g: Galaxy, worktree: string, r: { reverted: string[]; dele
 }
 
 export async function launchMoon(
-  g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void; signal?: AbortSignal },
+  g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void; signal?: AbortSignal; onLaunched?: (voyageId: string) => void },
   deps?: { audit?: typeof audit },
 ): Promise<{ voyageId: string; audit: AuditReport | null; moonStatus: MoonStatus }> {
   const { taskId } = input;
@@ -203,7 +203,7 @@ export async function launchMoon(
   const delta_section = deltaSpec ? `\n## Delta from customs (round ${round})\n\n${deltaSpec}\n\n` : "\n";
   const prompt = renderPrompt(promptPath("implement.md"), { spec_path: moon.spec_path, worktree, spec_text: specText, delta_section });
   const outcome = await runVoyage(g, {
-    role: "implement", taskId, provider, worktree, touch: moonTouch(moon), ...(input.onEvent ? { onEvent: input.onEvent } : {}), ...(input.signal ? { signal: input.signal } : {}),
+    role: "implement", taskId, provider, worktree, touch: moonTouch(moon), ...(input.onEvent ? { onEvent: input.onEvent } : {}), ...(input.signal ? { signal: input.signal } : {}), ...(input.onLaunched ? { onLaunched: input.onLaunched } : {}),
     job: {
       role: "implement", specPath: moon.spec_path, specText, prompt, round,
       ...(deltaSpec ? { deltaSpec } : {}), ...(resumeId ? { previousSessionId: resumeId } : {}),

@@ -24,6 +24,8 @@ export type VoyageInput = {
   job: Omit<Job, "voyageId">; onEvent?: (e: AgentEvent) => void; timeoutMs?: number;
   /** External abort (the CLI's SIGINT/SIGTERM handler): the voyage parks with reason 'interrupted'. */
   signal?: AbortSignal;
+  /** Called once, synchronously, right after the voyage.launched append, with the new voyage id. */
+  onLaunched?: (voyageId: string) => void;
 };
 
 const PROMPTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "prompts");
@@ -62,6 +64,14 @@ export function moonScope(g: Galaxy, moon: MoonRow): Pick<NexusEvent, "system_id
   return { system_id: loadPlanet(g, moon).system_id, planet_id: moon.planet_id, moon_id: moon.id, task_id: moon.task_id, assignment_id: moon.assignment_id };
 }
 
+type InFlightRow = { provider: string };
+/** True when the provider already has as many voyages in flight as scheduler.per_provider_max allows (false when unset). */
+export function providerAtCap(g: Galaxy, provider: string): boolean {
+  const max = g.config.scheduler.per_provider_max[provider];
+  if (max === undefined) return false;
+  return g.db.all<InFlightRow>("voyages.inFlight").filter((v) => v.provider === provider).length >= max;
+}
+
 export const shipClassFor = (role: Role): ShipClass => (role === "implement" ? "freighter" : "customs");
 export const shipsNoun = (cls: ShipClass): string => (cls === "customs" ? "customs" : `${cls}s`);
 
@@ -97,7 +107,7 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
   // One transaction: the voyage.launched reducer takes the ship, so a refused launch leaves it idle.
   const launched: NexusEvent = {
     kind: "voyage.launched", ...scope, voyage_id: baseId, ship_id: ship.id, provider: input.provider,
-    payload: { role: input.role, round: input.job.round, provider: input.provider, ...(model ? { model } : {}), ship_id: ship.id, worktree: input.worktree },
+    payload: { role: input.role, round: input.job.round, provider: input.provider, ...(model ? { model } : {}), ship_id: ship.id, worktree: input.worktree, owner_pid: process.pid },
   };
   append(g.db, launched, () => {
     const cur = g.db.get<{ status: string }>("ships.byId", { id: ship.id });
@@ -106,8 +116,17 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
     let id = baseId;
     for (let n = 2; g.db.get("voyages.byId", { id }); n++) id = `${baseId}#${n}`;
     launched.voyage_id = id;
+    // Scheduler limits are checked here, in the launch transaction, so they hold across processes sharing the file.
+    const inFlight = g.db.all<InFlightRow>("voyages.inFlight");
+    const total = g.config.scheduler.max_concurrent_ships;
+    if (inFlight.length >= total) throw new Refusal(`${inFlight.length} ${inFlight.length === 1 ? "voyage" : "voyages"} in flight — the limit is ${total} (scheduler.max_concurrent_ships)`);
+    const perProvider = g.config.scheduler.per_provider_max[input.provider];
+    if (perProvider !== undefined && inFlight.filter((v) => v.provider === input.provider).length >= perProvider) {
+      throw new Refusal(`provider '${input.provider}' is at its limit of ${perProvider} (scheduler.per_provider_max)`);
+    }
   });
   const voyageId = launched.voyage_id!;
+  input.onLaunched?.(voyageId);
 
   const out: DispatchOutcome = { voyageId, shipId: ship.id, events: 0 };
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;

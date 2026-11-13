@@ -42,6 +42,7 @@ export const STATEMENTS = {
   "moons.byStatus": "SELECT * FROM moons WHERE status = @status ORDER BY planet_id, orbit_index",
   "voyages.insert": "INSERT INTO voyages(id, ship_id, moon_id, planet_id, task_id, assignment_id, role, round, provider, model, session_id, status, launched_ts, last_event_id) VALUES (@id, @ship_id, @moon_id, @planet_id, @task_id, @assignment_id, @role, @round, @provider, @model, @session_id, 'launched', @launched_ts, @last_event_id)",
   "voyages.byId": "SELECT * FROM voyages WHERE id = @id",
+  "voyages.inFlight": "SELECT * FROM voyages WHERE status IN ('launched','working') ORDER BY launched_ts, rowid",
   "voyages.byTask": "SELECT * FROM voyages WHERE task_id = @task_id ORDER BY launched_ts, rowid",
   "voyages.byAssignment": "SELECT * FROM voyages WHERE assignment_id = @assignment_id ORDER BY launched_ts, rowid",
   "voyages.latestByAssignmentRole": "SELECT * FROM voyages WHERE assignment_id = @assignment_id AND role = @role ORDER BY round DESC, rowid DESC LIMIT 1",
