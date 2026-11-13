@@ -4,6 +4,8 @@ export const STATEMENTS = {
   "events.insert": "INSERT INTO events(ts, kind, system_id, planet_id, moon_id, voyage_id, ship_id, task_id, assignment_id, provider, payload) VALUES (@ts, @kind, @system_id, @planet_id, @moon_id, @voyage_id, @ship_id, @task_id, @assignment_id, @provider, @payload)",
   "events.byId": "SELECT * FROM events WHERE id = @id",
   "events.since": "SELECT * FROM events WHERE id > @id ORDER BY id",
+  "events.page": "SELECT * FROM events WHERE id > @id ORDER BY id LIMIT @limit",
+  "events.maxId": "SELECT COALESCE(MAX(id), 0) AS id FROM events",
   "events.kindSince": "SELECT * FROM events WHERE kind = @kind AND id > @id ORDER BY id",
   "events.all": "SELECT * FROM events ORDER BY id",
   "events.byMoon": "SELECT * FROM events WHERE moon_id = @moon_id ORDER BY id",
