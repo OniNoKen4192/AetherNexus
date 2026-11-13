@@ -22,6 +22,71 @@ export function rawRequest(port, { method = "GET", path: p = "/", headers = {}, 
   });
 }
 
+/** Open and parse the authenticated server-sent event feed. */
+export function readFeed(srv, { since, lastEventId } = {}) {
+  const events = [];
+  let server = 0;
+  let response;
+  let buffer = "";
+  const waiters = new Set();
+  let resolveClosed;
+  const closed = new Promise((resolve) => { resolveClosed = resolve; });
+  let resolveStatus, rejectStatus;
+  const status = new Promise((resolve, reject) => { resolveStatus = resolve; rejectStatus = reject; });
+
+  const check = () => {
+    for (const waiter of [...waiters]) {
+      let ready = false;
+      try { ready = typeof waiter.want === "function" ? waiter.want(events) : events.length >= waiter.want; }
+      catch (error) { clearTimeout(waiter.timer); waiters.delete(waiter); waiter.reject(error); continue; }
+      if (ready) { clearTimeout(waiter.timer); waiters.delete(waiter); waiter.resolve(); }
+    }
+  };
+  const parse = () => {
+    for (;;) {
+      const end = buffer.indexOf("\n\n");
+      if (end < 0) return;
+      const block = buffer.slice(0, end); buffer = buffer.slice(end + 2);
+      let type = "message", id;
+      const data = [];
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) type = line.slice(6).trimStart();
+        else if (line.startsWith("id:")) id = line.slice(3).trimStart();
+        else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+      }
+      if (type === "server") server++;
+      else if (id !== undefined) events.push(JSON.parse(data.join("\n")));
+      check();
+    }
+  };
+  const query = since === undefined ? "" : `?since=${encodeURIComponent(String(since))}`;
+  const headers = { cookie: `nexus_token=${srv.token}`, host: `127.0.0.1:${srv.port}` };
+  if (lastEventId !== undefined) headers["last-event-id"] = String(lastEventId);
+  const req = http.request({ host: "127.0.0.1", port: srv.port, method: "GET", path: `/api/events${query}`, headers, agent: false }, (res) => {
+    response = res; resolveStatus(res.statusCode);
+    res.setEncoding("utf8");
+    res.on("data", (chunk) => { buffer += chunk.replaceAll("\r\n", "\n"); parse(); });
+    res.on("end", resolveClosed); res.on("close", resolveClosed);
+  });
+  req.on("error", (error) => { rejectStatus(error); resolveClosed(); });
+  req.end();
+  return {
+    events,
+    get server() { return server; },
+    status,
+    waitFor(want, ms = 5000) {
+      if (typeof want === "function" ? want(events) : events.length >= want) return Promise.resolve();
+      return new Promise((resolve, reject) => {
+        const waiter = { want, resolve, reject, timer: undefined };
+        waiter.timer = setTimeout(() => { waiters.delete(waiter); reject(new Error(`timed out waiting for feed (${events.length} events)`)); }, ms);
+        waiters.add(waiter);
+      });
+    },
+    closed,
+    close() { response?.destroy(); req.destroy(); },
+  };
+}
+
 /** A galaxy with a running server on an ephemeral port and an empty webRoot (override via opts.webRoot). */
 export async function startWorld(script, patchConfig, opts = {}) {
   const { startServer } = await import("../../dist/server/http/server.js");

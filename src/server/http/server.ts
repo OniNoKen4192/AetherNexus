@@ -8,11 +8,12 @@ import type { Galaxy } from "../galaxy.js";
 import { acquireServerLock } from "../lock.js";
 import { moonDetail, snapshot } from "../commands/query.js";
 import { COOKIE_NAME, checkRequest, isApiPath, rawPath, tokenMatches } from "./auth.js";
+import { createFeed, type Feed } from "./feed.js";
 
 export { checkRequest } from "./auth.js";
 
 export type NexusServer = { port: number; token: string; url: string; close(): Promise<void> };
-export type ApiContext = { g: Galaxy; req: http.IncomingMessage; res: http.ServerResponse; query: URLSearchParams };
+export type ApiContext = { g: Galaxy; req: http.IncomingMessage; res: http.ServerResponse; query: URLSearchParams; feed: Feed };
 export type ApiHandler = (ctx: ApiContext) => void | Promise<void>;
 
 export function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
@@ -32,6 +33,7 @@ function sendText(res: http.ServerResponse, status: number, text: string, extra:
 const API_ROUTES: Record<string, ApiHandler> = {
   "GET /api/ping": ({ res }) => sendJson(res, 200, { ok: true }),
   "GET /api/snapshot": ({ g, res }) => sendJson(res, 200, snapshot(g, { ownPid: process.pid, failures: [] })),
+  "GET /api/events": ({ req, res, query, feed }) => feed.handle(req, res, query),
 };
 type PrefixApiHandler = (ctx: ApiContext, remainder: string) => void | Promise<void>;
 const API_PREFIX_ROUTES: Record<string, PrefixApiHandler> = {
@@ -81,6 +83,7 @@ export async function startServer(g: Galaxy, opts: { port?: number; token?: stri
   const webRoot = opts.webRoot ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "web");
   const lock = acquireServerLock(g, { port: wantPort });
   const state = { port: wantPort, token };
+  const feed = createFeed(g, { pollMs: opts.pollMs ?? 250 });
 
   async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const gate = checkRequest(req, state);
@@ -90,14 +93,14 @@ export async function startServer(g: Galaxy, opts: { port?: number; token?: stri
     if (isApiPath(pathname)) {
       const key = `${req.method} ${pathname}`;
       const handler = Object.hasOwn(API_ROUTES, key) ? API_ROUTES[key] : undefined;
-      if (handler) return await handler({ g, req, res, query });
+      if (handler) return await handler({ g, req, res, query, feed });
       for (const prefixKey of Object.keys(API_PREFIX_ROUTES)) {
         if (!key.startsWith(prefixKey) || !Object.hasOwn(API_PREFIX_ROUTES, prefixKey)) continue;
         const raw = key.slice(prefixKey.length);
         let remainder: string;
         try { remainder = decodeURIComponent(raw); } catch { return sendJson(res, 404, { error: "not found" }); }
         if (!remainder || remainder.includes("/")) return sendJson(res, 404, { error: "not found" });
-        return await API_PREFIX_ROUTES[prefixKey]!({ g, req, res, query }, remainder);
+        return await API_PREFIX_ROUTES[prefixKey]!({ g, req, res, query, feed }, remainder);
       }
       return sendJson(res, 404, { error: "not found" });
     }
@@ -120,6 +123,7 @@ export async function startServer(g: Galaxy, opts: { port?: number; token?: stri
       server.listen({ port: wantPort, host: "127.0.0.1", exclusive: true }, () => { server.off("error", reject); resolve(); });
     });
   } catch (e) {
+    feed.close();
     lock.release();
     if ((e as NodeJS.ErrnoException).code === "EADDRINUSE") throw new Refusal(`port ${wantPort} is in use — pass --port or set server.port in .nexus/config.json`);
     throw e;
@@ -131,9 +135,12 @@ export async function startServer(g: Galaxy, opts: { port?: number; token?: stri
   let closing: Promise<void> | undefined;
   return {
     port, token, url: `http://127.0.0.1:${port}/?token=${token}`,
-    close: () => closing ??= new Promise<void>((resolve) => {
-      server.close(() => { lock.release(); resolve(); });
-      server.closeAllConnections();
-    }),
+    close: () => {
+      feed.close();
+      return closing ??= new Promise<void>((resolve) => {
+        server.close(() => { lock.release(); resolve(); });
+        server.closeAllConnections();
+      });
+    },
   };
 }
