@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
 import { acquireServerLock } from "../lock.js";
+import { moonDetail, snapshot } from "../commands/query.js";
 import { COOKIE_NAME, checkRequest, isApiPath, rawPath, tokenMatches } from "./auth.js";
 
 export { checkRequest } from "./auth.js";
@@ -30,6 +31,14 @@ function sendText(res: http.ServerResponse, status: number, text: string, extra:
  */
 const API_ROUTES: Record<string, ApiHandler> = {
   "GET /api/ping": ({ res }) => sendJson(res, 200, { ok: true }),
+  "GET /api/snapshot": ({ g, res }) => sendJson(res, 200, snapshot(g, { ownPid: process.pid, failures: [] })),
+};
+type PrefixApiHandler = (ctx: ApiContext, remainder: string) => void | Promise<void>;
+const API_PREFIX_ROUTES: Record<string, PrefixApiHandler> = {
+  "GET /api/moons/": ({ g, res }, taskId) => {
+    try { sendJson(res, 200, moonDetail(g, taskId, { ownPid: process.pid })); }
+    catch (e) { if (e instanceof Refusal) return sendJson(res, 404, { error: e.message }); throw e; }
+  },
 };
 
 const MIME: Record<string, string> = {
@@ -81,8 +90,16 @@ export async function startServer(g: Galaxy, opts: { port?: number; token?: stri
     if (isApiPath(pathname)) {
       const key = `${req.method} ${pathname}`;
       const handler = Object.hasOwn(API_ROUTES, key) ? API_ROUTES[key] : undefined;
-      if (!handler) return sendJson(res, 404, { error: "not found" });
-      return await handler({ g, req, res, query });
+      if (handler) return await handler({ g, req, res, query });
+      for (const prefixKey of Object.keys(API_PREFIX_ROUTES)) {
+        if (!key.startsWith(prefixKey) || !Object.hasOwn(API_PREFIX_ROUTES, prefixKey)) continue;
+        const raw = key.slice(prefixKey.length);
+        let remainder: string;
+        try { remainder = decodeURIComponent(raw); } catch { return sendJson(res, 404, { error: "not found" }); }
+        if (!remainder || remainder.includes("/")) return sendJson(res, 404, { error: "not found" });
+        return await API_PREFIX_ROUTES[prefixKey]!({ g, req, res, query }, remainder);
+      }
+      return sendJson(res, 404, { error: "not found" });
     }
     if (pathname === "/" && req.method === "GET" && query.has("token")) {
       if (!tokenMatches(query.get("token") ?? "", token)) return sendJson(res, 403, { error: "invalid token" });

@@ -66,7 +66,7 @@ export function runAuditOrPark(g: Galaxy, p: { taskId: string; worktree: string;
 }
 
 /** True when the latest human.message for the assignment is newer than the latest park (moon.adrift or a REJECT verdict). */
-function repliedSincePark(g: Galaxy, assignmentId: number): boolean {
+export function repliedSincePark(g: Galaxy, assignmentId: number): boolean {
   let park = 0, reply = 0;
   for (const e of g.db.all("events.byAssignment", { assignment_id: assignmentId }).map(rowToEvent)) {
     if (e.kind === "moon.adrift" || (e.kind === "verdict.issued" && e.payload["verdict"] === "REJECT")) park = e.id;
