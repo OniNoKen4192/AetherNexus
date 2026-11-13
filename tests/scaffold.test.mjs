@@ -11,7 +11,8 @@ test("package.json: name, version, engines, exact dependency set", () => {
   assert.equal(pkg.engines.node, ">=22.13");
   assert.deepEqual(Object.keys(pkg.dependencies).sort(),
     ["@anthropic-ai/claude-agent-sdk", "@modelcontextprotocol/sdk"]);
-  assert.deepEqual(Object.keys(pkg.devDependencies).sort(), ["@types/node", "typescript"]);
+  // The Bridge page is built with Preact + Vite; they are build tools only and never runtime dependencies.
+  assert.deepEqual(Object.keys(pkg.devDependencies).sort(), ["@preact/preset-vite", "@types/node", "preact", "typescript", "vite"]);
 });
 
 test("manifests carry the package version", () => {
