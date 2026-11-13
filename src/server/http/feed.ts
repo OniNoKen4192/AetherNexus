@@ -91,9 +91,11 @@ export function createFeed(g: Galaxy, opts: { pollMs: number; heartbeatMs?: numb
       res.on("close", remove);
       res.on("error", remove);
       for (;;) {
+        if (res.destroyed || res.writableEnded) return;
         const rows = g.db.all<Row>("events.page", { id: client.lastId, limit: 500 }).map(rowToEvent);
         if (rows.length === 0) break;
         sendRows(client, rows);
+        if (res.destroyed || res.writableEnded) return;
         if (rows.length < 500) break;
       }
       if (!res.destroyed && !res.writableEnded) clients.add(client);

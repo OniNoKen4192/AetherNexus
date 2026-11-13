@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { append } from "../../dist/db/events.js";
 import { createFeed } from "../../dist/server/http/feed.js";
 import { launchMoon } from "../../dist/server/commands/launch.js";
+import { makeGalaxy } from "../helpers.mjs";
 import { rawRequest, readFeed, startWorld } from "./helpers.mjs";
 
 const maxId = (g) => g.db.get("events.maxId")?.id ?? 0;
@@ -17,6 +18,16 @@ async function eventually(predicate, ms = 5000) {
     if (Date.now() >= deadline) throw new Error("condition timed out");
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+}
+
+async function bounded(promise, ms, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); }),
+    ]);
+  } finally { clearTimeout(timer); }
 }
 
 function addTrees(g, count) {
@@ -73,6 +84,56 @@ test("backlog over three pages is complete and live events arrive exactly once",
   } finally { feed.close(); await x.close(); }
 });
 
+test("a destroyed response stops backlog paging and does not affect the next client", async () => {
+  const w = await makeGalaxy();
+  const g = w.g;
+  addTrees(g, 600);
+  const n = maxId(g);
+  let pages = 0;
+  let failed;
+  let destroyNext = true;
+  let normal;
+  const all = g.db.all;
+  g.db.all = (name, params) => {
+    if (name === "events.page" && ++pages > 50) throw new Error("backlog loop does not stop on a destroyed response");
+    return all(name, params);
+  };
+  const feed = createFeed(g, { pollMs: 1000 });
+  const server = http.createServer((req, res) => {
+    const query = new URL(req.url ?? "/", "http://127.0.0.1").searchParams;
+    if (destroyNext) {
+      destroyNext = false;
+      res.destroy();
+      try { feed.handle(req, res, query); } catch (error) { failed = error; }
+      return;
+    }
+    feed.handle(req, res, query);
+  });
+  try {
+    await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+    const port = server.address().port;
+    await bounded(new Promise((resolve) => {
+      const req = http.get({ host: "127.0.0.1", port, path: "/?since=0", agent: false }, (res) => {
+        res.resume(); res.once("end", resolve); res.once("close", resolve);
+      });
+      req.once("error", resolve);
+    }), 2000, "destroyed request did not finish");
+    assert.equal(failed, undefined);
+    assert.ok(pages <= 2, `destroyed response issued ${pages} page queries`);
+
+    normal = readFeed({ port, token: "direct" }, { since: 0 });
+    await normal.waitFor(n);
+    assert.deepEqual(normal.events.map((event) => event.id), Array.from({ length: n }, (_, i) => i + 1));
+  } finally {
+    normal?.close();
+    feed.close();
+    server.closeAllConnections();
+    if (server.listening) await bounded(new Promise((resolve) => server.close(resolve)), 2000, "server close timed out");
+    g.db.all = all;
+    w.cleanup();
+  }
+});
+
 test("Last-Event-ID resumes after its cursor and wins over since", async () => {
   const x = await startWorld(undefined, undefined, { server: { pollMs: 20 } });
   let feed;
@@ -97,11 +158,27 @@ test("a client without a cursor starts at the present", async () => {
 test("an event appended by another process reaches the feed", async () => {
   const x = await startWorld(undefined, undefined, { server: { pollMs: 20 } });
   const feed = readFeed(x.srv);
+  let child;
+  let exited;
   try {
     await feed.status;
-    await runCli(x.w.dir, ["system", "create", "other", "--title", "t", "--brief-text", "b"]);
+    const cli = path.resolve("dist/cli/main.js");
+    child = spawn(process.execPath, [cli, "system", "create", "other", "--title", "t", "--brief-text", "b"], {
+      cwd: x.w.dir, stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8"); child.stderr.on("data", (chunk) => { stderr += chunk; });
+    exited = new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (code) => code === 0 ? resolve() : reject(new Error(`CLI exited ${code}: ${stderr}`)));
+    });
+    await bounded(exited, 20_000, "CLI process timed out");
     await feed.waitFor((events) => events.some((e) => e.kind === "system.created" && e.payload.title === "t"));
-  } finally { feed.close(); await x.close(); }
+  } finally {
+    if (child?.exitCode === null && child.signalCode === null) child.kill();
+    if (exited) await bounded(exited, 2000, "CLI process did not exit after kill").catch(() => {});
+    feed.close(); await x.close();
+  }
 });
 
 test("voyage activity arrives while launch is still in flight", async () => {
@@ -130,15 +207,35 @@ test("notify sends one server event to every connected client", async () => {
 });
 
 test("clients with different cursors each retain a complete ordered stream", async () => {
-  const x = await startWorld(undefined, undefined, { server: { pollMs: 20 } });
+  const x = await startWorld(undefined, undefined, { server: { pollMs: 2000 } });
   const cursor = maxId(x.w.g);
-  const all = readFeed(x.srv, { since: 0 }), live = readFeed(x.srv, { since: cursor });
+  let all;
+  let live;
   try {
-    await Promise.all([all.status, live.status]); addTrees(x.w.g, 20);
-    await Promise.all([all.waitFor(cursor + 20), live.waitFor(20)]);
-    assert.deepEqual(all.events.map((e) => e.id), Array.from({ length: cursor + 20 }, (_, i) => i + 1));
-    assert.deepEqual(live.events.map((e) => e.id), Array.from({ length: 20 }, (_, i) => cursor + i + 1));
-  } finally { all.close(); live.close(); await x.close(); }
+    addTrees(x.w.g, 3);
+    await new Promise((resolve) => setImmediate(resolve));
+    live = readFeed(x.srv, { since: cursor });
+    await live.status;
+    await live.waitFor(3);
+
+    addTrees(x.w.g, 2);
+    await new Promise((resolve) => setImmediate(resolve));
+    all = readFeed(x.srv, { since: 0 });
+    await all.status;
+    await all.waitFor(maxId(x.w.g));
+
+    for (let i = 0; i < 3; i++) {
+      addTrees(x.w.g, 2);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const last = append(x.w.g.db, { kind: "tree.written", payload: { paths: ["last"] } });
+    await Promise.all([
+      live.waitFor((events) => events.some((event) => event.id === last.id)),
+      all.waitFor((events) => events.some((event) => event.id === last.id)),
+    ]);
+    assert.deepEqual(live.events.map((event) => event.id), Array.from({ length: last.id - cursor }, (_, i) => cursor + i + 1));
+    assert.deepEqual(all.events.map((event) => event.id), Array.from({ length: last.id }, (_, i) => i + 1));
+  } finally { all?.close(); live?.close(); await x.close(); }
 });
 
 test("a disconnected client is dropped without affecting another client", async () => {
@@ -205,4 +302,34 @@ test("closing the server ends every open stream and resolves", async () => {
     await x.srv.close();
     await Promise.all([a.closed, b.closed]);
   } finally { a.close(); b.close(); await x.close(); }
+});
+
+test("feed.close ends clients and permanently stops polling", async () => {
+  const w = await makeGalaxy();
+  const g = w.g;
+  let pages = 0;
+  const all = g.db.all;
+  g.db.all = (name, params) => {
+    if (name === "events.page") pages++;
+    return all(name, params);
+  };
+  const d = await directFeed(g, { pollMs: 20 });
+  const a = readFeed(d.srv), b = readFeed(d.srv);
+  try {
+    await Promise.all([a.status, b.status]);
+    const before = pages;
+    d.feed.close();
+    await bounded(Promise.all([a.closed, b.closed]), 2000, "feed clients did not close");
+
+    append(g.db, { kind: "tree.written", payload: { paths: ["after-close"] } });
+    await assert.rejects(eventually(() => pages > before, 150), /condition timed out/);
+    assert.equal(pages, before);
+    assert.doesNotThrow(() => d.feed.close());
+    assert.doesNotThrow(() => d.feed.notify());
+  } finally {
+    a.close(); b.close();
+    await d.close();
+    g.db.all = all;
+    w.cleanup();
+  }
 });
