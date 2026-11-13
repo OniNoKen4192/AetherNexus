@@ -27,6 +27,7 @@ test("snapshot contains the complete fresh galaxy and only unassigned valid and 
     assert.equal(r.json.limits.in_flight, 0); assert.deepEqual(r.json.roles, x.w.g.config.roles);
     assert.ok(r.json.systems[0].planets.length > 1); assert.ok(r.json.systems[0].planets.every((p) => Array.isArray(p.moons)));
     assert.ok(r.json.systems[0].planets.some((p) => p.body_status === "barren"));
+    assert.ok(r.json.systems[0].planets.some((p) => p.moons.some((m) => m.body_status === "barren")));
     assert.equal(r.json.specs.some((s) => s.taskId === "T1"), false);
     assert.deepEqual(r.json.specs.find((s) => s.taskId === "T2").touch, ["src/lib/thing.js", "src/lib/thing.test.js"]);
     assert.ok(r.json.specs.find((s) => s.path.endsWith("broken.md")).error);
@@ -46,6 +47,8 @@ test("stale voyage ownership drives park_stale and disappears after parking", as
     let r = await x.api("/api/snapshot");
     assert.equal(r.json.limits.in_flight, 1); assert.equal(r.json.voyages.find((v) => v.id === "stale-v").owner, "stale");
     assert.deepEqual(availableActions(x.w.g, "T1", { ownPid: process.pid }), ["park_stale"]);
+    const detail = await x.api("/api/moons/T1");
+    assert.deepEqual(detail.json.actions, ["park_stale"]); assert.equal(detail.json.voyages.find((v) => v.id === "stale-v").owner, "stale");
     parkStaleMoon(x.w.g, { taskId: "T1", reason: "dead" });
     r = await x.api("/api/snapshot"); assert.equal(r.json.limits.in_flight, 0);
     assert.equal(r.json.voyages.find((v) => v.id === "stale-v").owner, null);
@@ -57,9 +60,25 @@ test("available actions follow launch, approve, dock and command refusals", asyn
   try {
     const actions = () => availableActions(x.w.g, "T1", { ownPid: process.pid });
     assert.deepEqual(actions(), ["launch"]); await assert.rejects(inspectMoon(x.w.g, { taskId: "T1" })); assert.throws(() => dockMoon(x.w.g, { taskId: "T1" }));
-    await launchMoon(x.w.g, { taskId: "T1" }); assert.deepEqual(actions(), ["inspect"]); await assert.rejects(launchMoon(x.w.g, { taskId: "T1" }));
-    await inspectMoon(x.w.g, { taskId: "T1", reviewScript: "review-approve" }); assert.deepEqual(actions(), ["dock"]); await assert.rejects(inspectMoon(x.w.g, { taskId: "T1" }));
-    dockMoon(x.w.g, { taskId: "T1" }); assert.deepEqual(actions(), []); await assert.rejects(launchMoon(x.w.g, { taskId: "T1" }));
+    await launchMoon(x.w.g, { taskId: "T1" }); assert.deepEqual(actions(), ["inspect"]); await assert.rejects(launchMoon(x.w.g, { taskId: "T1" })); assert.throws(() => dockMoon(x.w.g, { taskId: "T1" }));
+    await inspectMoon(x.w.g, { taskId: "T1", reviewScript: "review-approve" }); assert.deepEqual(actions(), ["dock"]); await assert.rejects(inspectMoon(x.w.g, { taskId: "T1" })); await assert.rejects(launchMoon(x.w.g, { taskId: "T1" }));
+    dockMoon(x.w.g, { taskId: "T1" }); assert.deepEqual(actions(), []); await assert.rejects(launchMoon(x.w.g, { taskId: "T1" })); await assert.rejects(inspectMoon(x.w.g, { taskId: "T1" })); assert.throws(() => dockMoon(x.w.g, { taskId: "T1" }));
+  } finally { await x.close(); }
+});
+
+test("FIX round returns to inspect before approval and dock", async () => {
+  const x = await startWorld("fix-round");
+  try {
+    const actions = () => availableActions(x.w.g, "T1", { ownPid: process.pid });
+    const apiActions = async () => (await x.api("/api/moons/T1")).json.actions;
+    await launchMoon(x.w.g, { taskId: "T1" });
+    await inspectMoon(x.w.g, { taskId: "T1", reviewScript: "review-fix" });
+    assert.deepEqual(actions(), ["launch"]); assert.deepEqual(await apiActions(), ["launch"]);
+    await launchMoon(x.w.g, { taskId: "T1" });
+    assert.deepEqual(actions(), ["inspect"]); assert.deepEqual(await apiActions(), ["inspect"]);
+    await inspectMoon(x.w.g, { taskId: "T1" });
+    assert.deepEqual(actions(), ["dock"]); assert.deepEqual(await apiActions(), ["dock"]);
+    dockMoon(x.w.g, { taskId: "T1" });
   } finally { await x.close(); }
 });
 
@@ -96,7 +115,8 @@ test("moon detail is assignment-scoped, validates suffixes, and both reads appen
     const old = maxId(x.w); assignMoon(x.w.g, { planetId: x.w.planetId, specPath: ".nexus/specs/T1.md" }); const assigned = maxId(x.w);
     const r = await x.api("/api/moons/T1"); assert.equal(r.status, 200); assert.equal(r.json.spec, spec);
     assert.deepEqual(r.json.voyages, []); assert.deepEqual(r.json.verdicts, []); assert.ok(r.json.events.every((e) => e.id > old));
-    assert.equal((await x.api("/api/moons/nope")).status, 404); assert.equal((await x.api("/api/moons/")).status, 404); assert.equal((await x.api("/api/moons/a/b")).status, 404);
+    const missing = await x.api("/api/moons/nope"); assert.equal(missing.status, 404); assert.equal(missing.json.error, "no moon is assigned task 'nope'");
+    assert.equal((await x.api("/api/moons/")).status, 404); assert.equal((await x.api("/api/moons/a/b")).status, 404);
     await x.api("/api/snapshot"); assert.equal(maxId(x.w), assigned, "read routes appended an event");
   } finally { await x.close(); }
 });

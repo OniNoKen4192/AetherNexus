@@ -100,7 +100,11 @@ export function availableActions(g: Galaxy, taskId: string, ctx: { ownPid: numbe
   }
   const verdicts = g.db.all("verdicts.byAssignment", { assignment_id: moon.assignment_id });
   const verdict = verdicts[verdicts.length - 1]?.["verdict"];
-  if (moon.status === "audited") return verdict === "FIX" ? ["launch"] : ["inspect"];
+  if (moon.status === "audited") {
+    const implement = g.db.get<Row>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
+    if (implement?.["status"] === "holding") return ["inspect"];
+    return verdict === "FIX" ? ["launch"] : [];
+  }
   if (moon.status === "reviewing" && verdict === "APPROVE") {
     const implement = g.db.get<Row>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
     if (implement?.["status"] === "cleared" || implement?.["status"] === "en_route") return ["dock"];
