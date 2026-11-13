@@ -21,6 +21,7 @@ import { parseSpec } from "../validate/spec.js";
 import { attentionMatches } from "../validate/attention.js";
 import { matchesPattern } from "../validate/match.js";
 import { resolveTarget } from "../validate/tokenize.js";
+import { followEvents } from "../server/follow.js";
 import type { AgentEvent } from "../providers/adapter.js";
 import { eventsTable, fleetTable, statusTable, table } from "./format.js";
 
@@ -41,7 +42,7 @@ const USAGE = `usage: nexus [--json] <command>
   voyage inspect <task-id> [--provider <p>] [--quiet]
   voyage dock <task-id>
   status [<system-id>]
-  events [--since <id>] [--moon <id>]      (--follow arrives with the daemon)
+  events [--follow] [--since <id>] [--moon <id>]
   fleet [retire <ship-id> --reason <r>]
   db rebuild | stats | explain <name> | analyze
   validate <spec-path> | --selftest
@@ -150,7 +151,31 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
     return out(r, () => statusTable(r, (id) => String(g.db.get("ships.byId", { id })?.["name"] ?? id)));
   }
   if (c0 === "events") {
-    if (o.follow) throw new Refusal("--follow arrives with the daemon; v0 prints the log once");
+    if (o.follow) {
+      let tableHeaderPrinted = false;
+      const follower = followEvents(g.db, {
+        since: o.since === undefined ? 0 : Number(o.since),
+        pollMs: 250,
+        onEvents: (rows) => {
+          const selected = o.moon ? rows.filter((row) => row.moon_id === o.moon) : rows;
+          if (selected.length === 0) return;
+          if (o.json) for (const row of selected) console.log(JSON.stringify(row));
+          else {
+            const lines = eventsTable(selected).split("\n");
+            console.log(tableHeaderPrinted ? lines.slice(1).join("\n") : lines.join("\n"));
+            tableHeaderPrinted = true;
+          }
+        },
+      });
+      const keepAlive = setInterval(() => {}, 0x7fffffff);
+      try {
+        await new Promise<void>((resolve) => process.once("SIGINT", resolve));
+      } finally {
+        clearInterval(keepAlive);
+        follower.stop();
+      }
+      return;
+    }
     const r = events(g, { ...(o.since !== undefined ? { since: Number(o.since) } : {}), ...(o.moon ? { moon: o.moon } : {}) });
     return out(r, () => eventsTable(r));
   }
