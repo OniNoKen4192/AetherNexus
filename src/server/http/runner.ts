@@ -14,8 +14,18 @@ export type VoyageRunner = {
 
 type Flight = { controller: AbortController; settled: Promise<void> };
 
+function errorMessage(error: unknown): string {
+  try {
+    const message: unknown = error instanceof Error ? error.message : error;
+    return typeof message === "string" ? message : String(message);
+  } catch {
+    return "unknown error";
+  }
+}
+
 export function createVoyageRunner(opts: { onFailure: () => void }): VoyageRunner {
   const flights = new Map<string, Flight>();
+  const runs = new Set<Flight>();
   const recorded: Failure[] = [];
   let shuttingDown = false;
 
@@ -35,6 +45,7 @@ export function createVoyageRunner(opts: { onFailure: () => void }): VoyageRunne
         onLaunched(id) {
           if (voyageId !== undefined) return;
           voyageId = id;
+          flights.set(id, flight);
           answerResolve({ launched: true, voyageId: id });
         },
       }));
@@ -49,7 +60,7 @@ export function createVoyageRunner(opts: { onFailure: () => void }): VoyageRunne
           }
           const failure: Failure = {
             ts: new Date().toISOString(), taskId, voyageId,
-            message: error instanceof Error ? error.message : String(error),
+            message: errorMessage(error),
           };
           recorded.unshift(failure);
           if (recorded.length > 50) recorded.length = 50;
@@ -58,12 +69,10 @@ export function createVoyageRunner(opts: { onFailure: () => void }): VoyageRunne
         },
       ).finally(() => {
         if (voyageId !== undefined) flights.delete(voyageId);
+        runs.delete(flight);
       });
-      const originalResolve = answerResolve;
-      answerResolve = (value) => {
-        if (value.launched) flights.set(value.voyageId, { controller, settled });
-        originalResolve(value);
-      };
+      const flight = { controller, settled };
+      runs.add(flight);
       return answer;
     },
     cancel(voyageId) {
@@ -73,9 +82,9 @@ export function createVoyageRunner(opts: { onFailure: () => void }): VoyageRunne
     },
     async abortAll() {
       shuttingDown = true;
-      const current = [...flights.values()];
-      for (const flight of current) flight.controller.abort();
-      await Promise.all(current.map((flight) => flight.settled));
+      const current = [...runs];
+      for (const run of current) run.controller.abort();
+      await Promise.all(current.map((run) => run.settled));
     },
     failures: () => recorded.slice(),
     inFlight: () => flights.size,

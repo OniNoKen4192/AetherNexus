@@ -70,8 +70,8 @@ function validate(body: unknown, fields: Record<string, Field>): Record<string, 
 }
 
 export async function runCommand(g: Galaxy, runner: VoyageRunner, name: string, body: unknown): Promise<CommandOutcome> {
-  const command = COMMANDS[name];
-  if (!command) throw new UnknownCommand(`unknown command '${name}'`);
+  if (!Object.hasOwn(COMMANDS, name)) throw new UnknownCommand(`unknown command '${name}'`);
+  const command = COMMANDS[name]!;
   const result = await command.run(g, runner, validate(body, command.fields));
   if (name === "moon.launch" || name === "voyage.inspect") {
     const answer = result as { launched: boolean; voyageId?: string; result?: unknown };

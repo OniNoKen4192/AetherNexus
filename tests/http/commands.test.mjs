@@ -8,6 +8,7 @@ import { Refusal } from "../../dist/server/errors.js";
 import { launchMoon } from "../../dist/server/commands/launch.js";
 import { inspectMoon } from "../../dist/server/commands/review.js";
 import { rebuild, dumpProjections } from "../../dist/db/rebuild.js";
+import { writeSpec } from "../helpers.mjs";
 import { rawRequest, readFeed, startWorld } from "./helpers.mjs";
 
 const waitFor = async (fn, ms = 5000) => {
@@ -99,6 +100,109 @@ test("malformed command requests are rejected without events and server stays he
   } finally { await x.close(); }
 });
 
+test("unknown command names inherited from Object.prototype answer 404", async () => {
+  const x = await startWorld();
+  try {
+    const before = x.w.g.db.get("events.maxId")?.id ?? 0;
+    for (const name of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
+      for (const body of [{}, { taskId: "T1" }]) {
+        const response = await x.api(`/api/commands/${name}`, { method: "POST", body });
+        assert.equal(response.status, 404, `${name}: ${JSON.stringify(body)}`);
+      }
+    }
+    assert.equal(x.w.g.db.get("events.maxId")?.id ?? 0, before);
+    assert.equal((await x.api("/api/ping")).status, 200);
+  } finally { await x.close(); }
+});
+
+test("moon.launch on an audited moon answers 409 with the refusal and leaves nothing in flight", async () => {
+  const x = await startWorld("happy");
+  try {
+    const first = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } });
+    assert.equal(first.status, 202);
+    await waitFor(() => x.w.g.db.get("moons.byTask", { task_id: "T1" }).status === "audited");
+    const second = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } });
+    assert.equal(second.status, 409);
+    assert.match(second.json.error, /is 'audited'/);
+    assert.deepEqual(x.w.g.db.all("voyages.inFlight"), []);
+  } finally { await x.close(); }
+});
+
+test("each synchronous command maps success to 200 and a refusal to 409", async () => {
+  const x = await startWorld("slow");
+  let launched;
+  try {
+    const systemBody = { slug: "two", title: "Two", brief: "second system" };
+    const moonBody = { planetId: x.w.planetId, specPath: writeSpec(x.w.dir, "T2") };
+    const rows = [
+      {
+        name: "system.create", success: () => systemBody, refusal: () => systemBody,
+        check(result) {
+          assert.match(result.systemId, /^S-\d{8}-two$/);
+          assert.equal(typeof result.baseSha, "string");
+          assert.equal(typeof result.planets, "number");
+          assert.equal(typeof result.moons, "number");
+        },
+      },
+      {
+        name: "planet.assign",
+        success: () => ({ systemId: x.w.systemId, streamId: "P2", mission: "m", territory: ["src/**"] }),
+        refusal: () => ({ systemId: "nope", streamId: "P2", mission: "m", territory: ["src/**"] }),
+        check(result) {
+          assert.equal(typeof result.planetId, "string");
+          assert.equal(typeof result.branch, "string");
+          assert.equal(typeof result.worktree, "string");
+          assert.equal(typeof result.discovered, "boolean");
+        },
+      },
+      {
+        name: "moon.assign", success: () => moonBody, refusal: () => moonBody,
+        check(result) {
+          assert.equal(typeof result.moonId, "string");
+          assert.deepEqual({ taskId: result.taskId, discovered: result.discovered, attention: result.attention }, { taskId: "T2", discovered: false, attention: {} });
+        },
+      },
+      {
+        name: "moon.park",
+        async before() {
+          launched = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } });
+          assert.equal(launched.status, 202);
+        },
+        success: () => ({ taskId: "T1", reason: "gone" }), refusal: () => ({ taskId: "T1", reason: "gone" }),
+        check(result) { assert.deepEqual(result, { voyageId: launched.json.voyageId, reason: "stale:gone" }); },
+      },
+      {
+        name: "moon.reply", success: () => ({ taskId: "T1", note: "carry on" }), refusal: () => ({ taskId: "T2", note: "x" }),
+        check(result) { assert.deepEqual(result, { round: 2 }); },
+      },
+      {
+        name: "moon.drop", success: () => ({ taskId: "T1" }), refusal: () => ({ taskId: "T1" }),
+        check(result) { assert.deepEqual(result, { moonId: x.w.moonId }); },
+      },
+      {
+        name: "fleet.retire",
+        success: () => ({ shipId: x.w.g.db.all("ships.all").find((ship) => ship.status === "idle").id, reason: "done" }),
+        refusal: (_result, body) => body,
+        check(result) { assert.deepEqual(result, { retired: true }); },
+      },
+      {
+        name: "config.roles", success: () => ({ role: "review", order: ["fake"] }), refusal: () => ({ role: "review", order: ["nope"] }),
+        check(result) { assert.deepEqual(result, { roles: { implement: ["fake"], review: ["fake"] } }); },
+      },
+    ];
+    for (const row of rows) {
+      await row.before?.();
+      const successBody = row.success();
+      const success = await x.api(`/api/commands/${row.name}`, { method: "POST", body: successBody });
+      assert.equal(success.status, 200, `${row.name} success`);
+      row.check(success.json.result);
+      const refusal = await x.api(`/api/commands/${row.name}`, { method: "POST", body: row.refusal(success.json.result, successBody) });
+      assert.equal(refusal.status, 409, `${row.name} refusal`);
+      assert.equal(typeof refusal.json.error, "string");
+    }
+  } finally { await x.close(); }
+});
+
 test("moon.assign rejects relative and absolute paths outside the repository", async () => {
   const x = await startWorld();
   try {
@@ -125,6 +229,38 @@ test("runner records post-launch failures, notifies, drains, and refuses starts 
   await runner.abortAll();
   await assert.rejects(runner.start("T2", async () => undefined), /server is shutting down/);
   await runner.abortAll();
+});
+
+test("abortAll aborts and awaits a start that has not launched yet", async () => {
+  let notified = 0;
+  const runner = createVoyageRunner({ onFailure: () => { notified++; } });
+  let signal;
+  let settled = false;
+  const started = runner.start("T1", async ({ signal: runSignal, onLaunched }) => {
+    signal = runSignal;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    onLaunched("v1");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    settled = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await runner.abortAll();
+  assert.equal(signal.aborted, true);
+  assert.equal(settled, true);
+  assert.deepEqual(await started, { launched: true, voyageId: "v1" });
+  assert.equal(runner.inFlight(), 0);
+  await assert.rejects(runner.start("T2", async () => undefined), /server is shutting down/);
+
+  const rejecting = createVoyageRunner({ onFailure: () => { notified++; } });
+  assert.deepEqual(await rejecting.start("T3", async ({ onLaunched }) => {
+    onLaunched("v2");
+    throw Object.create(null);
+  }), { launched: true, voyageId: "v2" });
+  await waitFor(() => rejecting.inFlight() === 0);
+  assert.equal(rejecting.failures().length, 1);
+  assert.equal(typeof rejecting.failures()[0].message, "string");
+  assert.equal(notified, 1);
+  await rejecting.abortAll();
 });
 
 test("unexpected errors are hidden and Refusal details map to 409", () => {
@@ -188,19 +324,19 @@ test("a post-launch HTTP failure appears in snapshot and notifies the feed", asy
   }
 });
 
-test("closing a server aborts and parks its voyage and projections rebuild exactly", async () => {
+test("closing a server parks its voyage, leaves every ship consistent, and projections rebuild exactly", async () => {
   const x = await startWorld("slow");
-  let cleaned = false;
   try {
     const launch = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } });
     assert.equal(launch.status, 202);
     await x.srv.close();
-    await waitFor(() => x.w.g.db.get("voyages.byId", { id: launch.json.voyageId }).status === "adrift");
+    const voyage = x.w.g.db.get("voyages.byId", { id: launch.json.voyageId });
+    assert.equal(voyage.status, "adrift");
     assert.equal(x.w.g.db.get("moons.byId", { id: x.w.moonId }).park_reason, "interrupted");
-    assert.ok(x.w.g.db.all("ships.all").every((ship) => ship.status === "idle" || ship.assignment_id !== null));
+    assert.deepEqual(x.w.g.db.all("voyages.inFlight"), []);
+    for (const ship of x.w.g.db.all("ships.all")) assert.equal(ship.status, ship.id === voyage.ship_id ? "adrift" : "idle");
     const before = dumpProjections(x.w.g.db);
     rebuild(x.w.g.db);
     assert.equal(dumpProjections(x.w.g.db), before);
-    x.w.cleanup(); cleaned = true;
-  } finally { if (!cleaned) await x.close(); }
+  } finally { await x.close(); }
 });
