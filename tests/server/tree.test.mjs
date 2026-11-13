@@ -3,7 +3,7 @@ import { worldWithMoon, worldWithTwoMoons } from "../fixtures/world.mjs";
 import { launchMoon } from "../../dist/server/commands/launch.js"; import { inspectMoon } from "../../dist/server/commands/review.js"; import { dockMoon } from "../../dist/server/commands/dock.js";
 import { replyMoon, dropMoon } from "../../dist/server/commands/park.js";
 import { answerDecision, pendingTreeDecision } from "../../dist/server/commands/decision.js";
-import { loadMoon } from "../../dist/server/dispatch.js"; import { rebuild, dumpProjections } from "../../dist/db/rebuild.js";
+import { loadMoon, parkVoyage, recordTreeWrite } from "../../dist/server/dispatch.js"; import { rebuild, dumpProjections } from "../../dist/db/rebuild.js";
 
 const doneImpl = () => ({ kind: "done", ts: new Date().toISOString(), data: { report: { status: "IMPLEMENTED", raw: "STATUS: IMPLEMENTED" } } });
 /** A stub adapter: `body(job, ctx)` runs inside dispatch; it yields done unless it returns false. */
@@ -75,6 +75,7 @@ test("'not_mine' on a holding freighter parks as main_tree_modified", async () =
   const pending = w.g.db.all("decisions.pending"); assert.equal(pending.length, 1); assert.equal(pending[0].kind, "adrift");
   assert.match(JSON.parse(v.report).adrift.details, /stray\.txt/);
   assert.equal(w.g.db.get("ships.byId", { id: v.ship_id }).status, "adrift");
+  const kinds = w.g.db.all("events.byTask", { task_id: "T1" }).map((e) => e.kind); assert.ok(kinds.lastIndexOf("decision.resolved") > kinds.lastIndexOf("moon.adrift"), "the park is logged before the resolve");
   settle(w);
 });
 
@@ -145,5 +146,44 @@ test("a decision that is not a main-tree question cannot be answered", async () 
   const w = await worldWithMoon("scope-violation"); await launchMoon(w.g, { taskId: "T1" });
   const d = w.g.db.all("decisions.pending")[0]; assert.notEqual(d.kind, "main_tree_changed");
   assert.throws(() => answerDecision(w.g, { decisionId: d.id, answer: "mine" }), new RegExp(`decision ${d.id} is a '${d.kind}' decision — use reply or drop`));
+  settle(w);
+});
+
+test("a crash between the park and the resolve heals: the second answer only resolves", async () => {
+  const w = await worldWithMoon("happy"); w.g.adapters.fake = stub(() => stray(w));
+  const r = await launchMoon(w.g, { taskId: "T1" }); const d = pendingTreeDecision(w.g, "T1");
+  // The state a crash leaves: the park sequence ran, the final decision.resolved did not.
+  const v = w.g.db.get("voyages.byId", { id: r.voyageId });
+  parkVoyage(w.g, { taskId: "T1", voyageId: v.id, shipId: v.ship_id, reason: "main_tree_modified", details: d.reasoning });
+  assert.equal(loadMoon(w.g, "T1").status, "adrift"); assert.ok(pendingTreeDecision(w.g, "T1"), "question still pending");
+  assert.deepEqual(answerDecision(w.g, { decisionId: d.id, answer: "not_mine" }), { moonStatus: "adrift", parked: false });
+  assert.equal(w.g.db.get("decisions.byId", { id: d.id }).outcome, "not_mine");
+  assert.deepEqual(w.g.db.all("decisions.pending").map((x) => x.kind), ["adrift"], "parked once");
+  assert.equal(w.g.db.all("events.byTask", { task_id: "T1" }).filter((e) => e.kind === "moon.adrift").length, 1);
+  settle(w);
+});
+
+test("an exempt path and a stray in one voyage: only the stray is asked about; an earlier tree.written exempts nothing", async () => {
+  const w = await worldWithMoon("happy");
+  recordTreeWrite(w.g, ["stray.txt"]); // before the voyage launches: no exemption
+  w.g.adapters.fake = stub(() => { recordTreeWrite(w.g, ["exempt.txt"]); fs.writeFileSync(path.join(w.dir, "exempt.txt"), "x\n"); stray(w); });
+  assert.equal((await launchMoon(w.g, { taskId: "T1" })).moonStatus, "audited");
+  assert.deepEqual(JSON.parse(pendingTreeDecision(w.g, "T1").reasoning).appeared, ["stray.txt"]);
+  settle(w);
+});
+
+test("a FIX verdict on one moon during a voyage on another raises no question on the other", async () => {
+  const w = await worldWithTwoMoons("happy", "happy");
+  const real = w.g.adapters.fake;
+  await launchMoon(w.g, { taskId: "T2" });
+  const flying = stub(async () => {
+    w.g.adapters.fake = real;
+    assert.equal((await inspectMoon(w.g, { taskId: "T2", reviewScript: "review-fix" })).moonStatus, "audited");
+    w.g.adapters.fake = flying;
+  });
+  w.g.adapters.fake = flying;
+  assert.equal((await launchMoon(w.g, { taskId: "T1" })).moonStatus, "audited");
+  assert.equal(w.g.db.all("decisions.pending").filter((x) => x.kind === "main_tree_changed").length, 0);
+  assert.match(w.git("status", "--porcelain"), /T2\.md/, "the FIX amendment did change the spec in the main tree");
   settle(w);
 });

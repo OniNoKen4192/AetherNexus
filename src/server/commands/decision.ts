@@ -29,11 +29,12 @@ export function answerDecision(g: Galaxy, input: { decisionId: number; answer: "
   if (d.kind !== MAIN_TREE_CHANGED) throw new Refusal(`decision ${d.id} is a '${d.kind}' decision — use reply or drop`);
   const moon = loadMoon(g, d.target_id);
   const scope = moonScope(g, moon);
-  append(g.db, { kind: "decision.resolved", ...scope, payload: { decision_id: d.id, outcome: input.answer } });
   const status = (): MoonStatus => loadMoon(g, d.target_id).status as MoonStatus;
-  if (input.answer === "mine") return { moonStatus: status(), parked: false };
-  // Already held for the human (parked for another reason, or REJECT): the decision's details stay in the log.
-  if (moon.status === "adrift" || moon.status === "quarantined") return { moonStatus: status(), parked: false };
+  const resolve = (): void => { append(g.db, { kind: "decision.resolved", ...scope, payload: { decision_id: d.id, outcome: input.answer } }); };
+  if (input.answer === "mine") { resolve(); return { moonStatus: status(), parked: false }; }
+  // "not mine" parks first and resolves last: a crash in between leaves a parked moon with the question still pending,
+  // and answering again takes the already-adrift path below and only resolves it.
+  if (moon.status === "adrift" || moon.status === "quarantined") { resolve(); return { moonStatus: status(), parked: false }; }
   const reasoning = d.reasoning ?? "";
   const freighter = g.db.get<VoyageRow>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
   if (freighter && (freighter.status === "holding" || freighter.status === "cleared")) {
@@ -43,5 +44,6 @@ export function answerDecision(g: Galaxy, input: { decisionId: number; answer: "
     append(g.db, { kind: "moon.adrift", ...scope, payload: { reason: "main_tree_modified" } });
     append(g.db, { kind: "decision.opened", ...scope, payload: { kind: "adrift", target_kind: "moon", target_id: moon.task_id, reasoning: `the main tree changed during a voyage and the change is not the owner's: ${reasoning}` } });
   }
+  resolve();
   return { moonStatus: status(), parked: true };
 }
