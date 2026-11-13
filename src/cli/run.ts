@@ -22,6 +22,7 @@ import { attentionMatches } from "../validate/attention.js";
 import { matchesPattern } from "../validate/match.js";
 import { resolveTarget } from "../validate/tokenize.js";
 import { followEvents } from "../server/follow.js";
+import { startServer } from "../server/http/server.js";
 import type { AgentEvent } from "../providers/adapter.js";
 import { eventsTable, fleetTable, statusTable, table } from "./format.js";
 
@@ -46,6 +47,7 @@ const USAGE = `usage: nexus [--json] <command>
   fleet [retire <ship-id> --reason <r>]
   db rebuild | stats | explain <name> | analyze
   validate <spec-path> | --selftest
+  serve [--port <n>]                       run the local bridge server (127.0.0.1 only) until Ctrl-C
 
 --json prints the result object as JSON. --quiet suppresses the event stream on stderr.
 Ctrl-C (SIGINT/SIGTERM) during launch/inspect parks the voyage as 'interrupted' and exits 2.
@@ -103,7 +105,7 @@ function parse(argv: string[]) {
     return parseArgs({
       args: argv, allowPositionals: true, strict: true,
       options: {
-        json: { type: "boolean" }, quiet: { type: "boolean" }, force: { type: "boolean" }, selftest: { type: "boolean" }, help: { type: "boolean", short: "h" }, follow: { type: "boolean" }, mine: { type: "boolean" }, "not-mine": { type: "boolean" },
+        json: { type: "boolean" }, quiet: { type: "boolean" }, force: { type: "boolean" }, selftest: { type: "boolean" }, help: { type: "boolean", short: "h" }, follow: { type: "boolean" }, port: { type: "string" }, mine: { type: "boolean" }, "not-mine": { type: "boolean" },
         title: { type: "string" }, brief: { type: "string" }, "brief-text": { type: "string" }, kind: { type: "string" }, seed: { type: "string" },
         stream: { type: "string" }, mission: { type: "string" }, territory: { type: "string", multiple: true }, moon: { type: "string" }, planet: { type: "string" },
         provider: { type: "string" }, note: { type: "string" }, since: { type: "string" }, reason: { type: "string" },
@@ -132,7 +134,7 @@ async function run(argv: string[]): Promise<void> {
     out(r, () => `initialized ${r.configPath} (${r.ships} ships); commit .nexus/config.json and .nexus/.gitignore`);
     return;
   }
-  if (!["system", "planet", "moon", "voyage", "status", "events", "fleet", "db", "validate", "decision"].includes(c0)) throw new Usage();
+  if (!["system", "planet", "moon", "voyage", "status", "events", "fleet", "db", "validate", "decision", "serve"].includes(c0)) throw new Usage();
 
   const g = openGalaxy(process.cwd(), process.env["NEXUS_FAKE_SCRIPTS"] ? { scriptsDir: process.env["NEXUS_FAKE_SCRIPTS"] } : {});
   try {
@@ -144,6 +146,25 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
   const [c0, c1] = pos;
   const onEvent = o.quiet ? undefined : streamEvent;
   const launchIn = (taskId: string) => ({ taskId, ...(o.provider ? { provider: o.provider } : {}), ...(onEvent ? { onEvent } : {}) });
+
+  if (c0 === "serve") {
+    let port: number | undefined;
+    if (o.port !== undefined) {
+      port = Number(o.port);
+      if (o.port === "" || !Number.isInteger(port) || port < 0 || port > 65535) throw new Refusal("--port must be an integer from 0 to 65535");
+    }
+    const srv = await startServer(g, port === undefined ? {} : { port });
+    const keepAlive = setInterval(() => {}, 0x7fffffff);
+    try {
+      console.log(`Bridge: ${srv.url}`);
+      console.log("Ctrl-C to stop");
+      await new Promise<void>((resolve) => { process.once("SIGINT", resolve); process.once("SIGTERM", resolve); });
+    } finally {
+      clearInterval(keepAlive);
+      await srv.close();
+    }
+    return;
+  }
 
   // Single-word commands take their argument from the second positional.
   if (c0 === "status") {
