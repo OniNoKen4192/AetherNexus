@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useBridgeStatus, type Bridge } from "../store";
 import type { FeedEvent } from "../types";
+import { ActionBar } from "./ActionBar";
 
 type Tab = "Spec" | "Activity" | "Audit" | "Verdicts";
 
@@ -37,6 +38,7 @@ export function MoonDetail({ b }: { b: Bridge }) {
   }, [b.taskId]);
 
   const events = b.detail ? mergeEvents(b.detail.events, b.activity) : [];
+  useLayoutEffect(() => { if (activityLog.current === null) followBottom.current = true; });
   useLayoutEffect(() => {
     const log = activityLog.current;
     if (log && followBottom.current) log.scrollTop = log.scrollHeight;
@@ -67,6 +69,7 @@ export function MoonDetail({ b }: { b: Bridge }) {
             <span className="badge">{text(moon["status"])}</span><span>round {number(moon["round"])}</span>
           </div>
           {moon["park_reason"] !== null && <div className="moon-park-reason">{text(moon["park_reason"])}</div>}
+          <ActionBar b={b} />
           <div className="tabs">
             <button className={`tab${tab === "Spec" ? " active" : ""}`} type="button" onClick={() => setTab("Spec")}>Spec</button>
             <button className={`tab${tab === "Activity" ? " active" : ""}`} type="button" onClick={() => { followBottom.current = true; setTab("Activity"); }}>Activity</button>
