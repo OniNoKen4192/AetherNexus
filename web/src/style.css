@@ -103,3 +103,12 @@ textarea.field { font-family: inherit; resize: vertical; }
 .routing-list li > span:first-child { display: inline-block; min-width: 100px; }
 .routing-buttons { display: inline-flex; gap: 4px; margin-left: 8px; }
 .failure-badge { color: var(--danger); border-color: var(--danger); }
+
+/* An open moon's detail sits beside the system list and stays in view while the list scrolls. */
+@media (min-width: 1100px) {
+  .col.right.split { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(380px, 1.5fr); gap: 12px; align-items: start; }
+  .col.right.split > .moon-detail { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; }
+}
+
+/* An open retire form takes its own line: the left column is too narrow to hold it beside the ship's name. */
+.fleet-ship > .fleet-retire { flex-basis: 100%; }

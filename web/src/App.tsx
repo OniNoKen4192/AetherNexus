@@ -22,8 +22,10 @@ export function App() {
       {b.snapshot === null && loadError !== null && <p className="msg-error">Could not load the Bridge ({loadError}). Retrying.</p>}
       <Header b={b} />
       <div className="columns">
-        <div className="col left"><Decisions b={b} /><Fleet b={b} /><Routing b={b} /></div>
-        <div className="col right"><SystemView b={b} /><MoonDetail b={b} /></div>
+        {/* Routing sits above Fleet: the fleet lists every ship of every provider and would push it far below the fold. */}
+        <div className="col left"><Decisions b={b} /><Routing b={b} /><Fleet b={b} /></div>
+        {/* With a moon open the detail sits beside the system list, so opening one never lands below the fold. */}
+        <div className={b.taskId === null ? "col right" : "col right split"}><SystemView b={b} /><MoonDetail b={b} /></div>
       </div>
     </div>
   );
