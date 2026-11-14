@@ -76,3 +76,12 @@ textarea.field { font-family: inherit; resize: vertical; }
 .moon-verdict + .moon-verdict { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
 .moon-verdict-heading { margin-bottom: 4px; }
 .moon-verdict .log { margin-top: 6px; }
+
+.action-bar { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.action-group { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 4px; }
+.action-group .field { flex: 1; }
+.action-stack { align-items: stretch; flex-direction: column; }
+.action-buttons { display: flex; gap: 8px; }
+.pending-decision { padding: 8px; border: 1px solid var(--border); border-radius: 4px; }
+.pending-decision .badge { margin-bottom: 4px; }
+.pending-decision ul, .action-group ul { margin: 3px 0; padding-left: 24px; }
