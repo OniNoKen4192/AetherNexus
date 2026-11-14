@@ -198,6 +198,6 @@ export function ActionBar({ b }: { b: Bridge }) {
   if (b.detail === null) return null;
   return <div className="action-bar">
     {b.detail.decisions.map((decision, index) => <PendingDecision decision={decision} key={`${String(decision["id"])}-${index}`} />)}
-    {b.detail.actions.map((action, index) => <ActionControl action={action} b={b} key={`${b.taskId}-${action}-${index}`} />)}
+    {b.detail.actions.map((action, index) => <ActionControl action={action} b={b} key={`${b.taskId}-${action}`} />)}
   </div>;
 }

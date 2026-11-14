@@ -40,3 +40,11 @@ test("action components export their interfaces without browser commands", async
     assert.ok(!moonDetail.includes(forbidden), `MoonDetail contains forbidden ${forbidden}`);
   }
 });
+
+test("ActionControl key does not depend on the action position", async () => {
+  const source = await readFile(new URL("../../web/src/components/ActionBar.tsx", import.meta.url), "utf8");
+  const tags = source.match(/<ActionControl\b[^>]*>/g) ?? [];
+  assert.equal(tags.length, 1, "ActionBar must contain exactly one <ActionControl> opening tag");
+  assert.match(tags[0], /\bkey=/);
+  assert.doesNotMatch(tags[0], /index/);
+});
