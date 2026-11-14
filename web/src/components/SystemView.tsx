@@ -6,6 +6,7 @@ const text = (value: unknown): string => typeof value === "string" ? value : "";
 
 export function SystemView({ b }: { b: Bridge }) {
   const systems = b.snapshot?.systems;
+  const failures = b.snapshot?.failures ?? [];
   const selected = systems?.find((system) => text(system["id"]) === b.systemId);
 
   return (
@@ -38,11 +39,16 @@ export function SystemView({ b }: { b: Bridge }) {
                         if (taskId === null) {
                           return <div className="system-barren-moon" key={moonId}><span>{name}</span>{moon["body_status"] === "barren" && <span>barren</span>}{moon["body_status"] === "barren" && planet["body_status"] === "assigned" && <AssignSpec b={b} planetId={planetId} moonName={name} />}</div>;
                         }
+                        let latestFailure = undefined;
+                        for (const failure of failures) {
+                          if (failure.taskId === taskId) latestFailure = failure;
+                        }
                         return (
                           <div className={`row${taskId === b.taskId ? " selected" : ""}`} key={moonId} onClick={() => b.openMoon(taskId)}>
                             <span>{name}</span>
                             <code>{taskId}</code>
                             <span className="badge">{text(moon["status"])}</span>
+                            {latestFailure !== undefined && <span className="badge failure-badge" title={latestFailure.message}>failed</span>}
                           </div>
                         );
                       })}
