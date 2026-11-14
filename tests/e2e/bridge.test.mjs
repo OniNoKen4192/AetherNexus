@@ -80,7 +80,6 @@ test("REJECT handled entirely over HTTP while a second moon is in flight", async
     const e2InFlight = await x.api("/api/moons/E2");
     assert.equal(e2InFlight.status, 200);
     assert.equal(e2InFlight.json.voyages.some((voyage) => voyage.owner === "server"), true);
-    releaseE2();
 
     await feed.waitFor((events) => events.some((event) => event.kind === "voyage.audited" && event.task_id === "E1"));
     let e1 = await x.api("/api/moons/E1");
@@ -95,6 +94,9 @@ test("REJECT handled entirely over HTTP while a second moon is in flight", async
     assert.deepEqual(e1.json.actions, ["reply", "drop"]);
     assert.deepEqual(e1.json.verdicts.map((verdict) => verdict.verdict), ["REJECT"]);
 
+    const e2BeforeReply = await x.api("/api/moons/E2");
+    assert.equal(e2BeforeReply.status, 200);
+    assert.equal(e2BeforeReply.json.voyages.some((voyage) => voyage.owner === "server"), true);
     const reply = await x.api("/api/commands/moon.reply", {
       method: "POST", body: { taskId: "E1", note: "it is fine, re-run" },
     });
@@ -104,6 +106,14 @@ test("REJECT handled entirely over HTTP while a second moon is in flight", async
 
     const repliedSnapshot = await x.api("/api/snapshot");
     assert.equal(repliedSnapshot.json.decisions.some((decision) => decision.kind === "main_tree_changed" && (decision.target_id === "E2" || decision.target_id === "T1")), false);
+
+    const e2AfterReply = await x.api("/api/moons/E2");
+    assert.equal(e2AfterReply.status, 200);
+    assert.equal(e2AfterReply.json.voyages.some((voyage) => voyage.owner === "server"), true);
+    releaseE2();
+    await feed.waitFor((events) => events.some((event) => event.kind === "voyage.audited" && event.task_id === "E2"));
+    const releasedSnapshot = await x.api("/api/snapshot");
+    assert.equal(releasedSnapshot.json.decisions.some((decision) => decision.kind === "main_tree_changed" && (decision.target_id === "E2" || decision.target_id === "T1")), false);
 
     const secondLaunch = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "E1" } });
     assert.equal(secondLaunch.status, 202);
