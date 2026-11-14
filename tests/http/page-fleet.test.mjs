@@ -5,6 +5,23 @@ import test from "node:test";
 
 const root = process.cwd();
 
+test("a refused retire stays visible when the ship is no longer idle", async () => {
+  const source = await readFile(path.join(root, "web", "src", "components", "Fleet.tsx"), "utf8");
+  const start = source.indexOf('{status === "idle" &&');
+  assert.notEqual(start, -1, 'Fleet.tsx has no {status === "idle" && ...} expression around the retire controls');
+  let depth = 0;
+  let end = -1;
+  for (let index = start; index < source.length; index++) {
+    if (source[index] === "{") depth++;
+    else if (source[index] === "}" && --depth === 0) { end = index; break; }
+  }
+  assert.notEqual(end, -1, "could not find the end of the idle-only expression in Fleet.tsx");
+  const idleOnly = source.slice(start, end + 1);
+  assert.ok(idleOnly.includes("Confirm retire"), "the retire controls are not inside the idle-only expression");
+  assert.ok(!idleOnly.includes("msg-error"), "the refusal message is rendered inside the idle-only expression, so it disappears when the ship's status changes");
+  assert.ok((source.slice(0, start) + source.slice(end + 1)).includes("msg-error"), "Fleet.tsx renders no .msg-error outside the idle-only expression");
+});
+
 test("fleet, routing, and voyage failures are present in the built page", async () => {
   const assets = path.join(root, "dist", "web", "assets");
   let names;
