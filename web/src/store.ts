@@ -170,8 +170,15 @@ export function useBridge(): Bridge {
     return r;
   }, []);
 
+  // The system on show: the picked one once the snapshot knows it, else the first system. A pick the snapshot does not
+  // know yet (a system created a moment ago) is kept and takes effect when the snapshot catches up.
+  const shownSystemId = useMemo(() => {
+    const ids = (snapshot?.systems ?? []).map((s) => String(s["id"]));
+    return systemId !== null && ids.includes(systemId) ? systemId : ids[0] ?? null;
+  }, [snapshot, systemId]);
+
   return useMemo(
-    () => ({ snapshot, conn, systemId, taskId, detail, activity, selectSystem, openMoon, run }),
-    [snapshot, conn, systemId, taskId, detail, activity, selectSystem, openMoon, run],
+    () => ({ snapshot, conn, systemId: shownSystemId, taskId, detail, activity, selectSystem, openMoon, run }),
+    [snapshot, conn, shownSystemId, taskId, detail, activity, selectSystem, openMoon, run],
   );
 }
