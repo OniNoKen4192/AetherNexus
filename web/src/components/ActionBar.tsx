@@ -22,7 +22,9 @@ export function useCommand(b: Bridge): {
       mounted.current = false;
       if (request.current === current) request.current++;
     };
-  }, [b.taskId]);
+    // Mount and unmount only. The request state belongs to the control that owns this hook: a control tied to the open
+    // moon is keyed by the task id and remounts when it changes; any other control must keep its state across that change.
+  }, []);
 
   const send = async (name: string, body: object): Promise<boolean> => {
     const current = ++request.current;
