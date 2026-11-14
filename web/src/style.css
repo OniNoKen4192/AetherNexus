@@ -91,3 +91,15 @@ textarea.field { font-family: inherit; resize: vertical; }
 .assignment-form label { color: var(--muted); }
 .assignment-buttons { display: flex; gap: 8px; }
 .system-barren-moon .assignment-form { flex: 1; color: var(--text); }
+
+.fleet-ships { margin-top: 6px; }
+.fleet-ship { display: flex; align-items: center; gap: 8px; padding: 3px 8px; flex-wrap: wrap; }
+.fleet-ship > span:first-child { flex: 1; }
+.fleet-retire { display: flex; align-items: center; gap: 6px; flex: 2; flex-wrap: wrap; }
+.fleet-retire .field { min-width: 120px; flex: 1; }
+.fleet-ship > .msg-error { flex-basis: 100%; }
+.routing-list li { margin: 3px 0; padding-left: 2px; }
+.routing-list li::marker { color: var(--muted); }
+.routing-list li > span:first-child { display: inline-block; min-width: 100px; }
+.routing-buttons { display: inline-flex; gap: 4px; margin-left: 8px; }
+.failure-badge { color: var(--danger); border-color: var(--danger); }

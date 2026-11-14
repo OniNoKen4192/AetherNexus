@@ -47,6 +47,7 @@ export function MoonDetail({ b }: { b: Bridge }) {
   if (b.taskId === null) return null;
 
   const close = <button className="btn" type="button" onClick={() => b.openMoon(null)}>Close</button>;
+  const failures = (b.snapshot?.failures ?? []).filter((failure) => failure.taskId === b.taskId).slice().reverse();
   let audit: unknown;
   let hasAudit = false;
   for (const event of events) {
@@ -59,6 +60,7 @@ export function MoonDetail({ b }: { b: Bridge }) {
   return (
     <section className="panel moon-detail">
       <div className="moon-detail-bar"><h2>Moon</h2>{close}</div>
+      {failures.map((failure, index) => <div className="msg-error" key={`${failure.ts}-${failure.voyageId ?? ""}-${index}`}>{failure.ts} {failure.message}</div>)}
       {detailError !== null && <div className="msg-error">{detailError}</div>}
       {b.detail === null && detailError === null && <div>Loading</div>}
       {b.detail !== null && (() => {

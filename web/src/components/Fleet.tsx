@@ -1,4 +1,7 @@
+import { useState } from "preact/hooks";
 import type { Bridge } from "../store";
+import type { Row } from "../types";
+import { useCommand } from "./ActionBar";
 
 type ShipClass = {
   name: string;
@@ -8,7 +11,34 @@ type ShipClass = {
 type ProviderFleet = {
   name: string;
   classes: Map<string, ShipClass>;
+  ships: Row[];
 };
+
+function Ship({ b, ship }: { b: Bridge; ship: Row }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const command = useCommand(b);
+  const id = String(ship["id"]);
+  const status = String(ship["status"]);
+  const retire = async () => {
+    const value = reason.trim();
+    if (value !== "" && await command.send("fleet.retire", { shipId: id, reason: value })) {
+      setOpen(false);
+      setReason("");
+    }
+  };
+
+  return <div className="fleet-ship">
+    <span>{String(ship["name"])}</span><span>{String(ship["class"])}</span><span className="badge">{status}</span>
+    {status === "idle" && (!open ? <button className="btn" type="button" disabled={command.busy} onClick={() => setOpen(true)}>Retire</button> :
+      <div className="fleet-retire">
+        <input className="field" aria-label={`Reason to retire ${String(ship["name"])}`} value={reason} disabled={command.busy} onInput={(event) => setReason(event.currentTarget.value)} />
+        <button className="btn danger" type="button" disabled={command.busy || reason.trim() === ""} onClick={() => void retire()}>Confirm retire</button>
+        <button className="btn" type="button" disabled={command.busy} onClick={() => { setOpen(false); setReason(""); command.clear(); }}>Cancel</button>
+      </div>)}
+    {command.error !== null && <div className="msg-error">{command.error}</div>}
+  </div>;
+}
 
 export function Fleet({ b }: { b: Bridge }) {
   const snapshot = b.snapshot;
@@ -21,9 +51,10 @@ export function Fleet({ b }: { b: Bridge }) {
       const status = String(ship["status"]);
       let provider = providers.get(providerName);
       if (provider === undefined) {
-        provider = { name: providerName, classes: new Map() };
+        provider = { name: providerName, classes: new Map(), ships: [] };
         providers.set(providerName, provider);
       }
+      provider.ships.push(ship);
       let shipClass = provider.classes.get(className);
       if (shipClass === undefined) {
         shipClass = { name: className, statuses: new Map() };
@@ -55,6 +86,9 @@ export function Fleet({ b }: { b: Bridge }) {
                 </span>
               </div>
             ))}
+            <div className="fleet-ships">
+              {provider.ships.map((ship) => <Ship b={b} ship={ship} key={String(ship["id"])} />)}
+            </div>
           </div>
         ))
       )}
