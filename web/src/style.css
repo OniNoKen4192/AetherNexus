@@ -45,3 +45,16 @@ textarea.field { font-family: inherit; resize: vertical; }
 .msg-error { margin: 4px 0; padding: 4px 8px; border-radius: 4px; border: 1px solid var(--danger); background: var(--danger-bg); color: var(--danger); }
 
 .log { margin: 0; padding: 8px; max-height: 320px; overflow: auto; background: var(--log-bg); border-radius: 4px; font: 12px/1.4 var(--mono); white-space: pre-wrap; word-break: break-word; }
+
+.bridge-header { border-radius: 0; border-width: 0 0 1px; }
+.bridge-header-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.bridge-header h1 { margin: 0; font-size: 18px; }
+.bridge-summary { display: flex; align-items: center; gap: 16px; margin-top: 6px; color: var(--muted); }
+.connection.live { color: var(--ok); border-color: var(--ok); }
+.connection.waiting { color: var(--warn); border-color: var(--warn); }
+
+.fleet-group + .fleet-group { margin-top: 10px; }
+.fleet-group h3, .routing h3 { margin: 6px 0 3px; font-size: 13px; }
+.fleet-line { display: flex; justify-content: space-between; gap: 12px; padding: 2px 8px; }
+.fleet-line span:last-child { color: var(--muted); }
+.routing ol { margin: 3px 0 8px; padding-left: 24px; }
