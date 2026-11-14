@@ -8,6 +8,8 @@ import { Refusal } from "../../dist/server/errors.js";
 import { launchMoon } from "../../dist/server/commands/launch.js";
 import { inspectMoon } from "../../dist/server/commands/review.js";
 import { rebuild, dumpProjections } from "../../dist/db/rebuild.js";
+import { append } from "../../dist/db/events.js";
+import { loadMoon, moonScope } from "../../dist/server/dispatch.js";
 import { writeSpec } from "../helpers.mjs";
 import { rawRequest, readFeed, startWorld } from "./helpers.mjs";
 
@@ -165,15 +167,19 @@ test("each synchronous command maps success to 200 and a refusal to 409", async 
       {
         name: "moon.park",
         async before() {
-          launched = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } });
-          assert.equal(launched.status, 202);
+          // A voyage owned by a dead process: moon.park refuses a voyage this server's runner is tracking.
+          const moon = loadMoon(x.w.g, "T1"), scope = moonScope(x.w.g, moon);
+          const ship = x.w.g.db.all("ships.all").find((s) => s.class === "freighter");
+          append(x.w.g.db, { kind: "moon.gated", ...scope, payload: { baseline_sha: "x" } });
+          append(x.w.g.db, { kind: "voyage.launched", ...scope, voyage_id: "stale-v", ship_id: ship.id, provider: "fake",
+            payload: { role: "implement", round: 0, provider: "fake", ship_id: ship.id, worktree: "x", owner_pid: 2147483646 } });
         },
         success: () => ({ taskId: "T1", reason: "gone" }), refusal: () => ({ taskId: "T1", reason: "gone" }),
-        check(result) { assert.deepEqual(result, { voyageId: launched.json.voyageId, reason: "stale:gone" }); },
+        check(result) { assert.deepEqual(result, { voyageId: "stale-v", reason: "stale:gone" }); },
       },
       {
         name: "moon.reply", success: () => ({ taskId: "T1", note: "carry on" }), refusal: () => ({ taskId: "T2", note: "x" }),
-        check(result) { assert.deepEqual(result, { round: 2 }); },
+        check(result) { assert.deepEqual(result, { round: 1 }); },
       },
       {
         name: "moon.drop", success: () => ({ taskId: "T1" }), refusal: () => ({ taskId: "T1" }),
@@ -302,7 +308,7 @@ test("a post-launch HTTP failure appears in snapshot and notifies the feed", asy
   const originalRun = x.w.g.db.run;
   let moonTransitions = 0;
   x.w.g.db.run = (name, params) => {
-    if (name === "moons.setStatus" && ++moonTransitions === 3) throw new Error("injected after launch");
+    if (name === "voyages.setReturned" && ++moonTransitions === 1) throw new Error("injected after launch");
     return originalRun(name, params);
   };
   try {
@@ -317,6 +323,11 @@ test("a post-launch HTTP failure appears in snapshot and notifies the feed", asy
     assert.equal(snap.failures[0].taskId, "T1");
     assert.equal(snap.failures[0].voyageId, launch.json.voyageId);
     assert.match(snap.failures[0].message, /injected after launch/);
+    x.w.g.db.run = originalRun;
+    const detail = await x.api("/api/moons/T1");
+    assert.deepEqual(detail.json.actions, ["park_stale"]);
+    assert.equal((await x.api("/api/commands/moon.park", { method: "POST", body: { taskId: "T1", reason: "orphaned" } })).status, 200);
+    assert.deepEqual(x.w.g.db.all("voyages.inFlight"), []);
   } finally {
     x.w.g.db.run = originalRun;
     feed.close();
@@ -338,5 +349,19 @@ test("closing a server parks its voyage, leaves every ship consistent, and proje
     const before = dumpProjections(x.w.g.db);
     rebuild(x.w.g.db);
     assert.equal(dumpProjections(x.w.g.db), before);
+  } finally { await x.close(); }
+});
+
+test("moon.park refuses while this server runs the voyage, and the voyage keeps running", async () => {
+  const x = await startWorld("slow");
+  try {
+    const launch = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } });
+    assert.equal(launch.status, 202);
+    const park = await x.api("/api/commands/moon.park", { method: "POST", body: { taskId: "T1", reason: "nope" } });
+    assert.equal(park.status, 409);
+    assert.match(park.json.error, /cancel/);
+    const voyage = x.w.g.db.get("voyages.byId", { id: launch.json.voyageId });
+    assert.ok(["launched", "working"].includes(voyage.status));
+    assert.deepEqual((await x.api("/api/moons/T1")).json.actions, ["cancel"]);
   } finally { await x.close(); }
 });

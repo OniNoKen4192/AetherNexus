@@ -160,3 +160,28 @@ test("nexus events --follow table mode prints the header once", async () => {
     cleanup();
   }
 });
+
+test("followEvents survives a failed read and keeps delivering", async () => {
+  const { g, cleanup } = await makeGalaxy();
+  let follower;
+  const originalError = console.error;
+  const logged = [];
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const originalAll = g.db.all.bind(g.db);
+    let failed = false;
+    const db = { ...g.db, all: (name, params) => { if (name === "events.page" && !failed && params.id > 0) { failed = true; throw new Error("read failed"); } return originalAll(name, params); } };
+    const seen = [];
+    const first = append(g.db, event(["a"]));
+    follower = followEvents(db, { since: 0, pollMs: 20, onEvents(rows) { seen.push(...rows.map((r) => r.id)); } });
+    const second = append(g.db, event(["b"]));
+    await waitFor(() => seen.includes(second.id), "later event was not delivered after a failed read");
+    assert.ok(failed);
+    assert.ok(logged.length >= 1);
+    assert.ok(seen.includes(first.id));
+  } finally {
+    console.error = originalError;
+    follower?.stop();
+    cleanup();
+  }
+});

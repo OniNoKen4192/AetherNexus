@@ -12,7 +12,13 @@ export function followEvents(
   const poll = (): void => {
     if (stopped) return;
     while (!stopped) {
-      const rows = db.all<Row>("events.page", { id: current, limit: 500 }).map(rowToEvent);
+      let rows: EventRow[];
+      try {
+        rows = db.all<Row>("events.page", { id: current, limit: 500 }).map(rowToEvent);
+      } catch (error) {
+        console.error(error);
+        break;
+      }
       if (rows.length === 0) break;
       current = rows[rows.length - 1]!.id;
       try {

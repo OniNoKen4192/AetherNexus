@@ -34,13 +34,13 @@ function sendText(res: http.ServerResponse, status: number, text: string, extra:
  */
 const API_ROUTES: Record<string, ApiHandler> = {
   "GET /api/ping": ({ res }) => sendJson(res, 200, { ok: true }),
-  "GET /api/snapshot": ({ g, res, runner }) => sendJson(res, 200, snapshot(g, { ownPid: process.pid, failures: runner.failures() })),
+  "GET /api/snapshot": ({ g, res, runner }) => sendJson(res, 200, snapshot(g, { ownPid: process.pid, failures: runner.failures(), tracks: (id) => runner.tracks(id) })),
   "GET /api/events": ({ req, res, query, feed }) => feed.handle(req, res, query),
 };
 type PrefixApiHandler = (ctx: ApiContext, remainder: string) => void | Promise<void>;
 const API_PREFIX_ROUTES: Record<string, PrefixApiHandler> = {
-  "GET /api/moons/": ({ g, res }, taskId) => {
-    try { sendJson(res, 200, moonDetail(g, taskId, { ownPid: process.pid })); }
+  "GET /api/moons/": ({ g, res, runner }, taskId) => {
+    try { sendJson(res, 200, moonDetail(g, taskId, { ownPid: process.pid, tracks: (id) => runner.tracks(id) })); }
     catch (e) { if (e instanceof Refusal) return sendJson(res, 404, { error: e.message }); throw e; }
   },
   "POST /api/commands/": async ({ g, req, res, runner }, name) => {

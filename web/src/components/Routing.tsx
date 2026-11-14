@@ -1,13 +1,19 @@
+import { useState } from "preact/hooks";
 import type { Bridge } from "../store";
 import { useCommand } from "./ActionBar";
 
 function RoleOrder({ b, role, providers }: { b: Bridge; role: "implement" | "review"; providers: string[] }) {
   const command = useCommand(b);
-  const move = (index: number, offset: -1 | 1) => {
+  // The list a move was computed from; the buttons stay off until the snapshot shows a different list.
+  const [movedFrom, setMovedFrom] = useState<string[] | null>(null);
+  const waiting = movedFrom !== null && movedFrom.length === providers.length && movedFrom.every((p, i) => p === providers[i]);
+  const move = async (index: number, offset: -1 | 1) => {
     const order = [...providers];
     const other = index + offset;
     [order[index], order[other]] = [order[other]!, order[index]!];
-    void command.send("config.roles", { role, order });
+    const from = [...providers];
+    setMovedFrom(from);
+    if (!(await command.send("config.roles", { role, order }))) setMovedFrom(null);
   };
 
   return <div className="routing-list">
@@ -15,8 +21,8 @@ function RoleOrder({ b, role, providers }: { b: Bridge; role: "implement" | "rev
       {providers.map((provider, index) => <li key={provider}>
         <span>{provider}</span>
         <span className="routing-buttons">
-          <button className="btn" type="button" aria-label={`Move ${provider} up`} disabled={command.busy || index === 0} onClick={() => move(index, -1)}>Up</button>
-          <button className="btn" type="button" aria-label={`Move ${provider} down`} disabled={command.busy || index === providers.length - 1} onClick={() => move(index, 1)}>Down</button>
+          <button className="btn" type="button" aria-label={`Move ${provider} up`} disabled={command.busy || waiting || index === 0} onClick={() => void move(index, -1)}>Up</button>
+          <button className="btn" type="button" aria-label={`Move ${provider} down`} disabled={command.busy || waiting || index === providers.length - 1} onClick={() => void move(index, 1)}>Down</button>
         </span>
       </li>)}
     </ol>

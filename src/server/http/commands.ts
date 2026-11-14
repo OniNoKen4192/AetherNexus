@@ -9,6 +9,7 @@ import { launchMoon } from "../commands/launch.js";
 import { dropMoon, parkStaleMoon, replyMoon, retireShip } from "../commands/park.js";
 import { inspectMoon } from "../commands/review.js";
 import { createSystem } from "../commands/system.js";
+import { loadMoon } from "../dispatch.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
 import type { VoyageRunner } from "./runner.js";
@@ -37,7 +38,15 @@ const COMMANDS: Record<string, Definition> = {
   "voyage.cancel": { fields: { voyageId: s() }, run: (_g, runner, i) => { runner.cancel(i["voyageId"] as string); return { cancelled: true }; } },
   "moon.reply": { fields: { taskId: s(), note: s() }, run: (g, _r, i) => replyMoon(g, i as Parameters<typeof replyMoon>[1]) },
   "moon.drop": { fields: { taskId: s() }, run: (g, _r, i) => dropMoon(g, i as Parameters<typeof dropMoon>[1]) },
-  "moon.park": { fields: { taskId: s(), reason: s() }, run: (g, _r, i) => parkStaleMoon(g, i as Parameters<typeof parkStaleMoon>[1]) },
+  "moon.park": { fields: { taskId: s(), reason: s() }, run: (g, runner, i) => {
+    const moon = loadMoon(g, i["taskId"] as string);
+    for (const v of g.db.all("voyages.byAssignment", { assignment_id: moon.assignment_id })) {
+      if ((v["status"] === "launched" || v["status"] === "working") && runner.tracks(String(v["id"]))) {
+        throw new Refusal(`voyage ${String(v["id"])} is running in this server — cancel it instead of parking the moon`);
+      }
+    }
+    return parkStaleMoon(g, i as Parameters<typeof parkStaleMoon>[1]);
+  } },
   "fleet.retire": { fields: { shipId: s(), reason: s() }, run: (g, _r, i) => { retireShip(g, i as Parameters<typeof retireShip>[1]); return { retired: true }; } },
   "config.roles": { fields: { role: s(false, ["implement", "review"]), order: strings() }, run: (g, _r, i) => setRoleOrder(g, i as Parameters<typeof setRoleOrder>[1]) },
   "decision.answer": { fields: { decisionId: { type: "integer" }, answer: s(false, ["mine", "not_mine"]) }, run: (g, _r, i) => answerDecision(g, i as Parameters<typeof answerDecision>[1]) },

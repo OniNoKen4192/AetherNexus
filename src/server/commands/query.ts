@@ -29,17 +29,19 @@ export type MoonDetail = {
   verdicts: Row[]; events: EventRow[]; decisions: Row[]; actions: Action[];
 };
 
-function voyageOwner(g: Galaxy, voyage: Row, ownPid: number): Owner | null {
+type OwnerCtx = { ownPid: number; tracks?: (voyageId: string) => boolean };
+
+function voyageOwner(g: Galaxy, voyage: Row, ctx: OwnerCtx): Owner | null {
   if (voyage["status"] !== "launched" && voyage["status"] !== "working") return null;
   const launched = g.db.all("events.byAssignment", { assignment_id: voyage["assignment_id"] }).map(rowToEvent)
     .find((e) => e.kind === "voyage.launched" && e.voyage_id === voyage["id"]);
   const ownerPid = launched?.payload["owner_pid"];
-  if (ownerPid === ownPid) return "server";
+  if (ownerPid === ctx.ownPid) return ctx.tracks && !ctx.tracks(String(voyage["id"])) ? "stale" : "server";
   return typeof ownerPid === "number" && pidAlive(ownerPid) ? "other" : "stale";
 }
 
-function withOwner(g: Galaxy, voyages: Row[], ownPid: number): (Row & { owner: Owner | null })[] {
-  return voyages.map((v) => ({ ...v, owner: voyageOwner(g, v, ownPid) }));
+function withOwner(g: Galaxy, voyages: Row[], ctx: OwnerCtx): (Row & { owner: Owner | null })[] {
+  return voyages.map((v) => ({ ...v, owner: voyageOwner(g, v, ctx) }));
 }
 
 function specEntries(g: Galaxy, assigned: Set<string>): SpecEntry[] {
@@ -65,7 +67,7 @@ function specEntries(g: Galaxy, assigned: Set<string>): SpecEntry[] {
   return out;
 }
 
-export function snapshot(g: Galaxy, ctx: { ownPid: number; failures: Failure[] }): Snapshot {
+export function snapshot(g: Galaxy, ctx: OwnerCtx & { failures: Failure[] }): Snapshot {
   const cursor = g.db.get<{ id: number }>("events.maxId")?.id ?? 0;
   const systems = g.db.all("systems.all").map((s) => {
     const shown = showSystem(g, String(s["id"]));
@@ -81,12 +83,12 @@ export function snapshot(g: Galaxy, ctx: { ownPid: number; failures: Failure[] }
     cursor, repo: path.basename(g.repoRoot), rung: g.config.automation.level,
     limits: { max_concurrent_ships: g.config.scheduler.max_concurrent_ships, per_provider_max: g.config.scheduler.per_provider_max, in_flight: inFlight.length },
     roles: { implement: g.config.roles.implement, review: g.config.roles.review }, systems,
-    voyages: withOwner(g, rawVoyages, ctx.ownPid), fleet: g.db.all("ships.all"), decisions: g.db.all("decisions.pending"),
+    voyages: withOwner(g, rawVoyages, ctx), fleet: g.db.all("ships.all"), decisions: g.db.all("decisions.pending"),
     specs: specEntries(g, assigned), failures: ctx.failures,
   };
 }
 
-export function availableActions(g: Galaxy, taskId: string, ctx: { ownPid: number }): Action[] {
+export function availableActions(g: Galaxy, taskId: string, ctx: OwnerCtx): Action[] {
   const moon = loadMoon(g, taskId);
   if (pendingTreeDecision(g, taskId)) return ["answer", ...((moon.status === "adrift" || moon.status === "quarantined") ? ["drop" as const] : [])];
   if (moon.status === "emitted" || moon.status === "gated") return ["launch"];
@@ -94,7 +96,7 @@ export function availableActions(g: Galaxy, taskId: string, ctx: { ownPid: numbe
   if (moon.status === "implementing" || moon.status === "reviewing") {
     const flying = voyages.filter((v) => v["status"] === "launched" || v["status"] === "working").pop();
     if (flying) {
-      const owner = voyageOwner(g, flying, ctx.ownPid);
+      const owner = voyageOwner(g, flying, ctx);
       return owner === "server" ? ["cancel"] : owner === "stale" ? ["park_stale"] : [];
     }
   }
@@ -107,7 +109,7 @@ export function availableActions(g: Galaxy, taskId: string, ctx: { ownPid: numbe
   }
   if (moon.status === "reviewing" && verdict === "APPROVE") {
     const implement = g.db.get<Row>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
-    if (implement?.["status"] === "cleared" || implement?.["status"] === "en_route") return ["dock"];
+    if (implement?.["status"] === "cleared" || implement?.["status"] === "en_route" || implement?.["status"] === "docked") return ["dock"];
   }
   if (moon.status === "adrift" || moon.status === "quarantined") {
     return ["reply", "drop", ...(repliedSincePark(g, moon.assignment_id) ? ["launch" as const] : [])];
@@ -115,7 +117,7 @@ export function availableActions(g: Galaxy, taskId: string, ctx: { ownPid: numbe
   return [];
 }
 
-export function moonDetail(g: Galaxy, taskId: string, ctx: { ownPid: number }): MoonDetail {
+export function moonDetail(g: Galaxy, taskId: string, ctx: OwnerCtx): MoonDetail {
   const moon = loadMoon(g, taskId);
   let spec: string | null;
   try { spec = fs.readFileSync(path.join(g.repoRoot, moon.spec_path), "utf8"); }
@@ -123,7 +125,7 @@ export function moonDetail(g: Galaxy, taskId: string, ctx: { ownPid: number }): 
   const events = g.db.all("events.byAssignment", { assignment_id: moon.assignment_id }).map(rowToEvent);
   return {
     moon: moon as unknown as Row, spec,
-    voyages: withOwner(g, g.db.all("voyages.byAssignment", { assignment_id: moon.assignment_id }), ctx.ownPid),
+    voyages: withOwner(g, g.db.all("voyages.byAssignment", { assignment_id: moon.assignment_id }), ctx),
     verdicts: g.db.all("verdicts.byAssignment", { assignment_id: moon.assignment_id }), events,
     decisions: g.db.all("decisions.pendingByTarget", { target_id: taskId }), actions: availableActions(g, taskId, ctx),
   };

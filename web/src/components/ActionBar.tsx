@@ -78,7 +78,7 @@ function ProviderAction({ b, action }: { b: Bridge; action: "launch" | "inspect"
   const label = action === "launch" ? "Launch" : "Inspect";
   const name = action === "launch" ? "moon.launch" : "voyage.inspect";
   return <div className="action-group">
-    <select className="field" value={provider} disabled={command.busy} onChange={(event) => setProvider(event.currentTarget.value)}>
+    <select className="field" aria-label="Provider" value={provider} disabled={command.busy} onChange={(event) => setProvider(event.currentTarget.value)}>
       <option value="">default order</option>
       {providers.map((id) => <option value={id} key={id}>{id}</option>)}
     </select>
@@ -106,7 +106,7 @@ function ReplyAction({ b }: { b: Bridge }) {
     if (value !== "" && await command.send("moon.reply", { taskId: b.taskId, note: value })) setNote("");
   };
   return <div className="action-group action-stack">
-    <textarea className="field" value={note} disabled={command.busy} onInput={(event) => setNote(event.currentTarget.value)} />
+    <textarea className="field" placeholder="Note for the next round" aria-label="Note for the next round" value={note} disabled={command.busy} onInput={(event) => setNote(event.currentTarget.value)} />
     <button className="btn" type="button" disabled={command.busy || note.trim() === ""} onClick={() => void reply()}>Reply</button>
     <ErrorMessage error={command.error} />
   </div>;
@@ -129,7 +129,7 @@ function ParkAction({ b }: { b: Bridge }) {
   const [reason, setReason] = useState("");
   const command = useCommand(b);
   return <div className="action-group">
-    <input className="field" value={reason} disabled={command.busy} onInput={(event) => setReason(event.currentTarget.value)} />
+    <input className="field" placeholder="Reason" aria-label="Reason" value={reason} disabled={command.busy} onInput={(event) => setReason(event.currentTarget.value)} />
     <button className="btn" type="button" disabled={command.busy || reason.trim() === ""} onClick={() => {
       const value = reason.trim();
       if (value !== "") void command.send("moon.park", { taskId: b.taskId, reason: value });
@@ -173,13 +173,13 @@ function AnswerAction({ b }: { b: Bridge }) {
   </div>;
 }
 
-function PendingDecision({ decision }: { decision: Row }) {
+function PendingDecision({ decision, answerShown }: { decision: Row; answerShown: boolean }) {
   const kind = stringValue(decision["kind"]);
   const reasoning = stringValue(decision["reasoning"]);
   const change = kind === "main_tree_changed" ? mainTreeChange(decision["reasoning"]) : null;
   return <div className="pending-decision">
     <span className="badge">{kind}</span>
-    {change === null ? <div>{reasoning}</div> : <ChangeLists change={change} />}
+    {change === null ? <div>{reasoning}</div> : answerShown ? null : <ChangeLists change={change} />}
   </div>;
 }
 
@@ -198,8 +198,11 @@ function ActionControl({ action, b }: { action: Action; b: Bridge }) {
 
 export function ActionBar({ b }: { b: Bridge }) {
   if (b.detail === null) return null;
+  const answerShown = b.detail.actions.includes("answer");
+  const elsewhere = b.detail.actions.length === 0 && b.detail.voyages.some((v) => (v["status"] === "launched" || v["status"] === "working") && v.owner === "other");
   return <div className="action-bar">
-    {b.detail.decisions.map((decision, index) => <PendingDecision decision={decision} key={`${String(decision["id"])}-${index}`} />)}
+    {b.detail.decisions.map((decision, index) => <PendingDecision answerShown={answerShown} decision={decision} key={`${String(decision["id"])}-${index}`} />)}
     {b.detail.actions.map((action, index) => <ActionControl action={action} b={b} key={`${b.taskId}-${action}`} />)}
+    {elsewhere && <div>This voyage is running in another process; stop it there (Ctrl-C) to act on this moon.</div>}
   </div>;
 }

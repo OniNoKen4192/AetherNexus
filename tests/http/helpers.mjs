@@ -91,10 +91,11 @@ export function readFeed(srv, { since, lastEventId } = {}) {
 export async function startWorld(script, patchConfig, opts = {}) {
   const { startServer } = await import("../../dist/server/http/server.js");
   const w = await worldWithMoon(script, patchConfig);
+  const ownsWebRoot = opts.webRoot === undefined;
   const webRoot = opts.webRoot ?? fs.mkdtempSync(path.join(os.tmpdir(), "nexus-web-"));
   let srv;
   try { srv = await startServer(w.g, { port: 0, webRoot, ...opts.server }); }
-  catch (e) { w.cleanup(); fs.rmSync(webRoot, { recursive: true, force: true }); throw e; }
+  catch (e) { w.cleanup(); if (ownsWebRoot) fs.rmSync(webRoot, { recursive: true, force: true }); throw e; }
   const origin = `http://127.0.0.1:${srv.port}`;
   const api = (p, { method = "GET", body, headers = {} } = {}) => rawRequest(srv.port, {
     method, path: p,
@@ -104,7 +105,7 @@ export async function startWorld(script, patchConfig, opts = {}) {
   let closed = false;
   const close = async () => {
     if (closed) return; closed = true;
-    try { await srv.close(); } finally { w.cleanup(); fs.rmSync(webRoot, { recursive: true, force: true }); }
+    try { await srv.close(); } finally { w.cleanup(); if (ownsWebRoot) fs.rmSync(webRoot, { recursive: true, force: true }); }
   };
   return { w, srv, webRoot, origin, api, close };
 }

@@ -32,7 +32,7 @@ function Ship({ b, ship }: { b: Bridge; ship: Row }) {
     <span>{String(ship["name"])}</span><span>{String(ship["class"])}</span><span className="badge">{status}</span>
     {status === "idle" && (!open ? <button className="btn" type="button" disabled={command.busy} onClick={() => setOpen(true)}>Retire</button> :
       <div className="fleet-retire">
-        <input className="field" aria-label={`Reason to retire ${String(ship["name"])}`} value={reason} disabled={command.busy} onInput={(event) => setReason(event.currentTarget.value)} />
+        <input className="field" placeholder="Reason" aria-label={`Reason to retire ${String(ship["name"])}`} value={reason} disabled={command.busy} onInput={(event) => setReason(event.currentTarget.value)} />
         <button className="btn danger" type="button" disabled={command.busy || reason.trim() === ""} onClick={() => void retire()}>Confirm retire</button>
         <button className="btn" type="button" disabled={command.busy} onClick={() => { setOpen(false); setReason(""); command.clear(); }}>Cancel</button>
       </div>)}

@@ -60,6 +60,7 @@ export function useBridge(): Bridge {
 
   const connRef = useRef<Bridge["conn"]>("loading");
   const openTask = useRef<string | null>(null);   // latest taskId, readable from feed callbacks
+  const detailRef = useRef<MoonDetail | null>(null);   // latest detail, readable from feed callbacks
   const detailSeq = useRef(0);                    // drops answers for a moon that is no longer open
   const snapshotSeq = useRef(0);                  // drops a snapshot older than one already applied
   const detailTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -71,6 +72,7 @@ export function useBridge(): Bridge {
     const seq = ++detailSeq.current;
     getMoon(id).then((d) => {
       if (seq !== detailSeq.current || openTask.current !== id) return;
+      detailRef.current = d;
       setDetail(d);
       setStatus({ detailError: null });
       setActivity((have) => mergeActivity(have, d.events.filter(isVoyageEvent)));
@@ -107,7 +109,10 @@ export function useBridge(): Bridge {
     const refreshSoon = (e: FeedEvent | null) => {
       const open = openTask.current;
       if (open !== null && (e === null || e.task_id === open)) {
-        loadDetailSoon(open);
+        // A voyage.event only moves its voyage launched -> working (reducers/voyages.ts); once the open detail shows that
+        // voyage past 'launched', the event changes nothing the detail displays, and activity rows are appended below.
+        const known = e && isVoyageEvent(e) ? detailRef.current?.voyages.find((v) => v["id"] === e.voyage_id) : undefined;
+        if (!(known && known["status"] !== "launched")) loadDetailSoon(open);
         if (e && isVoyageEvent(e)) setActivity((have) => mergeActivity(have, [e]));
       }
       clearTimeout(snapshotTimer);

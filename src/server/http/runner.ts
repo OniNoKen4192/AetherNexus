@@ -10,6 +10,7 @@ export type VoyageRunner = {
   abortAll(): Promise<void>;
   failures(): Failure[];
   inFlight(): number;
+  tracks(voyageId: string): boolean;
 };
 
 type Flight = { controller: AbortController; settled: Promise<void> };
@@ -88,5 +89,6 @@ export function createVoyageRunner(opts: { onFailure: () => void }): VoyageRunne
     },
     failures: () => recorded.slice(),
     inFlight: () => flights.size,
+    tracks: (voyageId) => flights.has(voyageId),
   };
 }

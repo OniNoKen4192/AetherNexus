@@ -120,3 +120,18 @@ test("moon detail is assignment-scoped, validates suffixes, and both reads appen
     await x.api("/api/snapshot"); assert.equal(maxId(x.w), assigned, "read routes appended an event");
   } finally { await x.close(); }
 });
+
+test("a reviewing moon whose implement voyage is docked (a crashed dock) still offers dock", async () => {
+  const x = await startWorld();
+  try {
+    await launchMoon(x.w.g, { taskId: "T1" });
+    await inspectMoon(x.w.g, { taskId: "T1", reviewScript: "review-approve" });
+    const moon = loadMoon(x.w.g, "T1"), scope = moonScope(x.w.g, moon);
+    const voyage = x.w.g.db.get("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
+    append(x.w.g.db, { kind: "voyage.departed", ...scope, voyage_id: voyage.id, ship_id: voyage.ship_id, payload: {} });
+    append(x.w.g.db, { kind: "voyage.docked", ...scope, voyage_id: voyage.id, ship_id: voyage.ship_id, payload: { merge_sha: "x", planet_branch: "x" } });
+    assert.equal(x.w.g.db.get("voyages.byId", { id: voyage.id }).status, "docked");
+    assert.equal(loadMoon(x.w.g, "T1").status, "reviewing");
+    assert.deepEqual(availableActions(x.w.g, "T1", { ownPid: process.pid }), ["dock"]);
+  } finally { await x.close(); }
+});
