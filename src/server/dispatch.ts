@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { append, type NexusEvent } from "../db/events.js";
+import { append, rowToEvent, type NexusEvent } from "../db/events.js";
+import { withGitLog, type GitLog } from "../core/git.js";
 import { pickIdleShip, type ShipClass } from "../core/fleet.js";
 import type { AgentEvent, Job, Role } from "../providers/adapter.js";
 import { Refusal } from "./errors.js";
@@ -23,6 +24,8 @@ export type VoyageInput = {
   job: Omit<Job, "voyageId">; onEvent?: (e: AgentEvent) => void; timeoutMs?: number;
   /** External abort (the CLI's SIGINT/SIGTERM handler): the voyage parks with reason 'interrupted'. */
   signal?: AbortSignal;
+  /** Called once, synchronously, right after the voyage.launched append, with the new voyage id. */
+  onLaunched?: (voyageId: string) => void;
 };
 
 const PROMPTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "prompts");
@@ -61,6 +64,19 @@ export function moonScope(g: Galaxy, moon: MoonRow): Pick<NexusEvent, "system_id
   return { system_id: loadPlanet(g, moon).system_id, planet_id: moon.planet_id, moon_id: moon.id, task_id: moon.task_id, assignment_id: moon.assignment_id };
 }
 
+type InFlightRow = { provider: string };
+/** True when the provider already has as many voyages in flight as scheduler.per_provider_max allows (false when unset). */
+export function providerAtCap(g: Galaxy, provider: string): boolean {
+  const max = g.config.scheduler.per_provider_max[provider];
+  if (max === undefined) return false;
+  return g.db.all<InFlightRow>("voyages.inFlight").filter((v) => v.provider === provider).length >= max;
+}
+
+/** Advisory early refusal with the same wording as the authoritative check in the voyage.launched transaction, so a cap wins over "no idle ship". */
+export function refuseIfAtCap(g: Galaxy, provider: string): void {
+  if (providerAtCap(g, provider)) throw new Refusal(`provider '${provider}' is at its limit of ${g.config.scheduler.per_provider_max[provider]} (scheduler.per_provider_max)`);
+}
+
 export const shipClassFor = (role: Role): ShipClass => (role === "implement" ? "freighter" : "customs");
 export const shipsNoun = (cls: ShipClass): string => (cls === "customs" ? "customs" : `${cls}s`);
 
@@ -76,6 +92,11 @@ export function parkVoyage(g: Galaxy, p: { taskId: string; voyageId: string; shi
   });
 }
 
+/** Record, before the write, that the system is about to write these repo-relative paths into the main tree, so no voyage mistakes them for a foreign change. */
+export function recordTreeWrite(g: Galaxy, paths: string[]): void {
+  append(g.db, { kind: "tree.written", payload: { paths: paths.map((p) => p.replaceAll("\\", "/")) } });
+}
+
 /** The human's tree as git sees it: HEAD plus every status path. A voyage must leave it exactly as it found it. */
 function mainTreeSnapshot(g: Galaxy): { head: string; status: string[] } {
   return { head: g.git.headSha(g.repoRoot), status: g.git.statusPaths(g.repoRoot).sort() };
@@ -86,6 +107,7 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
   const adapter = g.adapters[input.provider];
   if (!adapter) throw new Refusal(`provider '${input.provider}' is not configured`);
   const cls = shipClassFor(input.role);
+  refuseIfAtCap(g, input.provider);
   const ship = pickIdleShip(g.db, cls, input.provider);
   if (!ship) throw new Refusal(`all ${shipsNoun(cls)} in fleet '${input.provider}' are assigned`);
   const baseId = `${ship.id}/${input.taskId}/${input.role}/${input.job.round}`;
@@ -96,17 +118,28 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
   // One transaction: the voyage.launched reducer takes the ship, so a refused launch leaves it idle.
   const launched: NexusEvent = {
     kind: "voyage.launched", ...scope, voyage_id: baseId, ship_id: ship.id, provider: input.provider,
-    payload: { role: input.role, round: input.job.round, provider: input.provider, ...(model ? { model } : {}), ship_id: ship.id, worktree: input.worktree },
+    payload: { role: input.role, round: input.job.round, provider: input.provider, ...(model ? { model } : {}), ship_id: ship.id, worktree: input.worktree, owner_pid: process.pid },
   };
-  append(g.db, launched, () => {
+  const launchedRow = append(g.db, launched, () => {
     const cur = g.db.get<{ status: string }>("ships.byId", { id: ship.id });
     if (cur?.status !== "idle") throw new Refusal(`ship ${ship.id} is no longer idle`);
     // A dropped-and-reassigned task restarts its rounds, so the readable id can repeat: suffix #2, #3, ...
     let id = baseId;
     for (let n = 2; g.db.get("voyages.byId", { id }); n++) id = `${baseId}#${n}`;
     launched.voyage_id = id;
+    // Scheduler limits are checked here, in the launch transaction, so they hold across processes sharing the file.
+    const inFlight = g.db.all<InFlightRow>("voyages.inFlight");
+    const total = g.config.scheduler.max_concurrent_ships;
+    if (inFlight.length >= total) throw new Refusal(`${inFlight.length} ${inFlight.length === 1 ? "voyage" : "voyages"} in flight — the limit is ${total} (scheduler.max_concurrent_ships)`);
+    const perProvider = g.config.scheduler.per_provider_max[input.provider];
+    if (perProvider !== undefined && inFlight.filter((v) => v.provider === input.provider).length >= perProvider) {
+      throw new Refusal(`provider '${input.provider}' is at its limit of ${perProvider} (scheduler.per_provider_max)`);
+    }
   });
   const voyageId = launched.voyage_id!;
+  // A throwing callback must not strand a launched voyage: report it and run on.
+  try { input.onLaunched?.(voyageId); } catch (err) { process.stderr.write(`onLaunched callback threw for voyage ${voyageId}: ${err instanceof Error ? err.message : String(err)}
+`); }
 
   const out: DispatchOutcome = { voyageId, shipId: ship.id, events: 0 };
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -118,26 +151,25 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
   const onExternalAbort = (): void => abortFor("interrupted");
   if (input.signal?.aborted) onExternalAbort(); else input.signal?.addEventListener("abort", onExternalAbort, { once: true });
   const logEvent = (e: AgentEvent): void => { append(g.db, { kind: "voyage.event", ...scope, voyage_id: voyageId, ship_id: ship.id, payload: { event: e } }); };
-  // v0 is single-flight (the CLI blocks on one voyage; no daemon until v0.5), so one Galaxy-wide log hook is
-  // attributable to exactly one voyage. Concurrent voyages need a per-voyage (AsyncLocalStorage-scoped) hook
-  // before v0.5 enables them.
   // Every git command issued while the voyage is in flight becomes a tool_use event on it.
-  g.git.setLog((entry) => {
+  const gitLog: GitLog = (entry) => {
     try { logEvent({ kind: "tool_use", ts: new Date().toISOString(), data: { name: "git", input: entry.args } }); } catch { /* logging must never break git */ }
-  });
+  };
   try {
-    for await (const e of adapter.dispatch({ ...input.job, voyageId }, { cwd: input.worktree, touch: input.touch, timeoutMs, signal: ac.signal })) {
-      out.events++; logEvent(e); input.onEvent?.(e);
-      if (e.kind === "usage" && e.data.cost_usd !== undefined) cost = (cost ?? 0) + e.data.cost_usd;
-      if (e.kind === "done") out.done = e;
-      if (e.kind === "error") out.error = e;
-    }
+    await withGitLog(gitLog, async () => {
+      for await (const e of adapter.dispatch({ ...input.job, voyageId }, { cwd: input.worktree, touch: input.touch, timeoutMs, signal: ac.signal })) {
+        out.events++; logEvent(e); input.onEvent?.(e);
+        if (e.kind === "usage" && e.data.cost_usd !== undefined) cost = (cost ?? 0) + e.data.cost_usd;
+        if (e.kind === "done") out.done = e;
+        if (e.kind === "error") out.error = e;
+      }
+    });
   } catch (err) {
     out.threw = err instanceof Error ? err.message : String(err);
     const c = adapter.classify(err);
     out.parkReason = c === "unknown" ? "backend_failure" : c;
   } finally {
-    clearTimeout(timer); input.signal?.removeEventListener("abort", onExternalAbort); g.git.setLog(null);
+    clearTimeout(timer); input.signal?.removeEventListener("abort", onExternalAbort);
   }
 
   // Someone else already parked this voyage (nexus moon park, for a process presumed dead): leave it as it is.
@@ -147,14 +179,20 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
     return out;
   }
 
-  // The Bash gap: a delegate's shell can reach outside its worktree. The human's tree must be exactly as it was.
+  // The Bash gap: a delegate's shell can reach outside its worktree. Anything but the system's own recorded writes
+  // opens a question for the human; the voyage carries on as if the tree were unchanged.
   const after = mainTreeSnapshot(g);
-  if (after.head !== before.head || JSON.stringify(after.status) !== JSON.stringify(before.status)) {
-    const was = new Set(before.status), now = new Set(after.status);
-    const details = JSON.stringify({ head_before: before.head, head_after: after.head, appeared: after.status.filter((p) => !was.has(p)), vanished: before.status.filter((p) => !now.has(p)) });
-    delete out.done; out.parkReason = "main_tree_modified";
-    parkVoyage(g, { taskId: input.taskId, voyageId, shipId: ship.id, reason: "main_tree_modified", details });
-    return out;
+  const was = new Set(before.status), now = new Set(after.status);
+  const own = new Set<string>();
+  for (const row of g.db.all("events.kindSince", { kind: "tree.written", id: launchedRow.id })) {
+    for (const p of (rowToEvent(row).payload["paths"] as string[] | undefined) ?? []) own.add(p);
+  }
+  const appeared = after.status.filter((p) => !was.has(p) && !own.has(p)), vanished = before.status.filter((p) => !now.has(p));
+  if (after.head !== before.head || appeared.length > 0 || vanished.length > 0) {
+    append(g.db, {
+      kind: "decision.opened", ...scope,
+      payload: { kind: "main_tree_changed", target_kind: "moon", target_id: input.taskId, reasoning: JSON.stringify({ voyage_id: voyageId, head_before: before.head, head_after: after.head, appeared, vanished }) },
+    });
   }
 
   if (out.done) {

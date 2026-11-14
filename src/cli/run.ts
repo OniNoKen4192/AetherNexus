@@ -13,6 +13,7 @@ import { launchMoon } from "../server/commands/launch.js";
 import { inspectMoon } from "../server/commands/review.js";
 import { dockMoon } from "../server/commands/dock.js";
 import { replyMoon, dropMoon, retireShip, parkStaleMoon } from "../server/commands/park.js";
+import { answerDecision } from "../server/commands/decision.js";
 import { status, events, fleet } from "../server/commands/query.js";
 import { rebuild } from "../db/rebuild.js";
 import { STATEMENTS, type StatementName } from "../db/statements.js";
@@ -20,6 +21,8 @@ import { parseSpec } from "../validate/spec.js";
 import { attentionMatches } from "../validate/attention.js";
 import { matchesPattern } from "../validate/match.js";
 import { resolveTarget } from "../validate/tokenize.js";
+import { followEvents } from "../server/follow.js";
+import { startServer } from "../server/http/server.js";
 import type { AgentEvent } from "../providers/adapter.js";
 import { eventsTable, fleetTable, statusTable, table } from "./format.js";
 
@@ -35,13 +38,16 @@ const USAGE = `usage: nexus [--json] <command>
   moon drop <task-id>
   moon park <task-id> --reason <text>      for a voyage whose process died (crash, kill, reboot):
                                            parks it as 'stale:<text>' so reply/drop can proceed
+  decision answer <decision-id> --mine | --not-mine
+                                           answer a main-tree question (was that change yours?)
   voyage inspect <task-id> [--provider <p>] [--quiet]
   voyage dock <task-id>
   status [<system-id>]
-  events [--since <id>] [--moon <id>]      (--follow arrives with the daemon)
+  events [--follow] [--since <id>] [--moon <id>]
   fleet [retire <ship-id> --reason <r>]
   db rebuild | stats | explain <name> | analyze
   validate <spec-path> | --selftest
+  serve [--port <n>]                       run the local bridge server (127.0.0.1 only) until Ctrl-C
 
 --json prints the result object as JSON. --quiet suppresses the event stream on stderr.
 Ctrl-C (SIGINT/SIGTERM) during launch/inspect parks the voyage as 'interrupted' and exits 2.
@@ -99,7 +105,7 @@ function parse(argv: string[]) {
     return parseArgs({
       args: argv, allowPositionals: true, strict: true,
       options: {
-        json: { type: "boolean" }, quiet: { type: "boolean" }, force: { type: "boolean" }, selftest: { type: "boolean" }, help: { type: "boolean", short: "h" }, follow: { type: "boolean" },
+        json: { type: "boolean" }, quiet: { type: "boolean" }, force: { type: "boolean" }, selftest: { type: "boolean" }, help: { type: "boolean", short: "h" }, follow: { type: "boolean" }, port: { type: "string" }, mine: { type: "boolean" }, "not-mine": { type: "boolean" },
         title: { type: "string" }, brief: { type: "string" }, "brief-text": { type: "string" }, kind: { type: "string" }, seed: { type: "string" },
         stream: { type: "string" }, mission: { type: "string" }, territory: { type: "string", multiple: true }, moon: { type: "string" }, planet: { type: "string" },
         provider: { type: "string" }, note: { type: "string" }, since: { type: "string" }, reason: { type: "string" },
@@ -128,7 +134,7 @@ async function run(argv: string[]): Promise<void> {
     out(r, () => `initialized ${r.configPath} (${r.ships} ships); commit .nexus/config.json and .nexus/.gitignore`);
     return;
   }
-  if (!["system", "planet", "moon", "voyage", "status", "events", "fleet", "db", "validate"].includes(c0)) throw new Usage();
+  if (!["system", "planet", "moon", "voyage", "status", "events", "fleet", "db", "validate", "decision", "serve"].includes(c0)) throw new Usage();
 
   const g = openGalaxy(process.cwd(), process.env["NEXUS_FAKE_SCRIPTS"] ? { scriptsDir: process.env["NEXUS_FAKE_SCRIPTS"] } : {});
   try {
@@ -141,13 +147,56 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
   const onEvent = o.quiet ? undefined : streamEvent;
   const launchIn = (taskId: string) => ({ taskId, ...(o.provider ? { provider: o.provider } : {}), ...(onEvent ? { onEvent } : {}) });
 
+  if (c0 === "serve") {
+    let port: number | undefined;
+    if (o.port !== undefined) {
+      port = Number(o.port);
+      if (o.port === "" || !Number.isInteger(port) || port < 0 || port > 65535) throw new Refusal("--port must be an integer from 0 to 65535");
+    }
+    const srv = await startServer(g, port === undefined ? {} : { port });
+    const keepAlive = setInterval(() => {}, 0x7fffffff);
+    try {
+      console.log(`Bridge: ${srv.url}`);
+      console.log("Ctrl-C to stop");
+      await new Promise<void>((resolve) => { process.once("SIGINT", resolve); process.once("SIGTERM", resolve); });
+    } finally {
+      clearInterval(keepAlive);
+      await srv.close();
+    }
+    return;
+  }
+
   // Single-word commands take their argument from the second positional.
   if (c0 === "status") {
     const r = status(g, c1);
     return out(r, () => statusTable(r, (id) => String(g.db.get("ships.byId", { id })?.["name"] ?? id)));
   }
   if (c0 === "events") {
-    if (o.follow) throw new Refusal("--follow arrives with the daemon; v0 prints the log once");
+    if (o.follow) {
+      let tableHeaderPrinted = false;
+      const follower = followEvents(g.db, {
+        since: o.since === undefined ? 0 : Number(o.since),
+        pollMs: 250,
+        onEvents: (rows) => {
+          const selected = o.moon ? rows.filter((row) => row.moon_id === o.moon) : rows;
+          if (selected.length === 0) return;
+          if (o.json) for (const row of selected) console.log(JSON.stringify(row));
+          else {
+            const lines = eventsTable(selected).split("\n");
+            console.log(tableHeaderPrinted ? lines.slice(1).join("\n") : lines.join("\n"));
+            tableHeaderPrinted = true;
+          }
+        },
+      });
+      const keepAlive = setInterval(() => {}, 0x7fffffff);
+      try {
+        await new Promise<void>((resolve) => process.once("SIGINT", resolve));
+      } finally {
+        clearInterval(keepAlive);
+        follower.stop();
+      }
+      return;
+    }
     const r = events(g, { ...(o.since !== undefined ? { since: Number(o.since) } : {}), ...(o.moon ? { moon: o.moon } : {}) });
     return out(r, () => eventsTable(r));
   }
@@ -206,6 +255,13 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
     case "moon drop": {
       const r = dropMoon(g, { taskId: need(rest[0], "<task-id>") });
       return out(r, () => `dropped ${r.moonId}`);
+    }
+    case "decision answer": {
+      if (o.mine === o["not-mine"]) throw new Refusal("give exactly one of --mine or --not-mine");
+      const id = Number(need(rest[0], "<decision-id>"));
+      if (!Number.isInteger(id)) throw new Refusal("<decision-id> must be a number");
+      const r = answerDecision(g, { decisionId: id, answer: o.mine ? "mine" : "not_mine" });
+      return out(r, () => r.parked ? `resolved; moon parked (${r.moonStatus})` : `resolved; moon ${r.moonStatus}`);
     }
     case "fleet retire": {
       const shipId = need(rest[0], "<ship-id>"); retireShip(g, { shipId, reason: need(o.reason, "--reason") });

@@ -63,6 +63,9 @@ const VECTORS = [
   ["roles name unknown provider", (c) => { c.roles.implement = ["gemini"]; }, "roles.implement names unknown provider 'gemini'"],
   ["roles missing review", (c) => { delete c.roles.review; }, "required field 'roles.review'"],
   ["roles absent is valid (defaults to all providers)", (c) => { delete c.roles; }, null],
+  ["server port accepted", (c) => { c.server = { port: 8000 }; }, null],
+  ["server string port refused", (c) => { c.server = { port: "x" }; }, "server.port"],
+  ["server fractional port refused", (c) => { c.server = { port: 1.5 }; }, "server.port"],
   ["db stats not boolean", (c) => { c.db = { stats: "yes" }; }, "db.stats"],
   ["fleet counts must be posint", (c) => { c.fleet = { freighters: 0 }; }, "fleet.freighters"],
   ["scheduler accepted", (c) => { c.scheduler = { max_concurrent_ships: 6, max_concurrent_systems: 1, per_provider_max: { codex: 4 } }; }, null],
@@ -86,6 +89,7 @@ test("normalizeConfig fills defaults", () => {
   assert.deepEqual(n.db, { stats: false });
   assert.deepEqual(n.fleet, { freighters: 6, customs: 2, carriers: 1, surveyors: 1, name_theme: "classic" });
   assert.deepEqual(n.scheduler, { max_concurrent_ships: 6, max_concurrent_systems: 1, per_provider_max: {} });
+  assert.deepEqual(n.server, { port: 7341 });
   assert.equal(n.providers.claude.auth, "login");
   assert.equal(n.providers.claude.api_key_env, "ANTHROPIC_API_KEY");
 });
@@ -97,4 +101,11 @@ test("normalizeConfig throws with all errors joined", () => {
 test("DEFAULT_CONFIG validates and names fake, codex, claude", () => {
   assert.deepEqual(validateConfig(DEFAULT_CONFIG), []);
   assert.deepEqual(Object.keys(DEFAULT_CONFIG.providers).sort(), ["claude", "codex", "fake"]);
+  assert.deepEqual(DEFAULT_CONFIG.server, { port: 7341 });
+});
+
+test("normalizeConfig keeps an explicit server port", () => {
+  const cfg = structuredClone(VALID);
+  cfg.server = { port: 8000 };
+  assert.deepEqual(normalizeConfig(cfg).server, { port: 8000 });
 });

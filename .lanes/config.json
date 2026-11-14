@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "project": {
+    "app_subdir": "",
+    "command_prefix": ""
+  },
+  "commands": {
+    "test": "npm test",
+    "lint": "",
+    "typecheck": "npx tsc -p tsconfig.json --noEmit",
+    "acceptance_runner": "npm test --"
+  },
+  "backend": {
+    "name": "codex-mcp",
+    "dispatch_tool": "mcp__codex__codex",
+    "reply_tool": "mcp__codex__codex-reply",
+    "approval_mode": "automated",
+    "tiers": [
+      "sol",
+      "terra",
+      "luna"
+    ],
+    "ratelimit_signal": [
+      "usage-cap",
+      "429",
+      "rate limit"
+    ]
+  },
+  "routing": {
+    "security_routed": [
+      "src/core/git.ts",
+      "src/validate/**",
+      "src/providers/claude-sdk/gate-hook.ts",
+      "src/server/dispatch.ts",
+      "src/db/migrations/**",
+      "src/server/http/auth.ts",
+      "src/server/lock.ts"
+    ],
+    "do_not_touch": []
+  },
+  "pipeline": {
+    "plans_dir": "docs/superpowers/plans",
+    "tasks_dir": "docs/superpowers/tasks",
+    "ledger": ".superpowers/sdd/2026-11-13-v0.5-bridge/progress.md"
+  },
+  "automation": {
+    "level": "roundabout",
+    "max_fix_rounds": 2
+  }
+}

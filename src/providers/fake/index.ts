@@ -24,7 +24,9 @@ export function createFakeAdapter(scriptsDir: string, opts: { pick?: (job: Job) 
       const script = JSON.parse(fs.readFileSync(path.join(scriptsDir, `${pick(job)}.json`), "utf8")) as FakeScript;
       for (const step of script.steps) {
         if (ctx.signal.aborted) return;
-        if (step.delay_ms) await sleep(step.delay_ms);
+        if (step.delay_ms) {
+          try { await sleep(step.delay_ms, undefined, { signal: ctx.signal }); } catch (err) { if (ctx.signal.aborted) return; throw err; }
+        }
         if ("text" in step) yield { kind: "text", ts: now(), data: { text: step.text } };
         else if ("tool" in step) yield { kind: "tool_use", ts: now(), data: { name: step.tool, input: step.input } };
         else if ("write" in step) { const p = path.join(ctx.cwd, step.write.path); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, step.write.content); yield { kind: "file_changed", ts: now(), data: { path: step.write.path } }; }

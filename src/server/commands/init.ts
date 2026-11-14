@@ -16,7 +16,7 @@ export function initGalaxy(repoRoot: string, opts: { force?: boolean; patchConfi
   const initial = structuredClone(DEFAULT_CONFIG);
   opts.patchConfig?.(initial);
   fs.writeFileSync(configPath, JSON.stringify(initial, null, 2) + "\n");
-  fs.writeFileSync(path.join(paths.nexusDir, ".gitignore"), "nexus.db*\nworktrees/\nstate/\n");
+  fs.writeFileSync(path.join(paths.nexusDir, ".gitignore"), "nexus.db*\nworktrees/\nstate/\nserver.json\n");
 
   if (fs.existsSync(path.join(repoRoot, ".git"))) {
     const exclude = path.join(repoRoot, ".git", "info", "exclude");

@@ -9,7 +9,8 @@ import { audit, type AuditReport } from "../../validate/audit.js";
 import { hashSpec, sha256 } from "../../validate/spec.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
-import { loadMoon, loadPlanet, moonScope, parkVoyage, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
+import { requireTreeAnswered } from "./decision.js";
+import { loadMoon, loadPlanet, moonScope, parkVoyage, providerAtCap, refuseIfAtCap, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
 
 const NEXUS_AUTHOR = { name: "nexus", email: "nexus@nexus.local" };
 const PARK_STATUSES = new Set(["BLOCKED", "BACKEND_FAILURE", "RATE_LIMITED"]);
@@ -26,7 +27,7 @@ function syncIn(srcAbs: string, destAbs: string): void {
 function pickProvider(g: Galaxy, requested: string | undefined): string {
   if (requested) return requested;
   const ids = g.config.roles.implement;
-  const idle = ids.find((id) => g.adapters[id] && pickIdleShip(g.db, "freighter", id));
+  const idle = ids.find((id) => g.adapters[id] && !providerAtCap(g, id) && pickIdleShip(g.db, "freighter", id));
   const first = idle ?? ids[0];
   if (!first) throw new Refusal("no provider is configured for the implement role");
   return first;
@@ -65,7 +66,7 @@ export function runAuditOrPark(g: Galaxy, p: { taskId: string; worktree: string;
 }
 
 /** True when the latest human.message for the assignment is newer than the latest park (moon.adrift or a REJECT verdict). */
-function repliedSincePark(g: Galaxy, assignmentId: number): boolean {
+export function repliedSincePark(g: Galaxy, assignmentId: number): boolean {
   let park = 0, reply = 0;
   for (const e of g.db.all("events.byAssignment", { assignment_id: assignmentId }).map(rowToEvent)) {
     if (e.kind === "moon.adrift" || (e.kind === "verdict.issued" && e.payload["verdict"] === "REJECT")) park = e.id;
@@ -99,10 +100,11 @@ function applyRestore(g: Galaxy, worktree: string, r: { reverted: string[]; dele
 }
 
 export async function launchMoon(
-  g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void; signal?: AbortSignal },
+  g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void; signal?: AbortSignal; onLaunched?: (voyageId: string) => void },
   deps?: { audit?: typeof audit },
 ): Promise<{ voyageId: string; audit: AuditReport | null; moonStatus: MoonStatus }> {
   const { taskId } = input;
+  requireTreeAnswered(g, taskId);
   const moon = loadMoon(g, taskId);
   const status = moon.status;
   const verdicts = g.db.all<VerdictRow>("verdicts.byAssignment", { assignment_id: moon.assignment_id });
@@ -114,6 +116,10 @@ export async function launchMoon(
   if (relaunch && !repliedSincePark(g, moon.assignment_id)) throw new Refusal(`moon ${taskId} is ${status} — use 'nexus moon reply' or 'nexus moon drop'`);
   if (status === "audited") {
     if (lastVerdict?.verdict !== "FIX") throw new Refusal(`moon ${taskId} is 'audited' — run 'nexus moon inspect'; only a FIX verdict reopens it for another launch`);
+      // Complement of inspectMoon's precondition (latest implement voyage 'holding'): a holding freighter is an unreviewed round,
+      // and the FIX verdict on record belongs to an earlier one (a FIX verdict supersedes the freighter it reviewed).
+      const latestImpl = g.db.get<{ status: string; round: number }>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
+      if (latestImpl?.status === "holding") throw new Refusal(`moon ${taskId} is 'audited' — run 'nexus moon inspect'; round ${latestImpl.round} has not been reviewed yet`);
   } else if (!relaunch && status !== "emitted" && status !== "gated") {
     throw new Refusal(`moon ${taskId} is '${status}' — it cannot be launched from there`);
   }
@@ -129,6 +135,7 @@ export async function launchMoon(
   // Precheck 3: a free ship, before any side effect.
   const provider = pickProvider(g, input.provider);
   if (!g.adapters[provider]) throw new Refusal(`provider '${provider}' is not configured`);
+  refuseIfAtCap(g, provider);
   if (!pickIdleShip(g.db, "freighter", provider)) throw new Refusal(`all ${shipsNoun("freighter")} in fleet '${provider}' are assigned`);
 
   const scope = moonScope(g, moon);
@@ -203,7 +210,7 @@ export async function launchMoon(
   const delta_section = deltaSpec ? `\n## Delta from customs (round ${round})\n\n${deltaSpec}\n\n` : "\n";
   const prompt = renderPrompt(promptPath("implement.md"), { spec_path: moon.spec_path, worktree, spec_text: specText, delta_section });
   const outcome = await runVoyage(g, {
-    role: "implement", taskId, provider, worktree, touch: moonTouch(moon), ...(input.onEvent ? { onEvent: input.onEvent } : {}), ...(input.signal ? { signal: input.signal } : {}),
+    role: "implement", taskId, provider, worktree, touch: moonTouch(moon), ...(input.onEvent ? { onEvent: input.onEvent } : {}), ...(input.signal ? { signal: input.signal } : {}), ...(input.onLaunched ? { onLaunched: input.onLaunched } : {}),
     job: {
       role: "implement", specPath: moon.spec_path, specText, prompt, round,
       ...(deltaSpec ? { deltaSpec } : {}), ...(resumeId ? { previousSessionId: resumeId } : {}),

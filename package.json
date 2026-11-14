@@ -11,18 +11,22 @@
     "nexus": "dist/cli/main.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').cpSync('src/db/migrations','dist/db/migrations',{recursive:true})\"",
+    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').cpSync('src/db/migrations','dist/db/migrations',{recursive:true})\" && npm run build:web",
     "pretest": "npm run build",
     "test": "node --disable-warning=ExperimentalWarning --test",
     "test:validate": "node --disable-warning=ExperimentalWarning --test \"tests/validate/*.test.mjs\"",
-    "selftest": "node dist/cli/main.js validate --selftest"
+    "selftest": "node dist/cli/main.js validate --selftest",
+    "build:web": "tsc -p web/tsconfig.json --noEmit && vite build --config web/vite.config.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.299",
     "@modelcontextprotocol/sdk": "^1.32.1"
   },
   "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
     "@types/node": "^22",
-    "typescript": "^7.0.2"
+    "preact": "^11.2.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
   }
 }

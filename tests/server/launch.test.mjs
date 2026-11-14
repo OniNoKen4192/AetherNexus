@@ -162,13 +162,13 @@ test("I5: resume only the same task's session on the same provider", async () =>
   w.cleanup();
 });
 
-test("I4a: a voyage that writes into the human's tree parks as main_tree_modified", async () => {
+test("I4a: a voyage that writes into the human's tree raises a main_tree_changed question and carries on", async () => {
   const w = await worldWithMoon("happy");
   w.g.adapters.fake = stub(() => { fs.writeFileSync(path.join(w.dir, "stray.txt"), "written via Bash\n"); });
   const r = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
-  assert.equal(r.moonStatus, "adrift"); assert.equal(r.audit, null);
-  assert.equal(loadMoon(w.g, "T1").park_reason, "main_tree_modified");
-  const v = w.g.db.get("voyages.byId", { id: r.voyageId }); assert.equal(v.status, "adrift"); assert.match(JSON.parse(v.report).adrift.details, /stray\.txt/);
+  assert.equal(r.moonStatus, "audited"); assert.equal(r.audit.verdict, "clean");
+  const d = w.g.db.all("decisions.pending"); assert.equal(d.length, 1); assert.equal(d[0].kind, "main_tree_changed"); assert.match(d[0].reasoning, /stray\.txt/);
+  assert.equal(w.g.db.get("voyages.byId", { id: r.voyageId }).status, "holding");
   assertShipsConsistent(w.g);
   w.cleanup();
 });

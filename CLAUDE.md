@@ -21,12 +21,14 @@ Fork of Lanes (https://github.com/OniNoKen4192/Lanes), a Claude Code plugin for 
 - `origin` = OniNoKen4192/AetherNexus, `upstream` = OniNoKen4192/Lanes. Sync with `git fetch upstream` + merge/rebase. Push to `upstream` is disabled locally.
 - Record divergences from upstream here as they're decided (architecture, renamed modules, dropped features).
 - v0 (2026-10-14): `bin/lanes-validate.mjs` and `hooks/` retired; ported to `src/validate`, `src/core/git.ts`, `src/providers/claude-sdk/gate-hook.ts`.
+- v0.5 (2026-11-13): `nexus serve` — loopback HTTP server (`src/server/http/`) plus the Bridge page (`web/`, Preact + Vite, built to `dist/web`). The feed is server-sent events, not the WebSocket the parent design first named; commands are HTTP POST. Voyages run concurrently; the single-flight git log is replaced by a per-voyage scope (`withGitLog`). Fuel, limiter and rung selector deferred to v1.
 
 ## Commands
-- `npm install` (SDK + MCP client deps); `npm run build` (tsc to `dist/`).
+- `npm install` (SDK + MCP client deps; Preact + Vite as dev deps); `npm run build` (tsc to `dist/`, then `npm run build:web` builds the Bridge page from `web/` to `dist/web`).
 - `npm test`: full suite, ~70 s, builds first. One area: `npm test -- "tests/<dir>/*.test.mjs"` (Node 22.14 rejects a bare directory argument).
 - Real adapters: `NEXUS_LIVE=1 npm test -- "tests/live/*.test.mjs"`. Never CI; spends the user's pool, so ask first.
 - Validator selftest: `node dist/cli/main.js validate --selftest`
+- Bridge: `node dist/cli/main.js serve [--port <n>]` (127.0.0.1, default 7341; open the printed URL). Also `nexus events --follow` and `nexus decision answer <id> --mine | --not-mine`.
 - CI (`.github/workflows/ci.yml`) runs the suite on Linux, Windows and macOS.
 
 ## Gotchas

@@ -8,14 +8,15 @@ import type { AgentEvent, ReviewReport } from "../../providers/adapter.js";
 import { appendAmendment, hashSpec } from "../../validate/spec.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
-import { loadMoon, moonScope, parkVoyage, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
+import { requireTreeAnswered } from "./decision.js";
+import { loadMoon, moonScope, parkVoyage, providerAtCap, recordTreeWrite, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
 
 type VoyageRow = { id: string; ship_id: string; status: string; round: number; report: string | null };
 
 function pickProvider(g: Galaxy, requested: string | undefined): string {
   if (requested) return requested;
   const ids = g.config.roles.review;
-  const first = ids.find((id) => g.adapters[id] && pickIdleShip(g.db, "customs", id)) ?? ids[0];
+  const first = ids.find((id) => g.adapters[id] && !providerAtCap(g, id) && pickIdleShip(g.db, "customs", id)) ?? ids[0];
   if (!first) throw new Refusal("no provider is configured for the review role");
   return first;
 }
@@ -29,9 +30,10 @@ function amendmentFor(text: string, round: number, reasoning: string, delta: str
 }
 
 export async function inspectMoon(
-  g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void; reviewScript?: string; signal?: AbortSignal },
+  g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void; reviewScript?: string; signal?: AbortSignal; onLaunched?: (voyageId: string) => void },
 ): Promise<{ voyageId: string; verdict: ReviewReport | null; moonStatus: MoonStatus }> {
   const { taskId } = input;
+  requireTreeAnswered(g, taskId);
   const moon = loadMoon(g, taskId);
   if (moon.status !== "audited") throw new Refusal(`moon ${taskId} is '${moon.status}' — only an 'audited' moon can be inspected`);
   const freighter = g.db.get<VoyageRow>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
@@ -56,7 +58,7 @@ export async function inspectMoon(
   const prompt = input.reviewScript ? `FAKE-SCRIPT: ${input.reviewScript}\n${body}` : body;
 
   const outcome = await runVoyage(g, {
-    role: "review", taskId, provider, worktree, touch: moonTouch(moon), ...(input.onEvent ? { onEvent: input.onEvent } : {}), ...(input.signal ? { signal: input.signal } : {}),
+    role: "review", taskId, provider, worktree, touch: moonTouch(moon), ...(input.onEvent ? { onEvent: input.onEvent } : {}), ...(input.signal ? { signal: input.signal } : {}), ...(input.onLaunched ? { onLaunched: input.onLaunched } : {}),
     job: { role: "review", specPath: moon.spec_path, specText, prompt, round: moon.round, auditJson },
   });
   const scope = moonScope(g, moon);
@@ -86,6 +88,7 @@ export async function inspectMoon(
     append(g.db, { kind: "voyage.superseded", ...fscope, payload: {} });
     append(g.db, { kind: "ship.released", ...fscope, payload: { voyage_id: freighter.id, outcome: "superseded" } });
     const amended = amendmentFor(specText, moon.round, verdict.reasoning, verdict.delta_spec);
+    recordTreeWrite(g, [moon.spec_path]);
     fs.writeFileSync(specAbs, amended);
     const wtSpec = path.join(worktree, moon.spec_path);
     if (fs.existsSync(path.dirname(wtSpec))) fs.writeFileSync(wtSpec, amended);

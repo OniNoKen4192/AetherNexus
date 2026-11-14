@@ -31,6 +31,7 @@ export type NexusConfig = {
   pipeline: { plans_dir: string; tasks_dir: string; ledger: string };
   automation: { level: "manual" | "verdicts" | "roundabout" | "highways" | "autopilot"; max_fix_rounds: number };
   scheduler: { max_concurrent_ships: number; max_concurrent_systems: number; per_provider_max: Record<string, number> };
+  server: { port: number };
   db: { stats: boolean };
   fleet: { freighters: number; customs: number; carriers: number; surveyors: number; name_theme: string; seed?: number };
   intake?: unknown;
@@ -51,13 +52,14 @@ const SCHEMA_V2: Record<string, Record<string, string>> = {
   pipeline: { plans_dir: "string", tasks_dir: "string", ledger: "string" },
   automation: { level: "string", max_fix_rounds: "posint?" },
   scheduler: { max_concurrent_ships: "posint?", max_concurrent_systems: "posint?", per_provider_max: "posint_map?" },
+  server: { port: "posint?" },
   db: { stats: "bool?" },
   fleet: { freighters: "posint?", customs: "posint?", carriers: "posint?", surveyors: "posint?", name_theme: "string?", seed: "number?" },
   intake: {},
   idle: {},
   gravity: {},
 };
-const OPTIONAL_BLOCKS = new Set(["review_suite", "automation", "roles", "scheduler", "db", "fleet", "intake", "idle", "gravity"]);
+const OPTIONAL_BLOCKS = new Set(["review_suite", "automation", "roles", "scheduler", "server", "db", "fleet", "intake", "idle", "gravity"]);
 // Accepted and validated as plain objects only; contents ignored in v0.
 const FREEFORM_BLOCKS = new Set(["intake", "idle", "gravity"]);
 
@@ -80,7 +82,7 @@ export function validateConfig(cfg: unknown): string[] {
   if (!isObj(cfg)) return ["config root is not a JSON object"];
   if (cfg["schema_version"] !== 2) {
     if (cfg["schema_version"] === 1) {
-      return ["schema_version must be the number 2, got 1 — this is a Lanes v1 config; rewrite it against templates/config.example.json (a migration command arrives in v0.5)"];
+      return ["schema_version must be the number 2, got 1 — this is a Lanes v1 config; rewrite it against templates/config.example.json (a migration command arrives in a later release)"];
     }
     return [`schema_version must be the number 2, got ${JSON.stringify(cfg["schema_version"])}`];
   }
@@ -212,6 +214,8 @@ export function normalizeConfig(cfg: unknown): NexusConfig {
     max_concurrent_systems: sched["max_concurrent_systems"] ?? 1,
     per_provider_max: sched["per_provider_max"] ?? {},
   };
+  const server = (out["server"] ?? {}) as Obj;
+  out["server"] = { port: server["port"] ?? 7341 };
   const db = (out["db"] ?? {}) as Obj;
   out["db"] = { stats: db["stats"] ?? false };
   const fleet = (out["fleet"] ?? {}) as Obj;
@@ -269,6 +273,7 @@ export const DEFAULT_CONFIG: NexusConfig = {
   pipeline: { plans_dir: ".nexus/plans", tasks_dir: ".nexus/specs", ledger: "docs/nexus/manifest.md" },
   automation: { level: "manual", max_fix_rounds: 2 },
   scheduler: { max_concurrent_ships: 6, max_concurrent_systems: 1, per_provider_max: {} },
+  server: { port: 7341 },
   db: { stats: false },
   fleet: { freighters: 6, customs: 2, carriers: 1, surveyors: 1, name_theme: "classic" },
 };

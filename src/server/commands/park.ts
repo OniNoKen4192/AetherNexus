@@ -4,7 +4,8 @@ import { append } from "../../db/events.js";
 import { appendAmendment, hashSpec } from "../../validate/spec.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
-import { loadMoon, moonScope, parkVoyage, type MoonRow } from "../dispatch.js";
+import { requireTreeAnswered } from "./decision.js";
+import { loadMoon, moonScope, parkVoyage, recordTreeWrite, type MoonRow } from "../dispatch.js";
 
 type VoyageRow = { id: string; ship_id: string; status: string };
 type DecisionRow = { id: number };
@@ -34,6 +35,7 @@ function requireParked(moon: MoonRow, verb: string): void {
 }
 
 export function replyMoon(g: Galaxy, input: { taskId: string; note: string }): { round: number } {
+  requireTreeAnswered(g, input.taskId);
   const moon = loadMoon(g, input.taskId);
   requireParked(moon, "replied to");
   const round = moon.round + 1;
@@ -41,6 +43,7 @@ export function replyMoon(g: Galaxy, input: { taskId: string; note: string }): {
   const specAbs = path.join(g.repoRoot, moon.spec_path);
   if (!fs.existsSync(specAbs)) throw new Refusal(`spec '${moon.spec_path}' does not exist`);
   const amended = appendAmendment(fs.readFileSync(specAbs, "utf8"), { round, date: new Date().toISOString().slice(0, 10), author: "human", note: input.note.replace(/\s+/g, " ").trim() });
+  recordTreeWrite(g, [moon.spec_path]);
   fs.writeFileSync(specAbs, amended);
   const wtSpec = path.join(g.paths.worktrees, moon.task_id, moon.spec_path);
   if (fs.existsSync(path.dirname(wtSpec))) fs.writeFileSync(wtSpec, amended);

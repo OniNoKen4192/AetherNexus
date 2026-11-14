@@ -373,7 +373,7 @@ The director checks the limiter like everything else; it simply never asks for p
 
 - **Three.js** (r17x) + `three/examples/jsm` controls, **postprocessing** for bloom (stars, engine trails). No framework requirement; vanilla TS + Vite is enough. If a component layer is wanted for the Bridge panel, Svelte or Preact — keep the scene imperative regardless.
 - **Assets:** procedural geometry first (primitives + emissive materials + instancing; no files, trivially recolored per fleet). CC0 sources (Kenney space kits, NASA imagery, Google Fonts) only when a hand-built shape looks too crude. Every third-party file gets a row in `assets/LICENSES.md` in the commit that adds it. Ship names come from a seeded generator with themed lists; pop-culture callbacks are fine as *names* — no logos or art.
-- **WebSocket** feed of `events` from a cursor (replay on connect: the client asks for events since its last id; cold start replays the projection snapshot then tails).
+- **Server-sent events** feed of `events` from a cursor (`GET /api/events`; replay on connect: the browser resends `Last-Event-ID` and the server replays everything after it; cold start reads the projection snapshot, then tails from its cursor). Commands travel the other way as plain HTTP `POST /api/commands/<name>`. (Decided in v0.5: the feed is one-way, so SSE gives reconnect and replay for free where a WebSocket would need both hand-built.)
 - **Camera levels** with a tween between them: Galaxy → System → Planet → Moon. `OrbitControls` within a level; double-click a body to descend; Esc ascends. URL hash encodes `#system/<id>/planet/<id>` so a Bridge decision deep-links to its moon.
 
 ### 11.2 Scene graph mapping
@@ -461,8 +461,8 @@ Stress-test target: 15 ships in flight, ~50 moons across 3 systems, 60 fps on a 
 | Phase | Deliverable | Done when |
 |---|---|---|
 | **v0 — skeleton** | server boots per galaxy; SQLite + events; ported validator; fake adapter; Claude-SDK adapter + Codex-MCP adapter; one moon end-to-end at `manual` (launch → audit → review → dock) from a CLI. Spec: `docs/superpowers/specs/2026-10-13-v0-skeleton-design.md` | the full moon lifecycle passes in CI with the fake adapter on Windows/Linux/macOS; the SDK/MCP spike's logs are committed. *Stretch:* a real spec lands on a planet branch via Codex; rate-limit shapes are captured opportunistically, not forced |
-| **v0.5 — Bridge** | WebSocket feed; Bridge panel (decisions, matrix, fuel, rung) with no 3D; reply-to-adrift works | a REJECT is handled entirely from the browser |
-| **v1 — Nexus** | intake adapters; triage/decompose/plan roles; `highways` + `autopilot`; limiter; gravity; bug path with repro invariant; Drydock | an issue labeled `nexus` becomes a landed integration branch unattended, with every park visible on the Bridge |
+| **v0.5 — Bridge** | server + Bridge page (lifecycle, decisions, routing order), no 3D | a REJECT is handled entirely from the browser |
+| **v1 — Nexus** | fuel gauge, limiter and rung selector on the Bridge; intake adapters; triage/decompose/plan roles; `highways` + `autopilot`; gravity; bug path with repro invariant; Drydock | an issue labeled `nexus` becomes a landed integration branch unattended, with every park visible on the Bridge |
 | **v1.5 — Galaxy** | Three.js scene, four camera levels, event→animation table, replay, idle cosmetic layer | last night's run replays at 20× and you can find the adrift moon by looking |
 | **v2 — Providers** | Gemini + OpenCode/Goose ACP adapters, OpenRouter/local endpoints, free housekeeping, matrix reroute under limiter | a stress run with ≥10 ships across ≥3 providers holds 60 fps and never spends reserve |
 
