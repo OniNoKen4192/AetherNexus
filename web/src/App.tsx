@@ -1,4 +1,4 @@
-import { useBridge, useUnauthorized } from "./store";
+import { useBridge, useBridgeStatus } from "./store";
 import { Header } from "./components/Header";
 import { Decisions } from "./components/Decisions";
 import { Fleet } from "./components/Fleet";
@@ -8,7 +8,7 @@ import { MoonDetail } from "./components/MoonDetail";
 
 export function App() {
   const b = useBridge();
-  const unauthorized = useUnauthorized();
+  const { unauthorized, loadError } = useBridgeStatus();
   if (unauthorized) {
     return (
       <div className="gate">
@@ -19,6 +19,7 @@ export function App() {
   }
   return (
     <div className="shell">
+      {b.snapshot === null && loadError !== null && <p className="msg-error">Could not load the Bridge ({loadError}). Retrying.</p>}
       <Header b={b} />
       <div className="columns">
         <div className="col left"><Decisions b={b} /><Fleet b={b} /><Routing b={b} /></div>

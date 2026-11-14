@@ -45,11 +45,16 @@ export async function command(name: string, body: object): Promise<CommandResult
 /** Open the server-sent event feed after `since`. EventSource reconnects by itself and resumes via Last-Event-ID. Returns a closer. */
 export function openFeed(
   since: number,
-  h: { onEvent(e: FeedEvent): void; onServer(): void; onState(s: "live" | "reconnecting"): void },
+  h: { onEvent(e: FeedEvent): void; onServer(): void; onState(s: "live" | "reconnecting"): void;
+    /** The browser gave up for good (a non-200 answer, such as 401 after a restart, closes an EventSource). Nothing reconnects after this. */
+    onClosed?(): void },
 ): () => void {
   const es = new EventSource(`/api/events?since=${since}`);
   es.onopen = () => h.onState("live");
-  es.onerror = () => h.onState("reconnecting");
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED) h.onClosed?.();
+    else h.onState("reconnecting");
+  };
   es.addEventListener("server", () => h.onServer());
   es.onmessage = (m) => {
     try { h.onEvent(JSON.parse(m.data as string) as FeedEvent); } catch { /* ignore a malformed row */ }
