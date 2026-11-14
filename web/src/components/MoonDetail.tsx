@@ -45,14 +45,6 @@ export function MoonDetail({ b }: { b: Bridge }) {
   if (b.taskId === null) return null;
 
   const close = <button className="btn" type="button" onClick={() => b.openMoon(null)}>Close</button>;
-  if (detailError !== null) {
-    return <section className="panel moon-detail"><div className="moon-detail-bar"><h2>Moon</h2>{close}</div><div className="msg-error">{detailError}</div></section>;
-  }
-  if (b.detail === null) {
-    return <section className="panel moon-detail"><div className="moon-detail-bar"><h2>Moon</h2>{close}</div><div>Loading</div></section>;
-  }
-
-  const moon = b.detail.moon;
   let audit: unknown;
   let hasAudit = false;
   for (const event of events) {
@@ -65,36 +57,43 @@ export function MoonDetail({ b }: { b: Bridge }) {
   return (
     <section className="panel moon-detail">
       <div className="moon-detail-bar"><h2>Moon</h2>{close}</div>
-      <div className="moon-detail-heading">
-        <strong>{text(moon["name"])}</strong><code>{b.taskId}</code>
-        <span className="badge">{text(moon["status"])}</span><span>round {number(moon["round"])}</span>
-      </div>
-      {moon["park_reason"] !== null && <div className="moon-park-reason">{text(moon["park_reason"])}</div>}
-      <div className="tabs">
-        <button className={`tab${tab === "Spec" ? " active" : ""}`} type="button" onClick={() => setTab("Spec")}>Spec</button>
-        <button className={`tab${tab === "Activity" ? " active" : ""}`} type="button" onClick={() => setTab("Activity")}>Activity</button>
-        <button className={`tab${tab === "Audit" ? " active" : ""}`} type="button" onClick={() => setTab("Audit")}>Audit</button>
-        <button className={`tab${tab === "Verdicts" ? " active" : ""}`} type="button" onClick={() => setTab("Verdicts")}>Verdicts</button>
-      </div>
-      {tab === "Spec" && (b.detail.spec === null ? <div>No spec file.</div> : <pre className="log">{b.detail.spec}</pre>)}
-      {tab === "Activity" && (events.length === 0 ? <div>No activity yet.</div> : (
-        <pre className="log" ref={activityLog} onScroll={(event) => {
-          const log = event.currentTarget;
-          followBottom.current = log.scrollHeight - log.scrollTop - log.clientHeight <= 24;
-        }}>{events.map(eventLine).join("\n")}</pre>
-      ))}
-      {tab === "Audit" && (!hasAudit ? <div>No audit yet.</div> : <pre className="log">{JSON.stringify(audit, null, 2)}</pre>)}
-      {tab === "Verdicts" && (b.detail.verdicts.length === 0 ? <div>No verdicts yet.</div> : (
-        <div className="moon-verdicts">
-          {b.detail.verdicts.map((verdict) => (
-            <div className="moon-verdict" key={number(verdict["id"])}>
-              <div className="moon-verdict-heading"><span>round {number(verdict["round"])}</span><span className="badge">{text(verdict["verdict"])}</span></div>
-              <div>{text(verdict["reasoning"])}</div>
-              {verdict["delta_spec"] !== null && <pre className="log">{text(verdict["delta_spec"])}</pre>}
+      {detailError !== null && <div className="msg-error">{detailError}</div>}
+      {b.detail === null && detailError === null && <div>Loading</div>}
+      {b.detail !== null && (() => {
+        const moon = b.detail.moon;
+        return <>
+          <div className="moon-detail-heading">
+            <strong>{text(moon["name"])}</strong><code>{b.taskId}</code>
+            <span className="badge">{text(moon["status"])}</span><span>round {number(moon["round"])}</span>
+          </div>
+          {moon["park_reason"] !== null && <div className="moon-park-reason">{text(moon["park_reason"])}</div>}
+          <div className="tabs">
+            <button className={`tab${tab === "Spec" ? " active" : ""}`} type="button" onClick={() => setTab("Spec")}>Spec</button>
+            <button className={`tab${tab === "Activity" ? " active" : ""}`} type="button" onClick={() => { followBottom.current = true; setTab("Activity"); }}>Activity</button>
+            <button className={`tab${tab === "Audit" ? " active" : ""}`} type="button" onClick={() => setTab("Audit")}>Audit</button>
+            <button className={`tab${tab === "Verdicts" ? " active" : ""}`} type="button" onClick={() => setTab("Verdicts")}>Verdicts</button>
+          </div>
+          {tab === "Spec" && (b.detail.spec === null ? <div>No spec file.</div> : <pre className="log">{b.detail.spec}</pre>)}
+          {tab === "Activity" && (events.length === 0 ? <div>No activity yet.</div> : (
+            <pre className="log" ref={activityLog} onScroll={(event) => {
+              const log = event.currentTarget;
+              followBottom.current = log.scrollHeight - log.scrollTop - log.clientHeight <= 24;
+            }}>{events.map(eventLine).join("\n")}</pre>
+          ))}
+          {tab === "Audit" && (!hasAudit ? <div>No audit yet.</div> : <pre className="log">{JSON.stringify(audit, null, 2)}</pre>)}
+          {tab === "Verdicts" && (b.detail.verdicts.length === 0 ? <div>No verdicts yet.</div> : (
+            <div className="moon-verdicts">
+              {b.detail.verdicts.map((verdict) => (
+                <div className="moon-verdict" key={number(verdict["id"])}>
+                  <div className="moon-verdict-heading"><span>round {number(verdict["round"])}</span><span className="badge">{text(verdict["verdict"])}</span></div>
+                  <div>{text(verdict["reasoning"])}</div>
+                  {verdict["delta_spec"] !== null && <pre className="log">{text(verdict["delta_spec"])}</pre>}
+                </div>
+              ))}
             </div>
           ))}
-        </div>
-      ))}
+        </>;
+      })()}
     </section>
   );
 }

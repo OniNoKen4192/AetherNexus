@@ -37,3 +37,11 @@ test("the shared Bridge selectors remain available", async () => {
     assert.ok(css.includes(selector), `style.css is missing ${selector}`);
   }
 });
+
+test("moon source preserves taskless, refresh error, and activity follow behavior", async () => {
+  const system = await readFile(new URL("../../web/src/components/SystemView.tsx", import.meta.url), "utf8");
+  const moon = await readFile(new URL("../../web/src/components/MoonDetail.tsx", import.meta.url), "utf8");
+  assert.ok(!system.includes("taskId !== null && b.openMoon"));
+  assert.equal(moon.split("panel moon-detail").length - 1, 1);
+  assert.ok(moon.split("followBottom.current = true").length - 1 >= 2);
+});

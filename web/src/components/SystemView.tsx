@@ -31,11 +31,11 @@ export function SystemView({ b }: { b: Bridge }) {
                         const moonId = text(moon["id"]);
                         const name = text(moon["name"]);
                         const taskId = typeof moon["task_id"] === "string" ? moon["task_id"] : null;
-                        if (moon["body_status"] === "barren") {
-                          return <div className="system-barren-moon" key={moonId}><span>{name}</span><span>barren</span></div>;
+                        if (taskId === null) {
+                          return <div className="system-barren-moon" key={moonId}><span>{name}</span>{moon["body_status"] === "barren" && <span>barren</span>}</div>;
                         }
                         return (
-                          <div className={`row${taskId === b.taskId ? " selected" : ""}`} key={moonId} onClick={() => taskId !== null && b.openMoon(taskId)}>
+                          <div className={`row${taskId === b.taskId ? " selected" : ""}`} key={moonId} onClick={() => b.openMoon(taskId)}>
                             <span>{name}</span>
                             <code>{taskId}</code>
                             <span className="badge">{text(moon["status"])}</span>
