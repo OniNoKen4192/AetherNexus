@@ -58,3 +58,21 @@ textarea.field { font-family: inherit; resize: vertical; }
 .fleet-line { display: flex; justify-content: space-between; gap: 12px; padding: 2px 8px; }
 .fleet-line span:last-child { color: var(--muted); }
 .routing ol { margin: 3px 0 8px; padding-left: 24px; }
+
+.system-view > .field { margin-bottom: 8px; }
+.system-planet + .system-planet { margin-top: 10px; }
+.system-planet h3 { margin: 4px 0; font-size: 13px; }
+.system-barren { margin-left: 8px; color: var(--muted); font-weight: normal; }
+.system-moons { margin-left: 10px; }
+.system-moons .row code { margin-left: auto; }
+.system-barren-moon { display: flex; justify-content: space-between; gap: 8px; padding: 5px 8px; color: var(--muted); }
+
+.moon-detail-bar, .moon-detail-heading, .moon-verdict-heading { display: flex; align-items: center; gap: 8px; }
+.moon-detail-bar { justify-content: space-between; }
+.moon-detail-bar h2 { margin-bottom: 0; }
+.moon-detail-heading { margin: 8px 0; }
+.moon-detail-heading code { margin-left: auto; }
+.moon-park-reason { margin: 0 0 8px; color: var(--muted); }
+.moon-verdict + .moon-verdict { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.moon-verdict-heading { margin-bottom: 4px; }
+.moon-verdict .log { margin-top: 6px; }
