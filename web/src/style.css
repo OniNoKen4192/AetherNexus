@@ -85,3 +85,9 @@ textarea.field { font-family: inherit; resize: vertical; }
 .pending-decision { padding: 8px; border: 1px solid var(--border); border-radius: 4px; }
 .pending-decision .badge { margin-bottom: 4px; }
 .pending-decision ul, .action-group ul { margin: 3px 0; padding-left: 24px; }
+
+.new-system { margin-bottom: 8px; }
+.assignment-form { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; padding: 8px; border: 1px solid var(--border); border-radius: 4px; }
+.assignment-form label { color: var(--muted); }
+.assignment-buttons { display: flex; gap: 8px; }
+.system-barren-moon .assignment-form { flex: 1; color: var(--text); }
