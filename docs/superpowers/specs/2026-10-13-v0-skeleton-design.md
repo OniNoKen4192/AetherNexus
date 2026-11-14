@@ -286,7 +286,7 @@ Barren bodies have no branch and no worktree; they are rows only.
 | `attention --spec` | `validate/attention.ts` | returns the matched `routing.attention` categories; run at `moon emit` so a restricted-space moon is flagged before launch (v0 parks it `adrift`, reason `restricted`) |
 | `worktree create/remove` (task and stream) | `core/git.ts` | subsumed by §4.4 |
 | `seed --check` | dropped | belongs to Drydock (parent §12); returns in v1 |
-| `doctor`, `config get/set` | dropped here | config validation in `src/config/`; `doctor` returns as a CLI command in v0.5 |
+| `doctor`, `config get/set` | dropped here | config validation in `src/config/`; `doctor` returns as a CLI command in a later release |
 
 Order: the three vector sets become `tests/validate/*.test.mjs` and `tests/config/schema.test.mjs` first (failing); modules are ported until green; `tests/validator.test.mjs` and `tests/worktree.test.mjs` are retargeted from the CLI to the library; `bin/lanes-validate.mjs` is deleted in the commit where the last vector passes against `dist/`. `nexus validate <spec>` keeps the debugging affordance.
 

@@ -82,7 +82,7 @@ export function validateConfig(cfg: unknown): string[] {
   if (!isObj(cfg)) return ["config root is not a JSON object"];
   if (cfg["schema_version"] !== 2) {
     if (cfg["schema_version"] === 1) {
-      return ["schema_version must be the number 2, got 1 — this is a Lanes v1 config; rewrite it against templates/config.example.json (a migration command arrives in v0.5)"];
+      return ["schema_version must be the number 2, got 1 — this is a Lanes v1 config; rewrite it against templates/config.example.json (a migration command arrives in a later release)"];
     }
     return [`schema_version must be the number 2, got ${JSON.stringify(cfg["schema_version"])}`];
   }
