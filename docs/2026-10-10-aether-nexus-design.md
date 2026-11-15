@@ -474,7 +474,7 @@ v1 is several separate projects. Each gets its own design doc and plan, built in
 
 | # | Slice | Why here |
 |---|---|---|
-| 1 | Scheduler and the lower rungs (`verdicts`, `roundabout`); rung selector on the Bridge | As of v0.5 nothing launches a moon when its dependencies dock and nothing acts on a verdict without a click; the rung is stored and shown but changes no behaviour. Every later slice needs this. Provable on the fake adapter, so it spends nothing. |
+| 1 | Scheduler and the lower rungs (`verdicts`, `roundabout`); rung selector on the Bridge. **Built 2026-11-15** — design `docs/superpowers/specs/2026-11-14-v1-scheduler-design.md`, plan `docs/superpowers/plans/2026-11-15-v1-scheduler.md`. | As of v0.5 nothing launches a moon when its dependencies dock and nothing acts on a verdict without a click; the rung is stored and shown but changes no behaviour. Every later slice needs this. Provable on the fake adapter, so it spends nothing. |
 | 2 | Fuel readings and the limiter; fuel gauge on the Bridge | Every adapter's `fuel()` returns `unknown` as of v0.5, so estimation from usage events comes with it. In place before any real provider runs unattended. |
 | 3 | Intake adapters; `triage`, `decompose`, `plan` roles; `approve_map`; `highways` | Produces stream maps, which need slice 1 to be flown. |
 | 4 | Gravity and `autopilot` | The gravity gate is part of autopilot's safety floor (§7). |
