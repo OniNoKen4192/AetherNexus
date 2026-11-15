@@ -187,3 +187,25 @@ test("a FIX verdict on one moon during a voyage on another raises no question on
   assert.match(w.git("status", "--porcelain"), /T2\.md/, "the FIX amendment did change the spec in the main tree");
   settle(w);
 });
+
+test("the system's own write that puts a file back as committed during a voyage raises no question", async () => {
+  const { setAutomationLevel } = await import("../../dist/server/commands/config.js");
+  const w = await worldWithMoon("happy");
+  setAutomationLevel(w.g, { level: "roundabout" }); // before the voyage: .nexus/config.json now differs from the commit
+  assert.match(w.git("status", "--porcelain"), /\.nexus\/config\.json/);
+  w.g.adapters.fake = stub(() => { setAutomationLevel(w.g, { level: "manual" }); });
+  assert.equal((await launchMoon(w.g, { taskId: "T1" })).moonStatus, "audited");
+  assert.doesNotMatch(w.git("status", "--porcelain"), /\.nexus\/config\.json/, "the file is back as committed");
+  assert.deepEqual(w.g.db.all("decisions.pending"), []);
+  settle(w);
+});
+
+test("a foreign change that disappears during a voyage still raises the question", async () => {
+  const w = await worldWithMoon("happy");
+  stray(w); // before the voyage
+  w.g.adapters.fake = stub(() => { fs.rmSync(path.join(w.dir, "stray.txt")); });
+  assert.equal((await launchMoon(w.g, { taskId: "T1" })).moonStatus, "audited");
+  const why = JSON.parse(pendingTreeDecision(w.g, "T1").reasoning);
+  assert.deepEqual(why.vanished, ["stray.txt"]); assert.deepEqual(why.appeared, []);
+  settle(w);
+});
