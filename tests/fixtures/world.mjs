@@ -17,6 +17,23 @@ export function seedFleet(db, fleets = ["fake"]) {
   return ships;
 }
 
+/**
+ * Write and commit one spec per entry into the galaxy's repo and return their repo-relative paths, in order.
+ * deps are task ids for the spec's "Depends on" line; scripts are FAKE-SCRIPT names, each written as its own comment.
+ */
+export function writeSpecs(w, entries) {
+  const template = read("tests/fixtures/specs/good-basic.md");
+  const paths = entries.map(({ id, deps = [], scripts = [] }) => {
+    const comments = scripts.map((name) => `<!-- FAKE-SCRIPT: ${name} -->`).join("\n");
+    let body = template.replace(/^- \*\*Depends on\*\*:.*$/m, `- **Depends on**: ${deps.length ? deps.join(", ") : "none"}`);
+    if (comments) body = body.replace("# TASK: thing-add-x", `# TASK: thing-add-x\n${comments}`);
+    return writeSpec(w.dir, id, body);
+  });
+  w.git("add", "-A");
+  w.git("commit", "-qm", "specs");
+  return paths;
+}
+
 // A galaxy with one system, one planet and one assigned moon (task T1) whose spec names the fake implement script.
 export async function worldWithMoon(script = "happy", patch, patchSpec) {
   const w = await makeGalaxy(patch); const { systemId } = createSystem(w.g, { slug: "s", title: "t", brief: "b", seed: 1 });
