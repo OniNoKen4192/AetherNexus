@@ -8,6 +8,12 @@ import { writeSpecs } from "../fixtures/world.mjs";
 import { rawRequest, readFeed, startWorld } from "../http/helpers.mjs";
 
 const FAST = { server: { pollMs: 20, schedulerTickMs: 200 } };
+const ONE_SHIP = (c) => {
+  c.roles = { implement: ["fake"], review: ["fake"] };
+  c.routing.security_routed = ["src/auth.ts"];
+  c.routing.do_not_touch = [".env"];
+  c.scheduler = { ...(c.scheduler ?? {}), max_concurrent_ships: 1 };
+};
 
 async function until(fn, ms = 10000) {
   const end = Date.now() + ms;
@@ -121,6 +127,7 @@ test("verdicts sends no first freighter", async () => {
     await post(x, "config.automation", { level: "verdicts" });
     await delay(300);
     assert.equal(feed.events.some((event) => event.kind === "voyage.launched"), false);
+    assert.deepEqual((await moonDetail(x, "T1")).voyages, []);
     await post(x, "moon.launch", { taskId: "T1" });
     await until(async () => findMoon(await snapshot(x), "T1")?.status === "merged");
     await finish(x);
@@ -137,9 +144,10 @@ test("lowering the rung mid-run starts nothing new", async () => {
     await until(async () => findMoon(await snapshot(x), "T1")?.status === "implementing");
     await post(x, "config.automation", { level: "manual" });
     await until(async () => findMoon(await snapshot(x), "T1")?.status === "audited");
+    await delay(300);
     const detail = await moonDetail(x, "T1");
     assert.equal(detail.voyages.find((voyage) => voyage.role === "implement")?.status, "holding");
-    await delay(300);
+    assert.deepEqual((await moonDetail(x, "B")).voyages, []);
     assert.equal(feed.events.some((event) => event.kind === "voyage.launched" && event.task_id === "B"), false);
     assert.equal(findMoon(await snapshot(x), "T1").status, "audited");
     await finish(x);
@@ -147,13 +155,13 @@ test("lowering the rung mid-run starts nothing new", async () => {
 });
 
 test("a restart resumes from the log", async () => {
-  const x = await startWorld("slow", undefined, FAST);
+  const x = await startWorld("slow", ONE_SHIP, FAST);
   let restarted;
   try {
     const [cPath] = writeSpecs(x.w, [{ id: "C", scripts: ["happy"] }]);
+    await assign(x, x.w.planetId, cPath);
     await post(x, "config.automation", { level: "roundabout" });
     await until(async () => findMoon(await snapshot(x), "T1")?.status === "implementing");
-    await assign(x, x.w.planetId, cPath);
     await x.srv.close();
 
     restarted = await startServer(x.w.g, { port: 0, webRoot: x.webRoot, pollMs: 20, schedulerTickMs: 200 });
@@ -169,7 +177,11 @@ test("a restart resumes from the log", async () => {
     }, 20000);
     assert.equal(done.decisions.filter((decision) => decision.target_id === "T1").length, 1);
     const a = await moonDetail(x, "T1");
-    assert.equal(a.voyages.filter((voyage) => voyage.role === "implement" && voyage.round === 1).length, 1);
+    assert.deepEqual(a.voyages.filter((voyage) => voyage.role === "implement").map((voyage) => voyage.round), [1]);
+    const c = await moonDetail(x, "C");
+    const cLaunches = c.events.filter((event) => event.kind === "voyage.launched" && event.payload.role === "implement");
+    assert.equal(cLaunches.length, 1);
+    assert.ok(cLaunches[0].id > a.events.find((event) => event.kind === "moon.adrift").id);
     await finish(x, restarted);
   } finally { if (restarted) await restarted.close(); await x.close(); }
 });
@@ -188,7 +200,9 @@ test("a planet with dependencies gets no first freighter", async () => {
     });
     await assign(x, planet.json.result.planetId, dPath);
     await post(x, "config.automation", { level: "roundabout" });
+    await until(async () => findMoon(await snapshot(x), "T1")?.status === "merged");
     await delay(300);
+    assert.deepEqual((await moonDetail(x, "D")).voyages, []);
     assert.equal(feed.events.some((event) => event.kind === "voyage.launched" && event.task_id === "D"), false);
     assert.deepEqual(findMoon(await snapshot(x), "D").waiting_on_planets, ["P1"]);
     await post(x, "moon.launch", { taskId: "D" });
@@ -205,9 +219,13 @@ test("a reply to a never-visited adrift moon", async () => {
     await post(x, "config.automation", { level: "verdicts" });
     await post(x, "moon.reply", { taskId: "T1", note: "continue" });
     await delay(300);
+    const detail = await moonDetail(x, "T1");
+    assert.deepEqual(detail.voyages, []);
+    assert.equal(detail.moon.status, "adrift");
     assert.equal(feed.events.some((event) => event.kind === "voyage.launched" && event.task_id === "T1"), false);
     await post(x, "config.automation", { level: "roundabout" });
     await until(async () => findMoon(await snapshot(x), "T1")?.status === "merged");
+    await feed.waitFor((events) => events.some((event) => event.kind === "voyage.launched" && event.task_id === "T1"));
     assert.equal(feed.events.some((event) => event.kind === "voyage.launched" && event.task_id === "T1"), true);
     await finish(x);
   } finally { feed.close(); await x.close(); }
