@@ -10,6 +10,7 @@ import { hashSpec, sha256 } from "../../validate/spec.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
 import { requireTreeAnswered } from "./decision.js";
+import { dependencyState } from "./deps.js";
 import { loadMoon, loadPlanet, moonScope, parkVoyage, providerAtCap, refuseIfAtCap, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
 
 const NEXUS_AUTHOR = { name: "nexus", email: "nexus@nexus.local" };
@@ -123,6 +124,8 @@ export async function launchMoon(
   } else if (!relaunch && status !== "emitted" && status !== "gated") {
     throw new Refusal(`moon ${taskId} is '${status}' — it cannot be launched from there`);
   }
+  const { visited, waitingOn } = dependencyState(g, taskId);
+  if (!visited && waitingOn.length > 0) throw new Refusal(`moon ${taskId} is waiting on ${waitingOn.join(", ")} — a freighter can be sent once they are settled`);
   const fixRound = status === "audited";
   const round = fixRound || relaunch ? moon.round + 1 : moon.round || 1;
 

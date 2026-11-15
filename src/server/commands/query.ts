@@ -8,6 +8,7 @@ import type { Galaxy } from "../galaxy.js";
 import { Refusal } from "../errors.js";
 import { pidAlive } from "../lock.js";
 import { pendingTreeDecision } from "./decision.js";
+import { dependencyState } from "./deps.js";
 import { repliedSincePark } from "./launch.js";
 import { showSystem } from "./system.js";
 
@@ -76,6 +77,9 @@ export function snapshot(g: Galaxy, ctx: OwnerCtx & { failures: Failure[] }): Sn
   const assigned = new Set<string>(); const rawVoyages: Row[] = [];
   for (const system of systems) for (const planet of system.planets) for (const moon of planet.moons) {
     if (typeof moon["task_id"] !== "string" || typeof moon["assignment_id"] !== "number") continue;
+    const dependencies = dependencyState(g, moon["task_id"]);
+    moon["waiting_on"] = dependencies.visited ? [] : dependencies.waitingOn;
+    moon["waiting_on_planets"] = dependencies.visited ? [] : dependencies.waitingOnPlanets;
     assigned.add(moon["task_id"]); rawVoyages.push(...g.db.all("voyages.byAssignment", { assignment_id: moon["assignment_id"] }));
   }
   const inFlight = g.db.all("voyages.inFlight");
@@ -119,12 +123,13 @@ export function availableActions(g: Galaxy, taskId: string, ctx: OwnerCtx): Acti
 
 export function moonDetail(g: Galaxy, taskId: string, ctx: OwnerCtx): MoonDetail {
   const moon = loadMoon(g, taskId);
+  const dependencies = dependencyState(g, taskId);
   let spec: string | null;
   try { spec = fs.readFileSync(path.join(g.repoRoot, moon.spec_path), "utf8"); }
   catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; spec = null; }
   const events = g.db.all("events.byAssignment", { assignment_id: moon.assignment_id }).map(rowToEvent);
   return {
-    moon: moon as unknown as Row, spec,
+    moon: { ...moon, waiting_on: dependencies.visited ? [] : dependencies.waitingOn, waiting_on_planets: dependencies.visited ? [] : dependencies.waitingOnPlanets }, spec,
     voyages: withOwner(g, g.db.all("voyages.byAssignment", { assignment_id: moon.assignment_id }), ctx),
     verdicts: g.db.all("verdicts.byAssignment", { assignment_id: moon.assignment_id }), events,
     decisions: g.db.all("decisions.pendingByTarget", { target_id: taskId }), actions: availableActions(g, taskId, ctx),
