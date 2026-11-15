@@ -147,6 +147,9 @@ test("lowering the rung mid-run starts nothing new", async () => {
     await delay(300);
     const detail = await moonDetail(x, "T1");
     assert.equal(detail.voyages.find((voyage) => voyage.role === "implement")?.status, "holding");
+    // Nothing but the rung holds A: no question is pending, and customs could inspect if anyone asked.
+    assert.deepEqual(detail.decisions, []);
+    assert.deepEqual(detail.actions, ["inspect"]);
     assert.deepEqual((await moonDetail(x, "B")).voyages, []);
     assert.equal(feed.events.some((event) => event.kind === "voyage.launched" && event.task_id === "B"), false);
     assert.equal(findMoon(await snapshot(x), "T1").status, "audited");
