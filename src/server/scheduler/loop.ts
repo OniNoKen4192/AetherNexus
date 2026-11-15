@@ -60,7 +60,7 @@ export function createScheduler(g: Galaxy, opts: { runner: VoyageRunner; pollMs:
 
   async function execute(a: PlannedAction): Promise<void> {
     if (a.action === "dock") { dockMoon(g, { taskId: a.taskId }); return; }
-    if (a.action === "park_stale") { parkStaleMoon(g, { taskId: a.taskId, reason: "the voyage's process is gone" }); return; }
+    if (a.action === "park_stale") { parkStaleMoon(g, { taskId: a.taskId, reason: "the voyage's process is gone", details: "parked by the scheduler: the voyage's process is gone" }); return; }
     const send: (input: { taskId: string; signal: AbortSignal; onLaunched: (voyageId: string) => void }) => Promise<unknown> =
       a.action === "launch" ? (input) => launchMoon(g, input) : (input) => inspectMoon(g, input);
     busy.add(a.taskId);
