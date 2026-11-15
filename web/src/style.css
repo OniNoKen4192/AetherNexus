@@ -29,6 +29,7 @@ code { font-family: var(--mono); }
 .row.selected { background: var(--selected); }
 
 .badge { display: inline-block; padding: 0 7px; border-radius: 999px; border: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+.waiting-label { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
 .tab { padding: 4px 10px; border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; border-bottom: 2px solid transparent; }

@@ -3,6 +3,9 @@ import { NewSystem } from "./NewSystem";
 import { AssignStream, AssignSpec } from "./Assign";
 
 const text = (value: unknown): string => typeof value === "string" ? value : "";
+const strings = (value: unknown): string[] => Array.isArray(value)
+  ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+  : [];
 
 export function SystemView({ b }: { b: Bridge }) {
   const systems = b.snapshot?.systems;
@@ -43,11 +46,15 @@ export function SystemView({ b }: { b: Bridge }) {
                         for (const failure of failures) {
                           if (failure.taskId === taskId) latestFailure = failure;
                         }
+                        const waitingOn = strings(moon["waiting_on"]);
+                        const waitingOnPlanets = strings(moon["waiting_on_planets"]);
                         return (
                           <div className={`row${taskId === b.taskId ? " selected" : ""}`} key={moonId} onClick={() => b.openMoon(taskId)}>
                             <span>{name}</span>
                             <code>{taskId}</code>
                             <span className="badge">{text(moon["status"])}</span>
+                            {waitingOn.length > 0 && <span className="badge waiting-label">waiting on {waitingOn.join(", ")}</span>}
+                            {waitingOnPlanets.length > 0 && <span className="badge waiting-label">waiting on planet {waitingOnPlanets.join(", ")}</span>}
                             {latestFailure !== undefined && <span className="badge failure-badge" title={latestFailure.message}>failed</span>}
                           </div>
                         );
