@@ -14,6 +14,7 @@ import { inspectMoon } from "../server/commands/review.js";
 import { dockMoon } from "../server/commands/dock.js";
 import { replyMoon, dropMoon, retireShip, parkStaleMoon } from "../server/commands/park.js";
 import { answerDecision } from "../server/commands/decision.js";
+import { setAutomationLevel } from "../server/commands/config.js";
 import { status, events, fleet } from "../server/commands/query.js";
 import { rebuild } from "../db/rebuild.js";
 import { STATEMENTS, type StatementName } from "../db/statements.js";
@@ -40,6 +41,7 @@ const USAGE = `usage: nexus [--json] <command>
                                            parks it as 'stale:<text>' so reply/drop can proceed
   decision answer <decision-id> --mine | --not-mine
                                            answer a main-tree question (was that change yours?)
+  config set trust <manual|verdicts|roundabout>
   voyage inspect <task-id> [--provider <p>] [--quiet]
   voyage dock <task-id>
   status [<system-id>]
@@ -134,7 +136,7 @@ async function run(argv: string[]): Promise<void> {
     out(r, () => `initialized ${r.configPath} (${r.ships} ships); commit .nexus/config.json and .nexus/.gitignore`);
     return;
   }
-  if (!["system", "planet", "moon", "voyage", "status", "events", "fleet", "db", "validate", "decision", "serve"].includes(c0)) throw new Usage();
+  if (!["system", "planet", "moon", "voyage", "status", "events", "fleet", "db", "validate", "decision", "config", "serve"].includes(c0)) throw new Usage();
 
   const g = openGalaxy(process.cwd(), process.env["NEXUS_FAKE_SCRIPTS"] ? { scriptsDir: process.env["NEXUS_FAKE_SCRIPTS"] } : {});
   try {
@@ -262,6 +264,11 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
       if (!Number.isInteger(id)) throw new Refusal("<decision-id> must be a number");
       const r = answerDecision(g, { decisionId: id, answer: o.mine ? "mine" : "not_mine" });
       return out(r, () => r.parked ? `resolved; moon parked (${r.moonStatus})` : `resolved; moon ${r.moonStatus}`);
+    }
+    case "config set": {
+      if (rest[0] !== "trust" || rest[1] === undefined || rest.length !== 2) throw new Usage();
+      const r = setAutomationLevel(g, { level: rest[1] });
+      return out(r, () => r.changed ? `rung: ${r.from} -> ${r.level}` : `rung: ${r.level} (unchanged)`);
     }
     case "fleet retire": {
       const shipId = need(rest[0], "<ship-id>"); retireShip(g, { shipId, reason: need(o.reason, "--reason") });
