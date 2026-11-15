@@ -19,7 +19,7 @@ export const MOON_TRANSITIONS: Record<string, Partial<Record<MoonStatus | "barre
   "verdict.issued:FIX": { reviewing: "audited" },
   "verdict.issued:REJECT": { reviewing: "quarantined" },
   "moon.merged": { reviewing: "merged" },
-  "moon.adrift": { implementing: "adrift", audited: "adrift", reviewing: "adrift" },
+  "moon.adrift": { implementing: "adrift", audited: "adrift", reviewing: "adrift", emitted: "adrift", gated: "adrift", adrift: "adrift", quarantined: "quarantined" },
   "moon.dropped": { adrift: "dropped", quarantined: "dropped" },
 };
 

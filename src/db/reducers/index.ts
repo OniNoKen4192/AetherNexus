@@ -6,6 +6,12 @@ import { shipReducers } from "./ships.js";
 import { voyageReducers } from "./voyages.js";
 import { verdictReducers } from "./verdicts.js";
 import { decisionReducers } from "./decisions.js";
-// tree.written only marks a path the system itself wrote into the main tree; nothing is projected from it.
-const treeReducers: Record<string, Reducer> = { "tree.written": () => {} };
+const treeReducers: Record<string, Reducer> = {
+  // tree.written only marks a path the system itself wrote into the main tree; nothing is projected from it.
+  "tree.written": () => {},
+  // scheduler.acted records scheduler activity for the event log; nothing is projected from it.
+  "scheduler.acted": () => {},
+  // config.changed records configuration changes for the event log; nothing is projected from it.
+  "config.changed": () => {},
+};
 export const REDUCERS: Record<string, Reducer> = { ...treeReducers, ...systemReducers, ...planetReducers, ...moonReducers, ...shipReducers, ...voyageReducers, ...verdictReducers, ...decisionReducers };

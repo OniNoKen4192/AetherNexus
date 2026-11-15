@@ -34,6 +34,14 @@ function requireParked(moon: MoonRow, verb: string): void {
   if (moon.status !== "adrift" && moon.status !== "quarantined") throw new Refusal(`moon ${moon.task_id} is '${moon.status}' — only an adrift or quarantined moon can be ${verb}`);
 }
 
+/** Park a moon that has no live voyage: moon.adrift + an 'adrift' decision. Legal from emitted, gated, audited, reviewing, adrift, quarantined. */
+export function parkMoonOnly(g: Galaxy, p: { taskId: string; reason: string; details: string }): void {
+  const moon = loadMoon(g, p.taskId);
+  const scope = moonScope(g, moon);
+  append(g.db, { kind: "moon.adrift", ...scope, payload: { reason: p.reason } });
+  append(g.db, { kind: "decision.opened", ...scope, payload: { kind: "adrift", target_kind: "moon", target_id: p.taskId, reasoning: `${p.reason}: ${p.details}` } });
+}
+
 export function replyMoon(g: Galaxy, input: { taskId: string; note: string }): { round: number } {
   requireTreeAnswered(g, input.taskId);
   const moon = loadMoon(g, input.taskId);
