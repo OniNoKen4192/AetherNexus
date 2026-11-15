@@ -125,3 +125,13 @@ DEVIATIONS: <anything done differently than specified, and why — or "none".
   non-empty list>
 BLOCKED_REASON: <only if BLOCKED: what was needed that the spec didn't provide>
 ```
+
+## Amendments
+
+### A1 — 2026-11-15 — accepted deviation
+- **Original sha256**: d743d2b459634935c1bdcac65c1a13d001b22936bededdca245c3aad1f6d6a27
+- **Verdict ref**: accepted in the FIX verdict (first review) and carried unchanged into the APPROVE verdict after fix round 1; task V1-SCHEDULER.08; lanes-reviewer
+- **Deviation**: `Cancel` also calls `command.clear()`; the select carries `className="field"`; the text `rung: ` and the select are wrapped in `<label className="rung-control">` in addition to the select's `aria-label="Trust rung"`.
+- **Reason accepted**: neutral. The error is already cleared by any choice; `.field` is the listed class for selects; the label groups the text with the control for wrapping and does not change the accessible name.
+- **Affected paths**: `web/src/components/Header.tsx`, `web/src/style.css`
+- **Acceptance criteria**: unchanged
