@@ -11,6 +11,8 @@ import { COOKIE_NAME, checkRequest, isApiPath, rawPath, tokenMatches } from "./a
 import { createFeed, type Feed } from "./feed.js";
 import { BadRequest, errorResponse, runCommand } from "./commands.js";
 import { createVoyageRunner, type VoyageRunner } from "./runner.js";
+import { createScheduler } from "../scheduler/loop.js";
+import { plan } from "../scheduler/plan.js";
 
 export { checkRequest } from "./auth.js";
 
@@ -34,7 +36,14 @@ function sendText(res: http.ServerResponse, status: number, text: string, extra:
  */
 const API_ROUTES: Record<string, ApiHandler> = {
   "GET /api/ping": ({ res }) => sendJson(res, 200, { ok: true }),
-  "GET /api/snapshot": ({ g, res, runner }) => sendJson(res, 200, snapshot(g, { ownPid: process.pid, failures: runner.failures(), tracks: (id) => runner.tracks(id) })),
+  "GET /api/snapshot": ({ g, res, runner }) => {
+    const owner = { ownPid: process.pid, tracks: (id: string) => runner.tracks(id) };
+    // What raising the rung to roundabout would start right now, whatever the rung is.
+    // If planning fails the scheduler's own pass shows the notice; the page must still load.
+    let readyToSend = 0;
+    try { readyToSend = plan(g, { ...owner, rung: "roundabout" }).filter((a) => a.action === "launch" && a.first).length; } catch { /* reported by the scheduler */ }
+    sendJson(res, 200, snapshot(g, { ...owner, failures: runner.failures(), readyToSend }));
+  },
   "GET /api/events": ({ req, res, query, feed }) => feed.handle(req, res, query),
 };
 type PrefixApiHandler = (ctx: ApiContext, remainder: string) => void | Promise<void>;
@@ -116,7 +125,7 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, webRoo
   res.end(req.method === "HEAD" ? undefined : body);
 }
 
-export async function startServer(g: Galaxy, opts: { port?: number; token?: string; webRoot?: string; pollMs?: number } = {}): Promise<NexusServer> {
+export async function startServer(g: Galaxy, opts: { port?: number; token?: string; webRoot?: string; pollMs?: number; schedulerTickMs?: number } = {}): Promise<NexusServer> {
   const wantPort = opts.port ?? g.config.server.port;
   const token = opts.token ?? crypto.randomBytes(32).toString("hex");
   const webRoot = opts.webRoot ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "web");
@@ -172,10 +181,15 @@ export async function startServer(g: Galaxy, opts: { port?: number; token?: stri
   state.port = port;
   if (port !== wantPort) lock.setPort(port);
 
+  const scheduler = createScheduler(g, { runner, pollMs: opts.pollMs ?? 250, tickMs: opts.schedulerTickMs ?? 5000 });
+  scheduler.wake();
+
   let closing: Promise<void> | undefined;
   return {
     port, token, url: `http://127.0.0.1:${port}/?token=${token}`,
     close: () => closing ??= (async () => {
+      // The scheduler first, so nothing new is started while the voyages in flight are being interrupted.
+      await scheduler.stop();
       await runner.abortAll();
       feed.close();
       await new Promise<void>((resolve) => {

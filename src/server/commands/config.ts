@@ -121,6 +121,10 @@ export function setAutomationLevel(
 
   if (result.changed) {
     append(g.db, { kind: "config.changed", payload: { key: "automation.level", from, to: level, pid: process.pid } });
+  } else {
+    // The file already says this level, perhaps by a hand edit this process has not read yet: "unchanged" must still
+    // mean the running process is at that level. The file was validated just above, so the reload cannot fail on content.
+    reloadConfig(g);
   }
   return result;
 }

@@ -18,6 +18,8 @@ export type Failure = { ts: string; taskId: string; voyageId: string | null; mes
 export type Action = "launch" | "inspect" | "dock" | "reply" | "drop" | "park_stale" | "cancel" | "answer";
 export type Snapshot = {
   cursor: number; repo: string; rung: string;
+  /** First freighters that would be sent right now if the rung were roundabout; 0 when the caller did not supply it. */
+  ready_to_send: number;
   limits: { max_concurrent_ships: number; per_provider_max: Record<string, number>; in_flight: number };
   roles: { implement: string[]; review: string[] };
   systems: (Row & { planets: (Row & { moons: Row[] })[] })[];
@@ -68,7 +70,7 @@ function specEntries(g: Galaxy, assigned: Set<string>): SpecEntry[] {
   return out;
 }
 
-export function snapshot(g: Galaxy, ctx: OwnerCtx & { failures: Failure[] }): Snapshot {
+export function snapshot(g: Galaxy, ctx: OwnerCtx & { failures: Failure[]; readyToSend?: number }): Snapshot {
   const cursor = g.db.get<{ id: number }>("events.maxId")?.id ?? 0;
   const systems = g.db.all("systems.all").map((s) => {
     const shown = showSystem(g, String(s["id"]));
@@ -84,7 +86,7 @@ export function snapshot(g: Galaxy, ctx: OwnerCtx & { failures: Failure[] }): Sn
   }
   const inFlight = g.db.all("voyages.inFlight");
   return {
-    cursor, repo: path.basename(g.repoRoot), rung: g.config.automation.level,
+    cursor, repo: path.basename(g.repoRoot), rung: g.config.automation.level, ready_to_send: ctx.readyToSend ?? 0,
     limits: { max_concurrent_ships: g.config.scheduler.max_concurrent_ships, per_provider_max: g.config.scheduler.per_provider_max, in_flight: inFlight.length },
     roles: { implement: g.config.roles.implement, review: g.config.roles.review }, systems,
     voyages: withOwner(g, rawVoyages, ctx), fleet: g.db.all("ships.all"), decisions: g.db.all("decisions.pending"),

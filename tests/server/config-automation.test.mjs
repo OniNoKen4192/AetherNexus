@@ -144,3 +144,22 @@ test("reloadConfig leaves memory untouched for invalid and missing files", async
     });
   }
 });
+
+test("setting the rung the file was hand-edited to brings the running config along", async () => {
+  const w = await makeGalaxy(withTwoProviders);
+  try {
+    const file = configJson(w);
+    file.automation = { ...file.automation, level: "verdicts" };
+    fs.writeFileSync(configPath(w), JSON.stringify(file, null, 2) + "\n");
+    assert.equal(w.g.config.automation.level, "manual", "the hand edit has not been read yet");
+    const bytes = configText(w);
+    const before = events(w).length;
+
+    assert.deepEqual(setAutomationLevel(w.g, { level: "verdicts" }), { level: "verdicts", from: "verdicts", changed: false });
+    assert.equal(w.g.config.automation.level, "verdicts");
+    assert.equal(configText(w), bytes);
+    assert.equal(events(w).length, before);
+  } finally {
+    w.cleanup();
+  }
+});
