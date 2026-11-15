@@ -187,8 +187,8 @@ test("global, provider, and idle-freighter capacity limit first freighters", asy
 
 test("result order is dock, inspect, later launch, then first launches by assignment", async () => {
   const moons = [
-    { taskId: "DOCK" }, { taskId: "INSPECT" }, { taskId: "FIX", script: "fix-round" },
-    { taskId: "FIRST1" }, { taskId: "FIRST2" },
+    { taskId: "FIRST1" }, { taskId: "FIX", script: "fix-round" }, { taskId: "INSPECT" },
+    { taskId: "DOCK" }, { taskId: "FIRST2" },
   ];
   await withWorld(() => world(moons, { freighters: 5, customs: 2, max: 10 }), async (w) => {
     await launchMoon(w.g, { taskId: "DOCK", provider: "fake" });
@@ -196,10 +196,14 @@ test("result order is dock, inspect, later launch, then first launches by assign
     await launchMoon(w.g, { taskId: "INSPECT", provider: "fake" });
     await launchMoon(w.g, { taskId: "FIX", provider: "fake" });
     await inspectMoon(w.g, { taskId: "FIX", provider: "fake", reviewScript: "review-fix" });
-    assert.deepEqual(plan(w.g, ctx("roundabout")), [
+    const before = w.g.db.get("events.maxId").id;
+    const planned = plan(w.g, ctx("roundabout"));
+    const after = w.g.db.get("events.maxId").id;
+    assert.deepEqual(planned, [
       action("dock", "DOCK"), action("inspect", "INSPECT"), action("launch", "FIX"),
       action("launch", "FIRST1", true), action("launch", "FIRST2", true),
     ]);
+    assert.equal(after, before);
   });
 });
 
