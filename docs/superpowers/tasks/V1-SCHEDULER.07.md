@@ -125,3 +125,11 @@ DEVIATIONS: <anything done differently than specified, and why — or "none".
   non-empty list>
 BLOCKED_REASON: <only if BLOCKED: what was needed that the spec didn't provide>
 ```
+
+## Amendments
+
+### A1 — 2026-11-15 — planner correction before dispatch
+- **Corrects**: the `writeSpecs` doc comment under Interfaces ("Each spec gets its own Touch paths (e.g. src/lib/<id>.js and its test) so moons do not collide").
+- **Correction**: every spec written by `writeSpecs` keeps the Touch list of `tests/fixtures/specs/good-basic.md` unchanged (`src/lib/thing.js`, `src/lib/thing.test.js`). The fake scripts write exactly those two paths, so a spec with any other Touch list is parked by the audit as out of scope. Build each spec body from `good-basic.md` the way `worldWithTwoMoons` in `tests/fixtures/world.mjs` does (Task ID replaced by `writeSpec`, the `Depends on` line replaced with the entry's deps or `none`, one `<!-- FAKE-SCRIPT: name -->` comment per script).
+- **Why this is safe**: several moons on one planet writing the same content to the same files all settle; `tests/server/scheduler-loop.test.mjs` ("caps: never more than max_concurrent_ships in flight") does this with three moons.
+- **Acceptance criteria**: unchanged.
