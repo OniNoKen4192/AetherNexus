@@ -6,13 +6,16 @@ export function Header({ b }: { b: Bridge }) {
   const snapshot = b.snapshot;
   const command = useCommand(b);
   const [pending, setPending] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const readyToSend = snapshot !== null && typeof snapshot.ready_to_send === "number" ? snapshot.ready_to_send : 0;
 
   const changeRung = async (level: string) => {
     command.clear();
     setPending(level);
-    if (level === "roundabout" && snapshot !== null) {
-      const readyToSend = typeof snapshot.ready_to_send === "number" ? snapshot.ready_to_send : 0;
-      if (readyToSend > 0) return;
+    setConfirming(false);
+    if (level === "roundabout" && readyToSend > 0) {
+      setConfirming(true);
+      return;
     }
     await command.send("config.automation", { level });
     setPending(null);
@@ -20,6 +23,7 @@ export function Header({ b }: { b: Bridge }) {
 
   const raise = async () => {
     await command.send("config.automation", { level: "roundabout" });
+    setConfirming(false);
     setPending(null);
   };
 
@@ -57,14 +61,15 @@ export function Header({ b }: { b: Bridge }) {
             <span>
               in flight {snapshot.limits.in_flight}/{snapshot.limits.max_concurrent_ships}
             </span>
-            {pending === "roundabout" && (typeof snapshot.ready_to_send === "number" ? snapshot.ready_to_send : 0) > 0 && (
+            {confirming && (
               <span className="rung-confirmation">
                 <span>
-                  Raising to roundabout sends {snapshot.ready_to_send}{snapshot.ready_to_send === 1 ? " freighter now." : " freighters now."}
+                  Raising to roundabout sends {readyToSend}{readyToSend === 1 ? " freighter now." : " freighters now."}
                 </span>
                 <button className="btn" type="button" disabled={command.busy} onClick={() => void raise()}>Raise</button>
                 <button className="btn" type="button" disabled={command.busy} onClick={() => {
                   command.clear();
+                  setConfirming(false);
                   setPending(null);
                 }}>Cancel</button>
               </span>
