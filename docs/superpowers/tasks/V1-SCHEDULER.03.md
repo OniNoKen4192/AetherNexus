@@ -125,3 +125,21 @@ DEVIATIONS: <anything done differently than specified, and why — or "none".
   non-empty list>
 BLOCKED_REASON: <only if BLOCKED: what was needed that the spec didn't provide>
 ```
+
+## Amendments
+
+### A1 — 2026-11-15 — accepted deviation
+- **Original sha256**: d1156ca1439ffe7dfa95ca2efafa71d3e94adc9f374f50438dec3d295e8e2514
+- **Verdict ref**: APPROVE, V1-SCHEDULER.03, lanes-reviewer (first pass)
+- **Deviation**: The test for criterion 2 locates the most recent `config.changed` event (`findLastIndex`) and asserts its payload; it does not assert that this event is the last row of the event log.
+- **Reason accepted**: The implementation satisfies the criterion as written (reviewer probe: a change appends exactly `tree.written` then `config.changed`, and `config.changed` is the final event). No consumer in the parent plan depends on the event being last. Tightening is recorded as a Minor for the final review.
+- **Affected paths**: tests/server/config-automation.test.mjs
+- **Acceptance criteria**: Criterion 2 as tested reads: "After a change, the most recent `config.changed` event has payload `{ key: "automation.level", from: "manual", to: "verdicts", pid: process.pid }`." All other criteria unchanged.
+
+### A2 — 2026-11-15 — accepted deviation
+- **Original sha256**: d1156ca1439ffe7dfa95ca2efafa71d3e94adc9f374f50438dec3d295e8e2514
+- **Verdict ref**: APPROVE, V1-SCHEDULER.03, lanes-reviewer (first pass)
+- **Deviation**: `setRoleOrder`, moved onto the shared private helper `updateDiskConfig`, returns `{ roles }` computed from the validated candidate before the write (`normalizedOrRefusal(candidate).roles`) instead of `g.config.roles`. The value is deep-equal; it is no longer the same object as `g.config.roles`.
+- **Reason accepted**: Neutral consequence of the mandated shared helper. A 31-scenario differential run against the base build showed identical results, refusal messages, file bytes, `g.config`, events and temp-file cleanup; the only difference is object identity. The sole caller (`src/server/http/commands.ts`, `config.roles`) passes the result on for serialisation. `tests/server/config-roles.test.mjs` passes unmodified.
+- **Affected paths**: src/server/commands/config.ts
+- **Acceptance criteria**: unchanged
