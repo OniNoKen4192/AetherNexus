@@ -9,7 +9,7 @@ export type Failure = { ts: string; taskId: string; voyageId: string | null; mes
 export type Action = "launch" | "inspect" | "dock" | "reply" | "drop" | "park_stale" | "cancel" | "answer";
 
 export type Snapshot = {
-  cursor: number; repo: string; rung: string;
+  cursor: number; repo: string; rung: string; ready_to_send: number;
   limits: { max_concurrent_ships: number; per_provider_max: Record<string, number>; in_flight: number };
   roles: { implement: string[]; review: string[] };
   systems: (Row & { planets: (Row & { moons: Row[] })[] })[];
