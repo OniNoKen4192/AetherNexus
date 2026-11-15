@@ -467,3 +467,18 @@ Stress-test target: 15 ships in flight, ~50 moons across 3 systems, 60 fps on a 
 | **v2 — Providers** | Gemini + OpenCode/Goose ACP adapters, OpenRouter/local endpoints, free housekeeping, matrix reroute under limiter | a stress run with ≥10 ships across ≥3 providers holds 60 fps and never spends reserve |
 
 Viz last on purpose: it's a projection of the event log, and the log has to be right first. The fake adapter gives the viz realistic data to develop against without burning anything.
+
+### 14.1 v1 slice order (decided 2026-11-14)
+
+v1 is several separate projects. Each gets its own design doc and plan, built in this order:
+
+| # | Slice | Why here |
+|---|---|---|
+| 1 | Scheduler and the lower rungs (`verdicts`, `roundabout`); rung selector on the Bridge | As of v0.5 nothing launches a moon when its dependencies dock and nothing acts on a verdict without a click; the rung is stored and shown but changes no behaviour. Every later slice needs this. Provable on the fake adapter, so it spends nothing. |
+| 2 | Fuel readings and the limiter; fuel gauge on the Bridge | Every adapter's `fuel()` returns `unknown` as of v0.5, so estimation from usage events comes with it. In place before any real provider runs unattended. |
+| 3 | Intake adapters; `triage`, `decompose`, `plan` roles; `approve_map`; `highways` | Produces stream maps, which need slice 1 to be flown. |
+| 4 | Gravity and `autopilot` | The gravity gate is part of autopilot's safety floor (§7). |
+| 5 | Bug path with the repro invariant | Same pipeline plus three server-enforced rules (§6.5). |
+| 6 | Drydock | Close-out ritual; depends on nothing above. |
+
+Considered and not chosen: fuel and limiter first, so the spend guard exists before any automation. Rejected because slice 1 is proven on the fake adapter, and a limiter hold has no meaning while every launch is a human click.
