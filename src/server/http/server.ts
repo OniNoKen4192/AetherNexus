@@ -68,22 +68,29 @@ const API_PREFIX_ROUTES: Record<string, PrefixApiHandler> = {
 };
 
 const MAX_COMMAND_BODY = 1024 * 1024;
+/** How much of an oversized body is read and thrown away so the client can finish sending before the 413. */
+const MAX_DISCARDED_BODY = 16 * MAX_COMMAND_BODY;
 async function readJsonBody(req: http.IncomingMessage): Promise<{ tooLarge: true } | { tooLarge: false; body: unknown }> {
   return await new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
     const onData = (chunk: Buffer) => {
       size += chunk.length;
-      if (size > MAX_COMMAND_BODY) {
+      if (size <= MAX_COMMAND_BODY) { chunks.push(chunk); return; }
+      // Too large: stop buffering but keep reading to the end before answering. Answering while the client is
+      // still sending closes the connection under its writes, and it sees a reset instead of the 413.
+      chunks.length = 0;
+      if (size > MAX_DISCARDED_BODY) {
+        // Not worth reading further: answer now and discard whatever else arrives.
         req.off("data", onData);
         req.on("data", () => { /* discard the remainder without buffering it */ });
         req.resume();
         resolve({ tooLarge: true });
-      } else chunks.push(chunk);
+      }
     };
     req.on("data", onData);
     req.once("end", () => {
-      if (size > MAX_COMMAND_BODY) return;
+      if (size > MAX_COMMAND_BODY) return resolve({ tooLarge: true });
       try { resolve({ tooLarge: false, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) }); }
       catch { reject(new BadRequest("body is not valid JSON")); }
     });
