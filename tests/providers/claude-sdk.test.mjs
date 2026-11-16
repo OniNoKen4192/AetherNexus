@@ -41,6 +41,49 @@ test("mapMessage: assistant text/tool_use, result → usage + done with parsed r
   const tr = mapMessage(ur, "implement")[0]; assert.equal(tr.kind, "tool_result"); assert.equal(tr.data.ok, false); assert.equal(tr.data.output.length, 2000);
 });
 
+const rateLimit = (rate_limit_info) => mapMessage({ type: "rate_limit_event", rate_limit_info, session_id: "s", uuid: "u" }, "implement");
+
+test("rate limit fuel identifies each window and per-model family", () => {
+  for (const [window, family] of [["five_hour", undefined], ["seven_day", undefined], ["seven_day_opus", "opus"], ["seven_day_sonnet", "sonnet"]]) {
+    const fuel = rateLimit({ status: "allowed", rateLimitType: window, utilization: 0.4 })[0];
+    assert.equal(fuel.kind, "fuel"); assert.equal(fuel.data.window, window); assert.equal(fuel.data.model_family, family);
+  }
+});
+
+test("rate limit fuel uses unknown for an absent type and excludes overage", () => {
+  assert.equal(rateLimit({ status: "allowed", utilization: 0.4 })[0].data.window, "unknown");
+  assert.deepEqual(rateLimit({ status: "allowed", rateLimitType: "overage", utilization: 0.4 }).map((e) => e.kind), ["text"]);
+});
+
+test("rate limit fuel accepts finite nonnegative fractional or percentage utilization", () => {
+  for (const utilization of [undefined, NaN, -0.1, "0.4", Infinity]) {
+    assert.equal(rateLimit({ status: "allowed", utilization }).some((e) => e.kind === "fuel"), false, String(utilization));
+  }
+  for (const [utilization, used] of [[0.4, 0.4], [1, 1], [40, 0.4], [140, 1]]) {
+    assert.equal(rateLimit({ status: "allowed", utilization })[0].data.used, used);
+  }
+});
+
+test("rate limit reset accepts seconds or milliseconds and drops invalid values", () => {
+  const expected = new Date(1795186480000).toISOString();
+  for (const resetsAt of [1795186480, 1795186480000]) assert.equal(rateLimit({ status: "allowed", utilization: 0.4, resetsAt })[0].data.resets_at, expected);
+  for (const resetsAt of [0, -5, NaN]) assert.equal("resets_at" in rateLimit({ status: "allowed", utilization: 0.4, resetsAt })[0].data, false);
+});
+
+test("rejected rate limits emit fuel before error and retain reset and family without fuel", () => {
+  const resets_at = new Date(1795186480000).toISOString();
+  const withFuel = rateLimit({ status: "rejected", rateLimitType: "seven_day_opus", utilization: 40, resetsAt: 1795186480 });
+  assert.deepEqual(withFuel.map((e) => e.kind), ["fuel", "error"]); assert.equal(withFuel[1].data.classification, "rate_limited");
+  assert.equal(withFuel[1].data.resets_at, resets_at); assert.equal(withFuel[1].data.model_family, "opus");
+  const withoutFuel = rateLimit({ status: "rejected", rateLimitType: "seven_day_sonnet", resetsAt: 1795186480000 });
+  assert.deepEqual(withoutFuel.map((e) => e.kind), ["error"]); assert.equal(withoutFuel[0].data.resets_at, resets_at); assert.equal(withoutFuel[0].data.model_family, "sonnet");
+});
+
+test("allowed rate limits emit fuel before status text", () => {
+  const events = rateLimit({ status: "allowed", utilization: 0.4 });
+  assert.deepEqual(events.map((e) => e.kind), ["fuel", "text"]); assert.equal(events[1].data.text, "rate limit status: allowed");
+});
+
 const okResult = { type: "result", subtype: "success", session_id: "s", num_turns: 1, total_cost_usd: 0, usage: {}, result: "STATUS: IMPLEMENTED" };
 const job = { voyageId: "v", role: "implement", specPath: "s", specText: "", prompt: "P", round: 2, previousSessionId: "prev" };
 const ctx = (signal = new AbortController().signal) => ({ cwd: "/wt", touch: ["src/**"], timeoutMs: 1000, signal });
@@ -57,6 +100,16 @@ test("adapter wires query options: cwd, env, strictMcpConfig, settingSources, ho
   await run(a, { ...job, role: "review" }); assert.deepEqual(seen.options.tools, ["Read", "Grep", "Glob", "Bash"]); assert.deepEqual(seen.options.allowedTools, seen.options.tools);
   assert.equal(a.classify(new Error("rate limit exceeded (429)")), "rate_limited"); assert.equal(a.classify(new Error("ECONNRESET")), "backend_failure");
   assert.equal(a.classify(new Error("overloaded")), "capacity"); assert.equal(a.classify(new Error("???")), "unknown");
+});
+test("adapter prefers the job model, falls back to frontier, and omits an absent model", async () => {
+  const optionsFor = async (config, dispatchedJob = job) => {
+    let options; const fakeQuery = (args) => { options = args.options; return (async function* () { yield okResult; })(); };
+    await run(createClaudeAdapter("claude", config, { query: fakeQuery }), dispatchedJob);
+    return options;
+  };
+  assert.equal((await optionsFor({ adapter: "claude-sdk", auth: "login", models: { frontier: "m1" } }, { ...job, model: "m-cheap" })).model, "m-cheap");
+  assert.equal((await optionsFor({ adapter: "claude-sdk", auth: "login", models: { frontier: "m1" } })).model, "m1");
+  assert.equal("model" in await optionsFor({ adapter: "claude-sdk", auth: "login" }), false);
 });
 test("iterator that yields a result then throws yields exactly one done and no extra error", async () => {
   const fakeQuery = () => (async function* () { yield okResult; throw new Error("Claude Code returned an error result: boom"); })();
