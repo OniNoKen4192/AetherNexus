@@ -2,7 +2,7 @@ import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { ProviderConfig } from "../../config/schema.js";
 import { parseImplementReport, parseReviewReport } from "../adapter.js";
-import type { AgentEvent, ErrorClass, FuelReading, Job, DispatchCtx, ProviderAdapter, Role } from "../adapter.js";
+import type { AgentEvent, ErrorClass, Job, DispatchCtx, ProviderAdapter, Role } from "../adapter.js";
 import { makeBashGitGate, makeTouchGate, WRITE_TOOLS } from "./gate-hook.js";
 
 export { makeBashGitGate, makeTouchGate };
@@ -98,7 +98,6 @@ export function createClaudeAdapter(id: string, cfg: ProviderConfig, deps: { que
   return {
     id, roles: ["implement", "review"],
     classify,
-    async fuel(): Promise<FuelReading> { return { source: "unknown" }; },
     async *dispatch(job: Job, ctx: DispatchCtx): AsyncIterable<AgentEvent> {
       let built: ReturnType<typeof buildEnv>;
       try { built = buildEnv(cfg, process.env); } catch (e) { yield errEvent("unknown", e instanceof Error ? e.message : String(e)); return; }

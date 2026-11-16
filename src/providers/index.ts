@@ -9,14 +9,13 @@ function placeholder(id: string): ProviderAdapter {
     id, roles: ["implement", "review"],
     dispatch(): never { throw new Error(`adapter '${id}' not implemented yet`); },
     classify() { return "unknown"; },
-    async fuel() { return { source: "unknown" as const }; },
   };
 }
 
 export function buildAdapters(config: NexusConfig, deps: { scriptsDir: string }): Record<string, ProviderAdapter> {
   const out: Record<string, ProviderAdapter> = {};
   for (const [id, p] of Object.entries(config.providers)) {
-    out[id] = p.adapter === "fake" ? createFakeAdapter(deps.scriptsDir) : p.adapter === "claude-sdk" ? createClaudeAdapter(id, p) : p.adapter === "codex-mcp" ? createCodexAdapter(id, p) : placeholder(p.adapter);
+    out[id] = p.adapter === "fake" ? createFakeAdapter(deps.scriptsDir, { id }) : p.adapter === "claude-sdk" ? createClaudeAdapter(id, p) : p.adapter === "codex-mcp" ? createCodexAdapter(id, p) : placeholder(p.adapter);
   }
   return out;
 }

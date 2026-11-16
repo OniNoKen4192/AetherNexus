@@ -96,6 +96,7 @@ function streamEvent(e: AgentEvent): void {
     case "tool_result": summary = e.data.ok ? "ok" : "failed"; break;
     case "file_changed": summary = e.data.path; break;
     case "usage": summary = `in=${e.data.input_tokens ?? 0} out=${e.data.output_tokens ?? 0}`; break;
+    case "fuel": summary = `${e.data.window} ${Math.round(e.data.used * 100)}% used`; break;
     case "done": { const r = e.data.report as { status?: string; verdict?: string }; summary = r.status ?? r.verdict ?? ""; break; }
     case "error": summary = `${e.data.classification}: ${e.data.message}`; break;
   }
