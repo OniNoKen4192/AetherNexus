@@ -34,6 +34,14 @@ function requireParked(moon: MoonRow, verb: string): void {
   if (moon.status !== "adrift" && moon.status !== "quarantined") throw new Refusal(`moon ${moon.task_id} is '${moon.status}' — only an adrift or quarantined moon can be ${verb}`);
 }
 
+/** Park a moon that has no live voyage: moon.adrift + an 'adrift' decision. Legal from emitted, gated, audited, reviewing, adrift, quarantined. */
+export function parkMoonOnly(g: Galaxy, p: { taskId: string; reason: string; details: string }): void {
+  const moon = loadMoon(g, p.taskId);
+  const scope = moonScope(g, moon);
+  append(g.db, { kind: "moon.adrift", ...scope, payload: { reason: p.reason } });
+  append(g.db, { kind: "decision.opened", ...scope, payload: { kind: "adrift", target_kind: "moon", target_id: p.taskId, reasoning: `${p.reason}: ${p.details}` } });
+}
+
 export function replyMoon(g: Galaxy, input: { taskId: string; note: string }): { round: number } {
   requireTreeAnswered(g, input.taskId);
   const moon = loadMoon(g, input.taskId);
@@ -75,9 +83,10 @@ export function dropMoon(g: Galaxy, input: { taskId: string }): { moonId: string
 
 /**
  * Park a moon whose voyage's process died (crash, kill -9, reboot): the voyage is still 'launched'/'working' in the log
- * but nothing is driving it. Human-invoked; appends the standard park sequence with reason `stale:<text>`.
+ * but nothing is driving it. Invoked by a human, or by the scheduler (which says so in `details`); appends the standard park
+ * sequence with reason `stale:<text>`.
  */
-export function parkStaleMoon(g: Galaxy, input: { taskId: string; reason: string }): { voyageId: string; reason: string } {
+export function parkStaleMoon(g: Galaxy, input: { taskId: string; reason: string; details?: string }): { voyageId: string; reason: string } {
   const moon = loadMoon(g, input.taskId);
   if (moon.status !== "implementing" && moon.status !== "reviewing") throw new Refusal(`moon ${moon.task_id} is '${moon.status}' — only an implementing or reviewing moon has a voyage to park`);
   const voyages = g.db.all<VoyageRow>("voyages.byAssignment", { assignment_id: moon.assignment_id });
@@ -86,7 +95,7 @@ export function parkStaleMoon(g: Galaxy, input: { taskId: string; reason: string
   const note = input.reason.replace(/\s+/g, " ").trim();
   if (!note) throw new Refusal("a reason is required");
   const reason = `stale:${note}`;
-  parkVoyage(g, { taskId: moon.task_id, voyageId: latest.id, shipId: latest.ship_id, reason, details: "parked by hand: the voyage's process is gone" });
+  parkVoyage(g, { taskId: moon.task_id, voyageId: latest.id, shipId: latest.ship_id, reason, details: input.details ?? "parked by hand: the voyage's process is gone" });
   return { voyageId: latest.id, reason };
 }
 

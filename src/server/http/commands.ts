@@ -2,7 +2,7 @@ import path from "node:path";
 import { GitRefusal } from "../../core/git.js";
 import { TransitionRefused } from "../../core/transitions.js";
 import { assignMoon, assignPlanet } from "../commands/assign.js";
-import { setRoleOrder } from "../commands/config.js";
+import { setAutomationLevel, setRoleOrder } from "../commands/config.js";
 import { answerDecision } from "../commands/decision.js";
 import { dockMoon } from "../commands/dock.js";
 import { launchMoon } from "../commands/launch.js";
@@ -49,6 +49,7 @@ const COMMANDS: Record<string, Definition> = {
   } },
   "fleet.retire": { fields: { shipId: s(), reason: s() }, run: (g, _r, i) => { retireShip(g, i as Parameters<typeof retireShip>[1]); return { retired: true }; } },
   "config.roles": { fields: { role: s(false, ["implement", "review"]), order: strings() }, run: (g, _r, i) => setRoleOrder(g, i as Parameters<typeof setRoleOrder>[1]) },
+  "config.automation": { fields: { level: s() }, run: (g, _r, i) => setAutomationLevel(g, i as Parameters<typeof setAutomationLevel>[1]) },
   "decision.answer": { fields: { decisionId: { type: "integer" }, answer: s(false, ["mine", "not_mine"]) }, run: (g, _r, i) => answerDecision(g, i as Parameters<typeof answerDecision>[1]) },
 };
 

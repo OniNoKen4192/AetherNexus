@@ -29,6 +29,9 @@ code { font-family: var(--mono); }
 .row.selected { background: var(--selected); }
 
 .badge { display: inline-block; padding: 0 7px; border-radius: 999px; border: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+.waiting-label { max-width: 100%; white-space: normal; overflow-wrap: anywhere; border-radius: 10px; }
+.system-moons .row:has(> .waiting-label) { flex-wrap: wrap; }
+.moon-detail > .waiting-label { display: block; width: fit-content; margin-bottom: 4px; }
 
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
 .tab { padding: 4px 10px; border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; border-bottom: 2px solid transparent; }
@@ -49,7 +52,10 @@ textarea.field { font-family: inherit; resize: vertical; }
 .bridge-header { border-radius: 0; border-width: 0 0 1px; }
 .bridge-header-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .bridge-header h1 { margin: 0; font-size: 18px; }
-.bridge-summary { display: flex; align-items: center; gap: 16px; margin-top: 6px; color: var(--muted); }
+.bridge-summary { display: flex; align-items: center; gap: 16px; margin-top: 6px; color: var(--muted); flex-wrap: wrap; }
+.rung-control { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.rung-control .field { width: auto; max-width: 100%; min-width: 0; }
+.rung-confirmation { display: flex; align-items: center; gap: 8px; flex-basis: 100%; flex-wrap: wrap; }
 .connection.live { color: var(--ok); border-color: var(--ok); }
 .connection.waiting { color: var(--warn); border-color: var(--warn); }
 

@@ -22,16 +22,19 @@ Fork of Lanes (https://github.com/OniNoKen4192/Lanes), a Claude Code plugin for 
 - Record divergences from upstream here as they're decided (architecture, renamed modules, dropped features).
 - v0 (2026-10-14): `bin/lanes-validate.mjs` and `hooks/` retired; ported to `src/validate`, `src/core/git.ts`, `src/providers/claude-sdk/gate-hook.ts`.
 - v0.5 (2026-11-13): `nexus serve` — loopback HTTP server (`src/server/http/`) plus the Bridge page (`web/`, Preact + Vite, built to `dist/web`). The feed is server-sent events, not the WebSocket the parent design first named; commands are HTTP POST. Voyages run concurrently; the single-flight git log is replaced by a per-voyage scope (`withGitLog`). Fuel, limiter and rung selector deferred to v1.
+- v1 slice 1 (2026-11-15): the scheduler lives in `src/server/scheduler/` (`plan.ts` decides, `loop.ts` acts) and runs only inside `nexus serve`. `automation.level` now changes behaviour: `manual` does nothing by itself, `verdicts` inspects, docks and re-runs fixes after a human sent the first freighter, `roundabout` also sends the first freighter to every ready moon; `highways` and `autopilot` load as `roundabout` and cannot be selected yet. A first freighter is refused until the moon's dependencies are settled, at every rung. An action refused twice in a row parks the moon (`scheduler_refused` / `scheduler_error`). Design: `docs/superpowers/specs/2026-11-14-v1-scheduler-design.md`.
 
 ## Commands
 - `npm install` (SDK + MCP client deps; Preact + Vite as dev deps); `npm run build` (tsc to `dist/`, then `npm run build:web` builds the Bridge page from `web/` to `dist/web`).
-- `npm test`: full suite, ~70 s, builds first. One area: `npm test -- "tests/<dir>/*.test.mjs"` (Node 22.14 rejects a bare directory argument).
+- `npm test`: full suite, ~105 s, builds first. One area: `npm test -- "tests/<dir>/*.test.mjs"` (Node 22.14 rejects a bare directory argument).
 - Real adapters: `NEXUS_LIVE=1 npm test -- "tests/live/*.test.mjs"`. Never CI; spends the user's pool, so ask first.
 - Validator selftest: `node dist/cli/main.js validate --selftest`
 - Bridge: `node dist/cli/main.js serve [--port <n>]` (127.0.0.1, default 7341; open the printed URL). Also `nexus events --follow` and `nexus decision answer <id> --mine | --not-mine`.
+- Trust rung: `nexus config set trust <manual|verdicts|roundabout>` (a running server picks the change up), or the selector in the Bridge header.
 - CI (`.github/workflows/ci.yml`) runs the suite on Linux, Windows and macOS.
 
 ## Gotchas
 - `npm test` builds first; a stale `dist/` is the usual cause of a test importing a function that "does not exist".
 - `node:sqlite` prints an ExperimentalWarning unless run via the npm scripts or the `nexus` entry.
+- `npm install` / `npm audit fix` on Windows can drop the optional `@emnapi/core` and `@emnapi/runtime` lock entries, and `npm ci` then fails on Linux and macOS CI: check `git diff package-lock.json` before pushing.
 - The upstream Lanes plugin (`lanes@lanes`) is installed in this Claude Code environment; editing files here does not change it.

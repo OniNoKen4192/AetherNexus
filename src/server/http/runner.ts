@@ -9,6 +9,8 @@ export type VoyageRunner = {
   cancel(voyageId: string): void;
   abortAll(): Promise<void>;
   failures(): Failure[];
+  /** Record a failure notice that is not tied to a voyage (shown with the others on the Bridge). */
+  report(f: { taskId: string; message: string }): void;
   inFlight(): number;
   tracks(voyageId: string): boolean;
 };
@@ -29,6 +31,12 @@ export function createVoyageRunner(opts: { onFailure: () => void }): VoyageRunne
   const runs = new Set<Flight>();
   const recorded: Failure[] = [];
   let shuttingDown = false;
+  const record = (failure: Failure, tag: string): void => {
+    recorded.unshift(failure);
+    if (recorded.length > 50) recorded.length = 50;
+    console.error(`[${tag}] ${failure.message.replace(/[\r\n]+/g, " ")}`);
+    try { opts.onFailure(); } catch { /* a notification cannot fail the runner */ }
+  };
 
   return {
     start(taskId, run) {
@@ -59,14 +67,7 @@ export function createVoyageRunner(opts: { onFailure: () => void }): VoyageRunne
             answerReject(error);
             return;
           }
-          const failure: Failure = {
-            ts: new Date().toISOString(), taskId, voyageId,
-            message: errorMessage(error),
-          };
-          recorded.unshift(failure);
-          if (recorded.length > 50) recorded.length = 50;
-          console.error(`[voyage ${voyageId}] ${failure.message.replace(/[\r\n]+/g, " ")}`);
-          try { opts.onFailure(); } catch { /* a notification cannot fail the runner */ }
+          record({ ts: new Date().toISOString(), taskId, voyageId, message: errorMessage(error) }, `voyage ${voyageId}`);
         },
       ).finally(() => {
         if (voyageId !== undefined) flights.delete(voyageId);
@@ -88,6 +89,7 @@ export function createVoyageRunner(opts: { onFailure: () => void }): VoyageRunne
       await Promise.all(current.map((run) => run.settled));
     },
     failures: () => recorded.slice(),
+    report: (f) => record({ ts: new Date().toISOString(), taskId: f.taskId, voyageId: null, message: f.message }, f.taskId),
     inFlight: () => flights.size,
     tracks: (voyageId) => flights.has(voyageId),
   };

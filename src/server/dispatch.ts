@@ -187,7 +187,7 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
   for (const row of g.db.all("events.kindSince", { kind: "tree.written", id: launchedRow.id })) {
     for (const p of (rowToEvent(row).payload["paths"] as string[] | undefined) ?? []) own.add(p);
   }
-  const appeared = after.status.filter((p) => !was.has(p) && !own.has(p)), vanished = before.status.filter((p) => !now.has(p));
+  const appeared = after.status.filter((p) => !was.has(p) && !own.has(p)), vanished = before.status.filter((p) => !now.has(p) && !own.has(p));
   if (after.head !== before.head || appeared.length > 0 || vanished.length > 0) {
     append(g.db, {
       kind: "decision.opened", ...scope,

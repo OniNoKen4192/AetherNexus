@@ -365,3 +365,27 @@ test("moon.park refuses while this server runs the voyage, and the voyage keeps 
     assert.deepEqual((await x.api("/api/moons/T1")).json.actions, ["cancel"]);
   } finally { await x.close(); }
 });
+
+test("an oversized body is answered only after it has been read to the end", async () => {
+  // Answering while the client is still sending makes the server close under the client's writes; on some
+  // platforms the client then sees a connection reset instead of the 413.
+  const net = await import("node:net");
+  const x = await startWorld();
+  const socket = net.connect(x.srv.port, "127.0.0.1");
+  try {
+    let received = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => { received += chunk; });
+    socket.on("error", () => { /* the assertions below report what was received */ });
+    await new Promise((resolve) => socket.once("connect", resolve));
+    const total = 2 * 1024 * 1024;
+    socket.write(`POST /api/commands/moon.launch HTTP/1.1\r\nhost: 127.0.0.1:${x.srv.port}\r\ncookie: nexus_token=${x.srv.token}\r\norigin: ${x.origin}\r\ncontent-type: application/json\r\ncontent-length: ${total}\r\nconnection: close\r\n\r\n`);
+    socket.write("x".repeat(total - 1024));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(received, "", "nothing is answered while the body is still arriving");
+    socket.write("x".repeat(1024));
+    await new Promise((resolve) => socket.once("close", resolve));
+    assert.match(received, /^HTTP\/1\.1 413 /);
+    assert.equal((await x.api("/api/ping")).status, 200);
+  } finally { socket.destroy(); await x.close(); }
+});

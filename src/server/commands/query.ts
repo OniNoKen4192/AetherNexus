@@ -8,6 +8,7 @@ import type { Galaxy } from "../galaxy.js";
 import { Refusal } from "../errors.js";
 import { pidAlive } from "../lock.js";
 import { pendingTreeDecision } from "./decision.js";
+import { dependencyState } from "./deps.js";
 import { repliedSincePark } from "./launch.js";
 import { showSystem } from "./system.js";
 
@@ -17,6 +18,8 @@ export type Failure = { ts: string; taskId: string; voyageId: string | null; mes
 export type Action = "launch" | "inspect" | "dock" | "reply" | "drop" | "park_stale" | "cancel" | "answer";
 export type Snapshot = {
   cursor: number; repo: string; rung: string;
+  /** First freighters that would be sent right now if the rung were roundabout; 0 when the caller did not supply it. */
+  ready_to_send: number;
   limits: { max_concurrent_ships: number; per_provider_max: Record<string, number>; in_flight: number };
   roles: { implement: string[]; review: string[] };
   systems: (Row & { planets: (Row & { moons: Row[] })[] })[];
@@ -67,7 +70,7 @@ function specEntries(g: Galaxy, assigned: Set<string>): SpecEntry[] {
   return out;
 }
 
-export function snapshot(g: Galaxy, ctx: OwnerCtx & { failures: Failure[] }): Snapshot {
+export function snapshot(g: Galaxy, ctx: OwnerCtx & { failures: Failure[]; readyToSend?: number }): Snapshot {
   const cursor = g.db.get<{ id: number }>("events.maxId")?.id ?? 0;
   const systems = g.db.all("systems.all").map((s) => {
     const shown = showSystem(g, String(s["id"]));
@@ -76,11 +79,14 @@ export function snapshot(g: Galaxy, ctx: OwnerCtx & { failures: Failure[] }): Sn
   const assigned = new Set<string>(); const rawVoyages: Row[] = [];
   for (const system of systems) for (const planet of system.planets) for (const moon of planet.moons) {
     if (typeof moon["task_id"] !== "string" || typeof moon["assignment_id"] !== "number") continue;
+    const dependencies = dependencyState(g, moon["task_id"]);
+    moon["waiting_on"] = dependencies.visited ? [] : dependencies.waitingOn;
+    moon["waiting_on_planets"] = dependencies.visited ? [] : dependencies.waitingOnPlanets;
     assigned.add(moon["task_id"]); rawVoyages.push(...g.db.all("voyages.byAssignment", { assignment_id: moon["assignment_id"] }));
   }
   const inFlight = g.db.all("voyages.inFlight");
   return {
-    cursor, repo: path.basename(g.repoRoot), rung: g.config.automation.level,
+    cursor, repo: path.basename(g.repoRoot), rung: g.config.automation.level, ready_to_send: ctx.readyToSend ?? 0,
     limits: { max_concurrent_ships: g.config.scheduler.max_concurrent_ships, per_provider_max: g.config.scheduler.per_provider_max, in_flight: inFlight.length },
     roles: { implement: g.config.roles.implement, review: g.config.roles.review }, systems,
     voyages: withOwner(g, rawVoyages, ctx), fleet: g.db.all("ships.all"), decisions: g.db.all("decisions.pending"),
@@ -119,12 +125,13 @@ export function availableActions(g: Galaxy, taskId: string, ctx: OwnerCtx): Acti
 
 export function moonDetail(g: Galaxy, taskId: string, ctx: OwnerCtx): MoonDetail {
   const moon = loadMoon(g, taskId);
+  const dependencies = dependencyState(g, taskId);
   let spec: string | null;
   try { spec = fs.readFileSync(path.join(g.repoRoot, moon.spec_path), "utf8"); }
   catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; spec = null; }
   const events = g.db.all("events.byAssignment", { assignment_id: moon.assignment_id }).map(rowToEvent);
   return {
-    moon: moon as unknown as Row, spec,
+    moon: { ...moon, waiting_on: dependencies.visited ? [] : dependencies.waitingOn, waiting_on_planets: dependencies.visited ? [] : dependencies.waitingOnPlanets }, spec,
     voyages: withOwner(g, g.db.all("voyages.byAssignment", { assignment_id: moon.assignment_id }), ctx),
     verdicts: g.db.all("verdicts.byAssignment", { assignment_id: moon.assignment_id }), events,
     decisions: g.db.all("decisions.pendingByTarget", { target_id: taskId }), actions: availableActions(g, taskId, ctx),

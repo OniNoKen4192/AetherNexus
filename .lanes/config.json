@@ -41,7 +41,7 @@
   "pipeline": {
     "plans_dir": "docs/superpowers/plans",
     "tasks_dir": "docs/superpowers/tasks",
-    "ledger": ".superpowers/sdd/2026-11-13-v0.5-bridge/progress.md"
+    "ledger": ".superpowers/sdd/2026-11-15-v1-scheduler/progress.md"
   },
   "automation": {
     "level": "roundabout",

@@ -7,6 +7,9 @@ type Tab = "Spec" | "Activity" | "Audit" | "Verdicts";
 
 const text = (value: unknown): string => typeof value === "string" ? value : "";
 const number = (value: unknown): number => typeof value === "number" ? value : 0;
+const strings = (value: unknown): string[] => Array.isArray(value)
+  ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+  : [];
 
 function mergeEvents(detailEvents: FeedEvent[], activity: FeedEvent[]): FeedEvent[] {
   const byId = new Map<number, FeedEvent>();
@@ -65,11 +68,15 @@ export function MoonDetail({ b }: { b: Bridge }) {
       {b.detail === null && detailError === null && <div>Loading</div>}
       {b.detail !== null && (() => {
         const moon = b.detail.moon;
+        const waitingOn = strings(moon["waiting_on"]);
+        const waitingOnPlanets = strings(moon["waiting_on_planets"]);
         return <>
           <div className="moon-detail-heading">
             <strong>{text(moon["name"])}</strong><code>{b.taskId}</code>
             <span className="badge">{text(moon["status"])}</span><span>round {number(moon["round"])}</span>
           </div>
+          {waitingOn.length > 0 && <div className="badge waiting-label">waiting on {waitingOn.join(", ")}</div>}
+          {waitingOnPlanets.length > 0 && <div className="badge waiting-label">waiting on planet {waitingOnPlanets.join(", ")}</div>}
           {moon["park_reason"] !== null && <div className="moon-park-reason">{text(moon["park_reason"])}</div>}
           <ActionBar b={b} />
           <div className="tabs">
