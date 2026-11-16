@@ -1,5 +1,5 @@
-export type MoonStatus = "emitted" | "gated" | "implementing" | "audited" | "reviewing" | "merged" | "adrift" | "quarantined" | "dropped";
-export type VoyageStatus = "launched" | "working" | "holding" | "cleared" | "en_route" | "docked" | "superseded" | "adrift" | "quarantined";
+export type MoonStatus = "emitted" | "gated" | "implementing" | "audited" | "reviewing" | "merged" | "adrift" | "quarantined" | "dropped" | "awaiting_pickup";
+export type VoyageStatus = "launched" | "working" | "holding" | "cleared" | "en_route" | "docked" | "superseded" | "adrift" | "quarantined" | "out_of_fuel";
 
 export class TransitionRefused extends Error {
   constructor(public entity: "moon" | "voyage", public id: string, public from: string, public event: string) {
@@ -10,7 +10,7 @@ export class TransitionRefused extends Error {
 // Keys are event kinds, qualified as `kind:role` / `kind:verdict` where the payload decides the arrow.
 export const MOON_TRANSITIONS: Record<string, Partial<Record<MoonStatus | "barren", MoonStatus>>> = {
   "moon.assigned": { barren: "emitted" },
-  "moon.gated": { emitted: "gated", gated: "gated", adrift: "gated", quarantined: "gated", audited: "gated" },
+  "moon.gated": { emitted: "gated", gated: "gated", adrift: "gated", quarantined: "gated", audited: "gated", awaiting_pickup: "gated" },
   "moon.gate_failed": { emitted: "adrift" },
   "voyage.launched:implement": { gated: "implementing" },
   "voyage.audited": { implementing: "audited" },
@@ -19,8 +19,10 @@ export const MOON_TRANSITIONS: Record<string, Partial<Record<MoonStatus | "barre
   "verdict.issued:FIX": { reviewing: "audited" },
   "verdict.issued:REJECT": { reviewing: "quarantined" },
   "moon.merged": { reviewing: "merged" },
-  "moon.adrift": { implementing: "adrift", audited: "adrift", reviewing: "adrift", emitted: "adrift", gated: "adrift", adrift: "adrift", quarantined: "quarantined" },
-  "moon.dropped": { adrift: "dropped", quarantined: "dropped" },
+  "moon.awaiting_pickup": { implementing: "awaiting_pickup", audited: "awaiting_pickup" },
+  "moon.review_abandoned": { reviewing: "audited" },
+  "moon.adrift": { implementing: "adrift", audited: "adrift", reviewing: "adrift", emitted: "adrift", gated: "adrift", adrift: "adrift", quarantined: "quarantined", awaiting_pickup: "adrift" },
+  "moon.dropped": { adrift: "dropped", quarantined: "dropped", awaiting_pickup: "dropped" },
 };
 
 export const VOYAGE_TRANSITIONS: Record<string, Partial<Record<VoyageStatus, VoyageStatus>>> = {
@@ -31,7 +33,8 @@ export const VOYAGE_TRANSITIONS: Record<string, Partial<Record<VoyageStatus, Voy
   "voyage.cleared": { holding: "cleared" },
   "voyage.departed": { cleared: "en_route" },
   "voyage.docked": { en_route: "docked" },
-  "voyage.superseded": { holding: "superseded", cleared: "superseded", en_route: "superseded", adrift: "superseded", quarantined: "superseded" },
+  "voyage.out_of_fuel": { launched: "out_of_fuel", working: "out_of_fuel", holding: "out_of_fuel" },
+  "voyage.superseded": { holding: "superseded", cleared: "superseded", en_route: "superseded", adrift: "superseded", quarantined: "superseded", out_of_fuel: "superseded" },
   // cleared -> adrift: the dock's pre-commit checks (re-audit, worktree registration) can still park an approved voyage
   "voyage.adrift": { launched: "adrift", working: "adrift", holding: "adrift", cleared: "adrift", en_route: "adrift" },
   "voyage.quarantined": { holding: "quarantined" },

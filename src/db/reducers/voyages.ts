@@ -42,6 +42,7 @@ export const voyageReducers: Record<string, Reducer> = {
     const status = transitionVoyage(db, ev.voyage_id, "voyage.docked");
     db.run("voyages.setDocked", { id: ev.voyage_id!, status, docked_ts: ev.ts, last_event_id: ev.id });
   },
+  "voyage.out_of_fuel": set("voyage.out_of_fuel"),
   "voyage.superseded": set("voyage.superseded"),
   "voyage.quarantined": set("voyage.quarantined"),
   "voyage.adrift": (db, ev) => {
