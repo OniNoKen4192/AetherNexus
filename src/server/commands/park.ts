@@ -9,7 +9,7 @@ import { loadMoon, moonScope, parkVoyage, recordTreeWrite, type MoonRow } from "
 
 type VoyageRow = { id: string; ship_id: string; status: string };
 type DecisionRow = { id: number };
-const SUPERSEDABLE = new Set(["holding", "cleared", "en_route", "adrift", "quarantined"]);
+const SUPERSEDABLE = new Set(["holding", "cleared", "en_route", "adrift", "quarantined", "out_of_fuel"]);
 
 /** Supersede every parked voyage of the moon and free its ship. A moon parked with no voyage (carry-over park) has nothing to do. */
 export function releaseMoonVoyages(g: Galaxy, moon: MoonRow, outcome: "reply" | "drop"): void {

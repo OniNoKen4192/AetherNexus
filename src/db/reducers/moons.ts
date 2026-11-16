@@ -34,6 +34,8 @@ export const moonReducers: Record<string, Reducer> = {
     if (typeof round === "number") db.run("moons.setRound", { id: ev.moon_id!, round, last_event_id: ev.id });
   },
   "moon.gate_failed": (db, ev) => { transitionMoon(db, ev.moon_id, "moon.gate_failed", ev.id, reasonOf(ev.payload)); },
+  "moon.awaiting_pickup": (db, ev) => { transitionMoon(db, ev.moon_id, "moon.awaiting_pickup", ev.id); },
+  "moon.review_abandoned": (db, ev) => { transitionMoon(db, ev.moon_id, "moon.review_abandoned", ev.id); },
   "moon.adrift": (db, ev) => { transitionMoon(db, ev.moon_id, "moon.adrift", ev.id, reasonOf(ev.payload)); },
   "moon.dropped": (db, ev) => { transitionMoon(db, ev.moon_id, "moon.dropped", ev.id); },
   "moon.merged": (db, ev) => {
