@@ -22,8 +22,15 @@ test("fuel arrows accept every listed moon and voyage transition", () => {
 });
 
 test("fuel-related moon event keys refuse every source absent from their tables", () => {
-  for (const event of ["moon.awaiting_pickup", "moon.review_abandoned", "moon.gated", "moon.adrift", "moon.dropped"]) for (const from of moonStates) {
-    const to = MOON_TRANSITIONS[event]?.[from];
+  const moonArrows = {
+    "moon.awaiting_pickup": { implementing: "awaiting_pickup", audited: "awaiting_pickup" },
+    "moon.review_abandoned": { reviewing: "audited" },
+    "moon.gated": { emitted: "gated", gated: "gated", adrift: "gated", quarantined: "gated", audited: "gated", awaiting_pickup: "gated" },
+    "moon.adrift": { implementing: "adrift", audited: "adrift", reviewing: "adrift", emitted: "adrift", gated: "adrift", adrift: "adrift", quarantined: "quarantined", awaiting_pickup: "adrift" },
+    "moon.dropped": { adrift: "dropped", quarantined: "dropped", awaiting_pickup: "dropped" },
+  };
+  for (const [event, arrows] of Object.entries(moonArrows)) for (const from of moonStates) {
+    const to = arrows[from];
     if (to) assert.equal(nextMoonStatus(from, event, "m"), to);
     else assert.throws(() => nextMoonStatus(from, event, "m"), TransitionRefused, `${event} from ${from}`);
   }
@@ -31,8 +38,12 @@ test("fuel-related moon event keys refuse every source absent from their tables"
 });
 
 test("fuel-related voyage event keys refuse every source absent from their tables", () => {
-  for (const event of ["voyage.out_of_fuel", "voyage.superseded"]) for (const from of voyageStates) {
-    const to = VOYAGE_TRANSITIONS[event]?.[from];
+  const voyageArrows = {
+    "voyage.out_of_fuel": { launched: "out_of_fuel", working: "out_of_fuel", holding: "out_of_fuel" },
+    "voyage.superseded": { holding: "superseded", cleared: "superseded", en_route: "superseded", adrift: "superseded", quarantined: "superseded", out_of_fuel: "superseded" },
+  };
+  for (const [event, arrows] of Object.entries(voyageArrows)) for (const from of voyageStates) {
+    const to = arrows[from];
     if (to) assert.equal(nextVoyageStatus(from, event, "v"), to);
     else assert.throws(() => nextVoyageStatus(from, event, "v"), TransitionRefused, `${event} from ${from}`);
   }
