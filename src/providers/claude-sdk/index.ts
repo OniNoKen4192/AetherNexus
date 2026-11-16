@@ -80,10 +80,30 @@ export function mapMessage(m: SDKMessage, role: Role): AgentEvent[] {
       return [u, errEvent(msg.subtype === "error_max_budget_usd" ? "capacity" : "backend_failure", errors.join("; ") || String(msg.subtype))];
     }
     case "rate_limit_event": {
-      const info = msg["rate_limit_info"] as { status?: string } | undefined;
-      return info?.status === "rejected"
-        ? [errEvent("rate_limited", `rate limit rejected: ${JSON.stringify(info)}`)]
-        : [text(`rate limit status: ${info?.status ?? "unknown"}`)];
+      const info = msg["rate_limit_info"] as { status?: string; resetsAt?: unknown; rateLimitType?: string; utilization?: unknown } | undefined;
+      const modelFamily = info?.rateLimitType === "seven_day_opus" ? "opus" : info?.rateLimitType === "seven_day_sonnet" ? "sonnet" : undefined;
+      let resetsAt: string | undefined;
+      if (typeof info?.resetsAt === "number" && Number.isFinite(info.resetsAt) && info.resetsAt > 0) {
+        const date = new Date(info.resetsAt < 1e12 ? info.resetsAt * 1000 : info.resetsAt);
+        if (!Number.isNaN(date.getTime())) resetsAt = date.toISOString();
+      }
+      const out: AgentEvent[] = [];
+      if (typeof info?.utilization === "number" && Number.isFinite(info.utilization) && info.utilization >= 0 && info.rateLimitType !== "overage") {
+        out.push({
+          kind: "fuel", ts: ts(), data: {
+            window: info.rateLimitType ?? "unknown",
+            used: info.utilization <= 1 ? info.utilization : Math.min(info.utilization / 100, 1),
+            ...(resetsAt ? { resets_at: resetsAt } : {}),
+            ...(modelFamily ? { model_family: modelFamily } : {}),
+          },
+        });
+      }
+      if (info?.status === "rejected") {
+        out.push({ kind: "error", ts: ts(), data: { classification: "rate_limited", message: `rate limit rejected: ${JSON.stringify(info)}`, ...(resetsAt ? { resets_at: resetsAt } : {}), ...(modelFamily ? { model_family: modelFamily } : {}) } });
+      } else {
+        out.push(text(`rate limit status: ${info?.status ?? "unknown"}`));
+      }
+      return out;
     }
     default:
       return [];
@@ -102,12 +122,13 @@ export function createClaudeAdapter(id: string, cfg: ProviderConfig, deps: { que
       let built: ReturnType<typeof buildEnv>;
       try { built = buildEnv(cfg, process.env); } catch (e) { yield errEvent("unknown", e instanceof Error ? e.message : String(e)); return; }
       yield text(`auth mode: ${built.mode}`);
+      const model = job.model ?? cfg.models?.["frontier"];
       const options: Options = {
         cwd: ctx.cwd, env: built.env, strictMcpConfig: true, settingSources: ["project"], permissionMode: "dontAsk",
         tools: TOOLS[job.role], allowedTools: TOOLS[job.role], maxTurns: cfg.max_turns ?? 60,
         ...(cfg.max_budget_usd ? { maxBudgetUsd: cfg.max_budget_usd } : {}),
         ...(job.previousSessionId ? { resume: job.previousSessionId } : {}),
-        ...(cfg.models?.["frontier"] ? { model: cfg.models["frontier"] } : {}),
+        ...(model !== undefined ? { model } : {}),
         hooks: { PreToolUse: [
           { matcher: "Write|Edit|MultiEdit|NotebookEdit", hooks: [makeTouchGate(ctx.touch, ctx.cwd)] },
           { matcher: "Bash", hooks: [makeBashGitGate()] },
