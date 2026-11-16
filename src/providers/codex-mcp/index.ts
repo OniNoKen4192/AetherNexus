@@ -3,7 +3,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { ProviderConfig } from "../../config/schema.js";
 import { parseImplementReport, parseReviewReport } from "../adapter.js";
-import type { AgentEvent, ErrorClass, FuelReading, Job, DispatchCtx, ProviderAdapter } from "../adapter.js";
+import type { AgentEvent, ErrorClass, Job, DispatchCtx, ProviderAdapter } from "../adapter.js";
 
 type ToolResult = { content: { type: string; text?: string }[]; isError?: boolean; structuredContent?: unknown };
 export type McpClientLike = {
@@ -96,7 +96,6 @@ export function createCodexAdapter(id: string, cfg: ProviderConfig, deps: Deps =
   return {
     id, roles: ["implement", "review"],
     classify,
-    async fuel(): Promise<FuelReading> { return { source: "unknown" }; },
     async *dispatch(job: Job, ctx: DispatchCtx): AsyncIterable<AgentEvent> {
       const pending: string[] = [];
       const onStderr = (line: string): void => { if (!MODELS_CACHE_NOISE.test(line)) pending.push(line); };
