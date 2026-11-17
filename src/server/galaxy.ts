@@ -10,6 +10,7 @@ import { Refusal } from "./errors.js";
 
 export type Galaxy = {
   repoRoot: string; config: NexusConfig; db: NexusDb; git: Git; adapters: Record<string, ProviderAdapter>;
+  now: () => number;
   paths: { nexusDir: string; dbFile: string; stateDir: string; worktrees: string; specs: string; plans: string };
   close(): void;
 };
@@ -39,5 +40,5 @@ export function openGalaxy(repoRoot: string, opts: { scriptsDir?: string } = {})
   const db = openDb(paths.dbFile, { stats: config.db.stats });
   const git = new Git(repoRoot);
   const adapters = buildAdapters(config, { scriptsDir: opts.scriptsDir ?? defaultScriptsDir(repoRoot) });
-  return { repoRoot, config, db, git, adapters, paths, close: () => db.close() };
+  return { repoRoot, config, db, git, adapters, now: () => Date.now(), paths, close: () => db.close() };
 }

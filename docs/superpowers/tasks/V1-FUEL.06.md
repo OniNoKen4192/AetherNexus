@@ -213,3 +213,21 @@ DEVIATIONS: <anything done differently than specified, and why — or "none".
   non-empty list>
 BLOCKED_REASON: <only if BLOCKED: what was needed that the spec didn't provide>
 ```
+
+## Amendments
+
+### A1 — 2026-11-17 — accepted deviation (in part)
+- **Original sha256**: 06c1599e1b68a2e37488095879d64e95b0439d631420c4e49a98d47bf423ce0f
+- **Verdict ref**: FIX, V1-FUEL.06 round 0, lanes-reviewer
+- **Deviation**: `low` is not computed with the literal expression of pool-state rule 3 (`1 - used` strictly below `pool.reserve_floor`).
+- **Reason accepted**: in IEEE-754 the literal form reads `low` for 0.9 at floor 0.1 and 0.8 at floor 0.2, against criterion 2. The round-0 replacement `used > 1 - floor` is not accepted: it reads `low` for 0.93 at 0.07, 0.67 at 0.33, 0.68 at 0.32 and 0.45 at 0.55. The rule is: `low` when `reserve_floor - (1 - used) > 1e-9`. Implemented by V1-FUEL.06-FIX1.
+- **Affected paths**: `src/server/limiter/pool.ts`, `tests/server/limiter-pool.test.mjs`
+- **Acceptance criteria**: criterion 2 gains: a reading exactly at the floor is `ok` for (used, floor) = (0.9, 0.1), (0.8, 0.2), (0.95, 0.05), (0.7, 0.3), (0.93, 0.07), (0.67, 0.33), (0.68, 0.32), (0.45, 0.55), and one hundredth higher is `low` for each.
+
+### A2 — 2026-11-17 — accepted deviation
+- **Original sha256**: 06c1599e1b68a2e37488095879d64e95b0439d631420c4e49a98d47bf423ce0f
+- **Verdict ref**: FIX, V1-FUEL.06 round 0, lanes-reviewer
+- **Deviation**: `recordReading` stamps the appended event's `ts` with `new Date(g.now()).toISOString()` instead of leaving it to `append`'s default clock.
+- **Reason accepted**: the spec names no clock for this event and says time is `g.now()`. Events are ordered by `id` everywhere, the `fuel.reading` reducer projects nothing, and the 24-hour liveness rule compares this `ts` with `g.now()`.
+- **Affected paths**: `src/server/limiter/pool.ts`
+- **Acceptance criteria**: unchanged
