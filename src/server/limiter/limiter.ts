@@ -79,8 +79,9 @@ export function chooseProvider(g: Galaxy, p: { role: Role; tier: string | null; 
   if (p.role !== "implement") return heldChoice;
 
   const refuel = g.config.providers[held.provider]?.pool?.refuel;
-  const model = p.tier === null ? undefined : refuel?.models[p.tier];
-  if (!refuel || !model) return heldChoice;
+  if (!refuel || p.tier === null || !Object.hasOwn(refuel.models, p.tier)) return heldChoice;
+  const model = refuel.models[p.tier];
+  if (typeof model !== "string" || model.length === 0) return heldChoice;
   if (!fuelCheck(g, "implement", refuel.provider, model).allow) return heldChoice;
   const until = parseTime(held.verdict.until);
   if (until !== undefined && until <= g.now() + refuel.min_wait_minutes * 60_000) return heldChoice;

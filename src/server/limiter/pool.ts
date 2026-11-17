@@ -53,17 +53,26 @@ export function poolReadings(g: Galaxy, provider: string): Reading[] {
 }
 
 export function poolState(g: Galaxy, provider: string, model?: string): PoolState {
-  const exhaustion = recent(g, "fuel.exhausted", provider).find((event) => familyApplies(event.payload["model_family"], model));
-  if (exhaustion) {
-    const until = exhaustion.payload["until"];
+  const noFamily = Symbol();
+  const exhaustions = new Map<string | symbol, { event: ReturnType<typeof rowToEvent>; until: string; untilMs: number }>();
+  for (const event of recent(g, "fuel.exhausted", provider)) {
+    const family = event.payload["model_family"];
+    if (!familyApplies(family, model)) continue;
+    const until = event.payload["until"];
     const untilMs = dateMs(until);
-    if (untilMs !== undefined && untilMs > g.now()) {
-      const family = exhaustion.payload["model_family"];
-      const returned = g.db.all<{ model: string | null }>("voyages.returnedByProviderSince", { provider, ts: exhaustion.ts });
-      const cleared = returned.some((voyage) => typeof family !== "string" || (typeof voyage.model === "string" && familyApplies(family, voyage.model)));
-      if (!cleared) return { state: "dry", until: until as string };
-    }
+    if (untilMs === undefined) continue;
+    const key = typeof family === "string" && family.length > 0 ? family : noFamily;
+    if (!exhaustions.has(key)) exhaustions.set(key, { event, until: until as string, untilMs });
   }
+  let liveUntil: { value: string; ms: number } | undefined;
+  for (const { event: exhaustion, until, untilMs } of exhaustions.values()) {
+    if (untilMs <= g.now()) continue;
+    const family = exhaustion.payload["model_family"];
+    const returned = g.db.all<{ model: string | null }>("voyages.returnedByProviderSince", { provider, ts: exhaustion.ts });
+    const cleared = returned.some((voyage) => typeof family !== "string" || (typeof voyage.model === "string" && familyApplies(family, voyage.model)));
+    if (!cleared && (!liveUntil || untilMs > liveUntil.ms)) liveUntil = { value: until, ms: untilMs };
+  }
+  if (liveUntil) return { state: "dry", until: liveUntil.value };
 
   const pool = g.config.providers[provider]?.pool;
   if (!pool || pool.kind === "free") return { state: "free" };
@@ -71,7 +80,7 @@ export function poolState(g: Galaxy, provider: string, model?: string): PoolStat
   if (readings.length === 0) return { state: "unknown" };
   const tightest = readings.reduce((a, b) => b.used > a.used ? b : a);
   const remaining = 1 - tightest.used;
-  const low = tightest.used > 1 - (pool.reserve_floor ?? 0);
+  const low = (pool.reserve_floor ?? 0) - remaining > 1e-9;
   return {
     state: low ? "low" : "ok",
     remaining, window: tightest.window, reading_ts: tightest.ts,
