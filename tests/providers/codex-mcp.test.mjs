@@ -1,4 +1,5 @@
 import { test } from "node:test"; import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs"; import { tmpdir } from "node:os"; import path from "node:path";
 import { createCodexAdapter, buildCodexArgs, textOf } from "../../dist/providers/codex-mcp/index.js";
 import { makeRepo } from "../helpers.mjs";
 
@@ -17,6 +18,8 @@ function stub({ schema = SCHEMA, result, onCall, hang } = {}) {
   return s;
 }
 const cfg = { adapter: "codex-mcp", models: { default: "m-def", terra: "m-terra" }, ratelimit_signal: ["usage limit"] };
+const fixtureRoot = path.join(process.cwd(), "tests", "fixtures", "codex-sessions");
+const fixtureId = "01a1e11a-deaf-7e60-a634-bf3cc2f96ec0";
 
 test("first call: args carry cwd/prompt/sandbox/approval, tier model, no unknown keys; session_id = threadId", async () => {
   const repo = makeRepo(); const s = stub();
@@ -91,5 +94,40 @@ test("I3: review-role calls run in Codex's read-only sandbox", async () => {
     assert.equal(s.calls[0].arguments.sandbox, "read-only"); assert.match(ev[0].data.text, /sandbox read-only/);
     assert.equal(buildCodexArgs({ ...baseJob, role: "review" }, mkCtx(repo.dir), SCHEMA, cfg).sandbox, "read-only");
     assert.equal(buildCodexArgs(baseJob, mkCtx(repo.dir), SCHEMA, cfg).sandbox, "workspace-write");
+  } finally { repo.cleanup(); }
+});
+
+test("session log fuel readings are yielded before done", async () => {
+  const repo = makeRepo(); const s = stub({ result: { content: [{ type: "text", text: "STATUS: IMPLEMENTED" }], structuredContent: { threadId: fixtureId } } });
+  try {
+    const ev = await run(createCodexAdapter("codex", cfg, { makeClient: async () => s.client, sessionsRoot: fixtureRoot }), baseJob, mkCtx(repo.dir));
+    assert.deepEqual(ev.slice(-3).map((e) => e.kind), ["fuel", "fuel", "done"]);
+  } finally { repo.cleanup(); }
+});
+
+test("empty sessions root preserves existing event sequence", async () => {
+  const repo = makeRepo(); const empty = mkdtempSync(path.join(tmpdir(), "codex-empty-")); const s = stub();
+  try {
+    const ev = await run(createCodexAdapter("codex", cfg, { makeClient: async () => s.client, sessionsRoot: empty }), baseJob, mkCtx(repo.dir));
+    assert.deepEqual(ev.map((e) => e.kind), ["text", "done"]);
+  } finally { repo.cleanup(); rmSync(empty, { recursive: true, force: true }); }
+});
+
+test("rate-limit errors include fuel readings and reset of the fullest window", async () => {
+  const repo = makeRepo(); const s = stub({ result: { isError: true, content: [{ type: "text", text: "Usage Limit reached" }], structuredContent: { threadId: fixtureId } } });
+  try {
+    const ev = await run(createCodexAdapter("codex", cfg, { makeClient: async () => s.client, sessionsRoot: fixtureRoot }), baseJob, mkCtx(repo.dir));
+    assert.deepEqual(ev.slice(-3).map((e) => e.kind), ["fuel", "fuel", "error"]);
+    assert.equal(ev.at(-1).data.classification, "rate_limited");
+    assert.equal(ev.at(-1).data.resets_at, new Date(1794760000000).toISOString());
+  } finally { repo.cleanup(); }
+});
+
+test("error without a thread id has no fuel reading or reset", async () => {
+  const repo = makeRepo(); const s = stub({ result: { isError: true, content: [{ type: "text", text: "Usage Limit reached" }] } });
+  try {
+    const ev = await run(createCodexAdapter("codex", cfg, { makeClient: async () => s.client, sessionsRoot: fixtureRoot }), baseJob, mkCtx(repo.dir));
+    assert.equal(ev.some((e) => e.kind === "fuel"), false);
+    assert.equal(ev.at(-1).kind, "error"); assert.equal("resets_at" in ev.at(-1).data, false);
   } finally { repo.cleanup(); }
 });

@@ -4,6 +4,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import type { ProviderConfig } from "../../config/schema.js";
 import { parseImplementReport, parseReviewReport } from "../adapter.js";
 import type { AgentEvent, ErrorClass, Job, DispatchCtx, ProviderAdapter } from "../adapter.js";
+import { codexSessionsRoot, readCodexFuel } from "./fuel.js";
 
 type ToolResult = { content: { type: string; text?: string }[]; isError?: boolean; structuredContent?: unknown };
 export type McpClientLike = {
@@ -12,11 +13,11 @@ export type McpClientLike = {
   callTool(a: { name: string; arguments: Record<string, unknown> }): Promise<ToolResult>;
   close(): Promise<void>;
 };
-type Deps = { makeClient?: (cwd: string, onStderr: (line: string) => void) => Promise<McpClientLike> };
+type Deps = { makeClient?: (cwd: string, onStderr: (line: string) => void) => Promise<McpClientLike>; sessionsRoot?: string };
 
 const ts = (): string => new Date().toISOString();
 const text = (t: string): AgentEvent => ({ kind: "text", ts: ts(), data: { text: t } });
-const errEvent = (classification: ErrorClass, message: string): AgentEvent => ({ kind: "error", ts: ts(), data: { classification, message } });
+const errEvent = (classification: ErrorClass, message: string, resets_at?: string): AgentEvent => ({ kind: "error", ts: ts(), data: { classification, message, ...(resets_at ? { resets_at } : {}) } });
 
 const DEFAULT_RATELIMIT = ["usage limit", "rate limit", "429"];
 const MODELS_CACHE_NOISE = /failed to load models cache/i;
@@ -93,6 +94,7 @@ async function realClient(cwd: string, onStderr: (line: string) => void): Promis
 export function createCodexAdapter(id: string, cfg: ProviderConfig, deps: Deps = {}): ProviderAdapter {
   const classify = makeClassify(cfg);
   const make = deps.makeClient ?? realClient;
+  const sessionsRoot = deps.sessionsRoot ?? codexSessionsRoot(process.env);
   return {
     id, roles: ["implement", "review"],
     classify,
@@ -114,11 +116,22 @@ export function createCodexAdapter(id: string, cfg: ProviderConfig, deps: Deps =
         yield* flush();
         if (result === "abort") return;
         const body = textOf(result);
-        if (result.isError) { yield errEvent(classify(body), body); return; }
+        const sc = result.structuredContent as { threadId?: unknown } | undefined;
+        const threadId = (typeof sc?.threadId === "string" ? sc.threadId : body.match(/threadId["':\s=]+([\w-]+)/)?.[1]) ?? job.previousSessionId;
+        let readings: AgentEvent[] = [];
+        if (threadId) { try { readings = readCodexFuel(sessionsRoot, threadId); } catch { /* best effort */ } }
+        if (result.isError) {
+          yield* readings;
+          const classification = classify(body);
+          const fullest = classification === "rate_limited"
+            ? readings.reduce<Extract<AgentEvent, { kind: "fuel" }> | undefined>((best, event) => event.kind === "fuel" && (!best || event.data.used > best.data.used) ? event : best, undefined)
+            : undefined;
+          yield errEvent(classification, body, fullest?.data.resets_at);
+          return;
+        }
         try { for (const p of changedPaths(ctx.cwd)) yield { kind: "file_changed", ts: ts(), data: { path: p } }; }
         catch (e) { yield text(`git status failed: ${e instanceof Error ? e.message : String(e)}`); }
-        const sc = result.structuredContent as { threadId?: unknown } | undefined;
-        const threadId = typeof sc?.threadId === "string" ? sc.threadId : body.match(/threadId["':\s=]+([\w-]+)/)?.[1];
+        yield* readings;
         const report = job.role === "review" ? parseReviewReport(body) : parseImplementReport(body);
         yield { kind: "done", ts: ts(), data: { report, ...(threadId ? { session_id: threadId } : {}) } };
       } catch (e) {
