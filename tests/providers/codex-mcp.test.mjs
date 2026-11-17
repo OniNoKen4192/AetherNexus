@@ -1,7 +1,11 @@
-import { test } from "node:test"; import assert from "node:assert/strict";
+import { after, test } from "node:test"; import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs"; import { tmpdir } from "node:os"; import path from "node:path";
 import { createCodexAdapter, buildCodexArgs, textOf } from "../../dist/providers/codex-mcp/index.js";
 import { makeRepo } from "../helpers.mjs";
+
+const isolatedCodexHome = mkdtempSync(path.join(tmpdir(), "codex-home-"));
+process.env.CODEX_HOME = isolatedCodexHome;
+after(() => rmSync(isolatedCodexHome, { recursive: true, force: true }));
 
 const SCHEMA = { properties: { prompt: {}, cwd: {}, sandbox: {}, "approval-policy": {}, model: {}, threadId: {} } };
 const baseJob = { voyageId: "v", role: "implement", specPath: "s", specText: "- **Model hint**: terra\n", prompt: "NEXUS-SPEC: do it", round: 1 };
@@ -105,11 +109,44 @@ test("session log fuel readings are yielded before done", async () => {
   } finally { repo.cleanup(); }
 });
 
-test("empty sessions root preserves existing event sequence", async () => {
+test("empty sessions root preserves exact existing events", async () => {
   const repo = makeRepo(); const empty = mkdtempSync(path.join(tmpdir(), "codex-empty-")); const s = stub();
   try {
     const ev = await run(createCodexAdapter("codex", cfg, { makeClient: async () => s.client, sessionsRoot: empty }), baseJob, mkCtx(repo.dir));
-    assert.deepEqual(ev.map((e) => e.kind), ["text", "done"]);
+    assert.deepEqual(ev.map(({ ts, ...event }) => event), [
+      { kind: "text", data: { text: "dispatching to codex mcp-server (tool codex, sandbox workspace-write)" } },
+      { kind: "done", data: { report: { status: "IMPLEMENTED", raw: "STATUS: IMPLEMENTED" }, session_id: "th-1" } },
+    ]);
+  } finally { repo.cleanup(); rmSync(empty, { recursive: true, force: true }); }
+});
+
+test("reply without a reported thread id uses the previous session only for fuel", async () => {
+  const repo = makeRepo(); const s = stub({ result: { content: [{ type: "text", text: "STATUS: IMPLEMENTED" }] } });
+  try {
+    const ev = await run(createCodexAdapter("codex", cfg, { makeClient: async () => s.client, sessionsRoot: fixtureRoot }), { ...baseJob, round: 2, previousSessionId: fixtureId }, mkCtx(repo.dir));
+    assert.deepEqual(ev.slice(-3).map((e) => e.kind), ["fuel", "fuel", "done"]);
+    assert.equal("session_id" in ev.at(-1).data, false);
+  } finally { repo.cleanup(); }
+});
+
+test("reply rate-limit error without a reported thread id uses previous-session fuel", async () => {
+  const repo = makeRepo(); const s = stub({ result: { isError: true, content: [{ type: "text", text: "Usage Limit reached" }] } });
+  try {
+    const ev = await run(createCodexAdapter("codex", cfg, { makeClient: async () => s.client, sessionsRoot: fixtureRoot }), { ...baseJob, round: 2, previousSessionId: fixtureId }, mkCtx(repo.dir));
+    assert.deepEqual(ev.slice(-3).map((e) => e.kind), ["fuel", "fuel", "error"]);
+    assert.equal(ev.at(-1).data.classification, "rate_limited");
+    assert.equal(ev.at(-1).data.resets_at, new Date(1794760000000).toISOString());
+  } finally { repo.cleanup(); }
+});
+
+test("empty sessions root reply without a reported thread id preserves exact events", async () => {
+  const repo = makeRepo(); const empty = mkdtempSync(path.join(tmpdir(), "codex-empty-")); const s = stub({ result: { content: [{ type: "text", text: "STATUS: IMPLEMENTED" }] } });
+  try {
+    const ev = await run(createCodexAdapter("codex", cfg, { makeClient: async () => s.client, sessionsRoot: empty }), { ...baseJob, round: 2, previousSessionId: "th-0" }, mkCtx(repo.dir));
+    assert.deepEqual(ev.map(({ ts, ...event }) => event), [
+      { kind: "text", data: { text: "dispatching to codex mcp-server (tool codex-reply, sandbox workspace-write)" } },
+      { kind: "done", data: { report: { status: "IMPLEMENTED", raw: "STATUS: IMPLEMENTED" } } },
+    ]);
   } finally { repo.cleanup(); rmSync(empty, { recursive: true, force: true }); }
 });
 

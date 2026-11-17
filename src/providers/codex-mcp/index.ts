@@ -117,7 +117,8 @@ export function createCodexAdapter(id: string, cfg: ProviderConfig, deps: Deps =
         if (result === "abort") return;
         const body = textOf(result);
         const sc = result.structuredContent as { threadId?: unknown } | undefined;
-        const threadId = (typeof sc?.threadId === "string" ? sc.threadId : body.match(/threadId["':\s=]+([\w-]+)/)?.[1]) ?? job.previousSessionId;
+        const reported = typeof sc?.threadId === "string" ? sc.threadId : body.match(/threadId["':\s=]+([\w-]+)/)?.[1];
+        const threadId = reported ?? job.previousSessionId;
         let readings: AgentEvent[] = [];
         if (threadId) { try { readings = readCodexFuel(sessionsRoot, threadId); } catch { /* best effort */ } }
         if (result.isError) {
@@ -133,7 +134,7 @@ export function createCodexAdapter(id: string, cfg: ProviderConfig, deps: Deps =
         catch (e) { yield text(`git status failed: ${e instanceof Error ? e.message : String(e)}`); }
         yield* readings;
         const report = job.role === "review" ? parseReviewReport(body) : parseImplementReport(body);
-        yield { kind: "done", ts: ts(), data: { report, ...(threadId ? { session_id: threadId } : {}) } };
+        yield { kind: "done", ts: ts(), data: { report, ...(reported ? { session_id: reported } : {}) } };
       } catch (e) {
         yield* flush();
         const message = e instanceof Error ? e.message : String(e);
