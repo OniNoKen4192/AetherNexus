@@ -118,3 +118,13 @@ DEVIATIONS: <anything done differently than specified, and why — or "none".
   non-empty list>
 BLOCKED_REASON: <only if BLOCKED: what was needed that the spec didn't provide>
 ```
+
+## Amendments
+
+### A1 — 2026-11-17 — accepted deviation
+- **Original sha256**: 850e4a6bc70af3c259d13fd9982bc25d5a9858941b88c819f721f6a57ee9730f
+- **Verdict ref**: FIX, V1-FUEL.07 round 0, lanes-reviewer
+- **Deviation**: criterion 10 (`rebuild` leaves `dumpProjections` byte-equal after every scenario) is not a named test. It is a `finish(w)` helper called at the end of every scenario world, so the file has nine tests for ten criteria.
+- **Reason accepted**: the criterion says "after every scenario"; a helper that runs in every world checks more than one named test would. The reviewer confirmed it runs in all thirteen worlds of the round-0 file and compares the two `dumpProjections` strings with `assert.equal`.
+- **Affected paths**: `tests/server/limiter-wall.test.mjs`
+- **Acceptance criteria**: criterion 10 reads: every world a test builds ends with the `finish(w)` helper, which asserts `dumpProjections` is equal before and after `rebuild`.
