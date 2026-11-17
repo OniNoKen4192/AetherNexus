@@ -30,12 +30,11 @@ export function endOutOfFuel(g: Galaxy, p: EndOutOfFuelParams): { parked: boolea
     .filter((value): value is number => value !== undefined);
   const reset = requestedReset ?? (readingResets.length > 0 ? Math.min(...readingResets) : now + 30 * 60 * 1000);
   const until = new Date(Math.max(reset, now + 60 * 1000)).toISOString();
-  const ts = new Date(now).toISOString();
   const moon = loadMoon(g, p.taskId);
   const scope = moonScope(g, moon);
 
   append(g.db, {
-    kind: "fuel.exhausted", ...scope, voyage_id: p.voyageId, provider: p.provider, ts,
+    kind: "fuel.exhausted", ...scope, voyage_id: p.voyageId, provider: p.provider,
     payload: { until, voyage_id: p.voyageId, ...(p.modelFamily ? { model_family: p.modelFamily } : {}) },
   });
 
@@ -50,15 +49,15 @@ export function endOutOfFuel(g: Galaxy, p: EndOutOfFuelParams): { parked: boolea
   }
 
   append(g.db, {
-    kind: "voyage.out_of_fuel", ...scope, voyage_id: p.voyageId, ship_id: p.shipId, ts,
+    kind: "voyage.out_of_fuel", ...scope, voyage_id: p.voyageId, ship_id: p.shipId,
     payload: { reason: "out_of_fuel", details: p.details },
   });
   append(g.db, {
-    kind: "ship.released", ...scope, voyage_id: p.voyageId, ship_id: p.shipId, ts,
+    kind: "ship.released", ...scope, voyage_id: p.voyageId, ship_id: p.shipId,
     payload: { voyage_id: p.voyageId, outcome: "out_of_fuel" },
   });
   append(g.db, {
-    kind: p.role === "implement" ? "moon.awaiting_pickup" : "moon.review_abandoned", ...scope, ts, payload: {},
+    kind: p.role === "implement" ? "moon.awaiting_pickup" : "moon.review_abandoned", ...scope, payload: {},
   });
   return { parked: false, until };
 }

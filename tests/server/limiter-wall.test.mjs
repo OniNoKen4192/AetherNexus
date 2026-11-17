@@ -4,6 +4,7 @@ import { append, rowToEvent } from "../../dist/db/events.js";
 import { dumpProjections, rebuild } from "../../dist/db/rebuild.js";
 import { openDb } from "../../dist/db/open.js";
 import { endOutOfFuel } from "../../dist/server/limiter/wall.js";
+import { poolState } from "../../dist/server/limiter/pool.js";
 import { tmpDb } from "../helpers.mjs";
 import { seedFleet, seedSystem } from "../fixtures/world.mjs";
 
@@ -139,4 +140,109 @@ test("other providers do not reset repeat detection, while a normal same-provide
   append(normal.db, { kind: "voyage.returned", ...normal.base, voyage_id: returned.voyageId, payload: { role: "implement", report: {} } });
   append(normal.db, { kind: "voyage.audited", ...normal.base, voyage_id: returned.voyageId, payload: { audit: {} } });
   gate(normal); const later = launch(normal, "implement", "A"); assert.equal(hit(normal, later, { provider: "A" }).parked, false); finish(normal);
+});
+
+test("clock: the four events of a first hit are stamped by append, and until follows g.now()", () => {
+  const w = world(); const fixed = Date.now() + 86_400_000; w.g.now = () => fixed;
+  gate(w); const voyage = launch(w); const t0 = Date.now(); const result = hit(w, voyage); const t1 = Date.now();
+  assert.equal(result.until, new Date(fixed + 30 * 60_000).toISOString());
+  const tail = w.db.all("events.byAssignment", { assignment_id: w.base.assignment_id }).map(rowToEvent).slice(-4);
+  assert.deepEqual(tail.map((event) => event.kind), ["fuel.exhausted", "voyage.out_of_fuel", "ship.released", "moon.awaiting_pickup"]);
+  for (const event of tail) assert.ok(t0 <= Date.parse(event.ts) && Date.parse(event.ts) <= t1);
+  finish(w);
+});
+
+test("clock: fuel.exhausted of a second hit is stamped by append", () => {
+  const w = world(); const fixed = Date.now() + 86_400_000; w.g.now = () => fixed;
+  gate(w); const first = launch(w); hit(w, first); nextAfter(w, first.voyageId); const second = launch(w);
+  const t0 = Date.now(); const result = hit(w, second); const t1 = Date.now();
+  assert.equal(result.parked, true);
+  const tail = w.db.all("events.byAssignment", { assignment_id: w.base.assignment_id }).map(rowToEvent).slice(-5);
+  assert.deepEqual(tail.map((event) => event.kind), ["fuel.exhausted", "voyage.adrift", "ship.adrift", "moon.adrift", "decision.opened"]);
+  for (const event of tail) assert.ok(t0 <= Date.parse(event.ts) && Date.parse(event.ts) <= t1);
+  finish(w);
+});
+
+test("clock: a voyage that returns after the wall hit clears the exhaustion", () => {
+  const w = world(); const fixed = Date.now() + 86_400_000; w.g.now = () => fixed;
+  w.g.config = { providers: { fake: { pool: { kind: "window", reserve_floor: 0.1 } } } };
+  gate(w); const first = launch(w); hit(w, first);
+  assert.deepEqual(poolState(w.g, "fake"), { state: "dry", until: new Date(fixed + 30 * 60_000).toISOString() });
+  nextAfter(w, first.voyageId); const second = launch(w);
+  append(w.db, { kind: "voyage.returned", ...w.base, ts: new Date(Date.now() + 1000).toISOString(), voyage_id: second.voyageId, payload: { role: "implement", report: {} } });
+  assert.deepEqual(poolState(w.g, "fake"), { state: "unknown" });
+  finish(w);
+});
+
+test("clock: the return of the holding voyage itself does not clear the exhaustion", () => {
+  const w = world(); const fixed = Date.now() - 86_400_000; w.g.now = () => fixed;
+  w.g.config = { providers: { fake: { pool: { kind: "window", reserve_floor: 0.1 } } } };
+  gate(w); const voyage = launch(w);
+  append(w.db, { kind: "voyage.returned", ...w.base, ts: new Date(Date.now() - 1000).toISOString(), voyage_id: voyage.voyageId, payload: { role: "implement", report: {} } });
+  append(w.db, { kind: "voyage.audited", ...w.base, voyage_id: voyage.voyageId, payload: { audit: {} } });
+  const result = hit(w, voyage);
+  assert.equal(result.parked, false);
+  assert.deepEqual(poolState(w.g, "fake"), { state: "dry", until: new Date(fixed + 30 * 60_000).toISOString() });
+  finish(w);
+});
+
+test("c1: resetsAt wins over live readings", () => {
+  const w = world(); gate(w); const voyage = launch(w);
+  const readingReset = new Date(NOW + 10 * 60_000).toISOString(); const resetsAt = new Date(NOW + 2 * 60 * 60_000).toISOString();
+  append(w.db, { kind: "fuel.reading", ...w.base, provider: "fake", ts: new Date(NOW).toISOString(), payload: { window: "ten-minute", used: 1, resets_at: readingReset } });
+  const result = hit(w, voyage, { resetsAt });
+  assert.equal(result.until, resetsAt); assert.equal(events(w, "fuel.exhausted").at(-1).payload.until, resetsAt);
+  finish(w);
+});
+
+test("c2: the earliest reading wins when it was recorded first", () => {
+  const w = world(); gate(w); const voyage = launch(w);
+  const soon = new Date(NOW + 10 * 60_000).toISOString(); const late = new Date(NOW + 3 * 86_400_000).toISOString();
+  append(w.db, { kind: "fuel.reading", ...w.base, provider: "fake", ts: new Date(NOW).toISOString(), payload: { window: "ten-minute", used: 1, resets_at: soon } });
+  append(w.db, { kind: "fuel.reading", ...w.base, provider: "fake", ts: new Date(NOW).toISOString(), payload: { window: "three-day", used: 0.8, resets_at: late } });
+  assert.equal(hit(w, voyage).until, soon);
+  finish(w);
+});
+
+test("c8: a second customs hit on one provider parks despite freighter voyages in between", () => {
+  const w = world(["X"]); gate(w); const firstFreight = launch(w, "implement", "X");
+  append(w.db, { kind: "voyage.returned", ...w.base, voyage_id: firstFreight.voyageId, payload: { role: "implement", report: {} } });
+  append(w.db, { kind: "voyage.audited", ...w.base, voyage_id: firstFreight.voyageId, payload: { audit: {} } });
+  const firstCustoms = launch(w, "review", "X"); assert.equal(hit(w, firstCustoms, { role: "review", provider: "X" }).parked, false);
+  assert.equal(w.db.get("moons.byId", { id: w.moon }).status, "audited");
+  nextAfter(w, firstFreight.voyageId, 2); const secondFreight = launch(w, "implement", "X", 2);
+  append(w.db, { kind: "voyage.returned", ...w.base, voyage_id: secondFreight.voyageId, payload: { role: "implement", report: {} } });
+  append(w.db, { kind: "voyage.audited", ...w.base, voyage_id: secondFreight.voyageId, payload: { audit: {} } });
+  const secondCustoms = launch(w, "review", "X", 2); const result = hit(w, secondCustoms, { role: "review", provider: "X" });
+  assert.equal(result.parked, true);
+  const moon = w.db.get("moons.byId", { id: w.moon }); assert.equal(moon.status, "adrift"); assert.equal(moon.park_reason, "rate_limited");
+  assert.equal(w.db.get("voyages.byId", { id: secondCustoms.voyageId }).status, "adrift"); assert.equal(w.db.get("ships.byId", { id: secondCustoms.shipId }).status, "adrift");
+  assert.equal(w.db.all("decisions.pendingByTarget", { target_id: "T1" }).length, 1);
+  assert.equal(w.db.get("voyages.byId", { id: secondFreight.voyageId }).status, "holding"); assert.equal(w.db.get("ships.byId", { id: secondFreight.shipId }).status, "assigned");
+  finish(w);
+});
+
+test("c8: a customs hit does not count against the next freighter hit", () => {
+  const w = world(["X"]); gate(w); const firstFreight = launch(w, "implement", "X");
+  append(w.db, { kind: "voyage.returned", ...w.base, voyage_id: firstFreight.voyageId, payload: { role: "implement", report: {} } });
+  append(w.db, { kind: "voyage.audited", ...w.base, voyage_id: firstFreight.voyageId, payload: { audit: {} } });
+  const customs = launch(w, "review", "X"); assert.equal(hit(w, customs, { role: "review", provider: "X" }).parked, false);
+  nextAfter(w, firstFreight.voyageId, 2); const secondFreight = launch(w, "implement", "X", 2);
+  const result = hit(w, secondFreight, { provider: "X" });
+  assert.equal(result.parked, false); assert.equal(w.db.get("voyages.byId", { id: secondFreight.voyageId }).status, "out_of_fuel");
+  assert.equal(w.db.get("ships.byId", { id: secondFreight.shipId }).status, "idle"); assert.equal(w.db.get("moons.byId", { id: w.moon }).status, "awaiting_pickup");
+  assert.equal(w.db.all("decisions.pendingByTarget", { target_id: "T1" }).length, 0);
+  finish(w);
+});
+
+test("c9: a normal return on the provider between two hits restarts the count", () => {
+  const w = world(["A"]); gate(w); const first = launch(w, "implement", "A"); assert.equal(hit(w, first, { provider: "A" }).parked, false);
+  nextAfter(w, first.voyageId); const normal = launch(w, "implement", "A");
+  append(w.db, { kind: "voyage.returned", ...w.base, voyage_id: normal.voyageId, payload: { role: "implement", report: {} } });
+  append(w.db, { kind: "voyage.audited", ...w.base, voyage_id: normal.voyageId, payload: { audit: {} } });
+  nextAfter(w, normal.voyageId, 2); const third = launch(w, "implement", "A", 2); assert.equal(hit(w, third, { provider: "A" }).parked, false);
+  assert.equal(w.db.get("moons.byId", { id: w.moon }).status, "awaiting_pickup"); assert.equal(w.db.all("decisions.pendingByTarget", { target_id: "T1" }).length, 0);
+  nextAfter(w, third.voyageId, 2); const fourth = launch(w, "implement", "A", 2); assert.equal(hit(w, fourth, { provider: "A" }).parked, true);
+  assert.equal(w.db.get("moons.byId", { id: w.moon }).status, "adrift");
+  finish(w);
 });
