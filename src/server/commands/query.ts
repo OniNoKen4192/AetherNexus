@@ -96,7 +96,7 @@ export function snapshot(g: Galaxy, ctx: OwnerCtx & { failures: Failure[]; ready
 
 export function availableActions(g: Galaxy, taskId: string, ctx: OwnerCtx): Action[] {
   const moon = loadMoon(g, taskId);
-  if (pendingTreeDecision(g, taskId)) return ["answer", ...((moon.status === "adrift" || moon.status === "quarantined") ? ["drop" as const] : [])];
+  if (pendingTreeDecision(g, taskId)) return ["answer", ...((moon.status === "adrift" || moon.status === "quarantined" || moon.status === "awaiting_pickup") ? ["drop" as const] : [])];
   if (moon.status === "emitted" || moon.status === "gated") return ["launch"];
   const voyages = g.db.all("voyages.byAssignment", { assignment_id: moon.assignment_id });
   if (moon.status === "implementing" || moon.status === "reviewing") {
@@ -120,6 +120,7 @@ export function availableActions(g: Galaxy, taskId: string, ctx: OwnerCtx): Acti
   if (moon.status === "adrift" || moon.status === "quarantined") {
     return ["reply", "drop", ...(repliedSincePark(g, moon.assignment_id) ? ["launch" as const] : [])];
   }
+  if (moon.status === "awaiting_pickup") return ["launch", "drop"];
   return [];
 }
 

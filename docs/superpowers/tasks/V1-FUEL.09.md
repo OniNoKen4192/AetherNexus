@@ -185,3 +185,13 @@ DEVIATIONS: <anything done differently than specified, and why — or "none".
   non-empty list>
 BLOCKED_REASON: <only if BLOCKED: what was needed that the spec didn't provide>
 ```
+
+## Amendments
+
+### A1 — 2026-11-17 — accepted deviation
+- **Original sha256**: f24cc9224f43c5339315f227ecdbb58756bd12766e738fe259ca80034b60e4f2
+- **Verdict ref**: FIX, V1-FUEL.09 round 0, lanes-reviewer (hand-off reconstructed by the controller after the implementer's BACKEND_FAILURE; no deviation list was declared)
+- **Deviation**: when a freighter's report says `RATE_LIMITED`, `launchMoon` calls `endOutOfFuel` with `model: choice.model` in addition to the specified fields, but only when the flight was a refuel.
+- **Reason accepted**: neutral. `endOutOfFuel` accepts `model` and does not read it; `runVoyage` already passes a model at its own call site. No event, projection or message differs.
+- **Affected paths**: `src/server/commands/launch.ts`
+- **Acceptance criteria**: unchanged
