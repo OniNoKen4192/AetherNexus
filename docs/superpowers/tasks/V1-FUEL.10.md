@@ -144,3 +144,13 @@ DEVIATIONS: <anything done differently than specified, and why — or "none".
   non-empty list>
 BLOCKED_REASON: <only if BLOCKED: what was needed that the spec didn't provide>
 ```
+
+## Amendments
+
+### A1 — 2026-11-18 — accepted deviation
+- **Original sha256**: 89121593de4155c911a6c144df60a36fbe42071a2073b7ccb75a8283b895e9da
+- **Verdict ref**: APPROVE, V1-FUEL.10, lanes-reviewer (first pass)
+- **Deviation**: Criterion 11's test does not compare the live hold with a literal `until`. It reads `until` from the world's one `fuel.exhausted` event for `fake` (`events.latestByKindProvider`, `rowToEvent`) and deep-equals the whole hold against it.
+- **Reason accepted**: The wall hit goes through the real `launchMoon`, and the fake adapter stamps the reset from the wall clock (`Date.now() + 400 ms`), which dominates the `g.now() + 60 s` floor when `g.now` is pinned to T; no literal exists. The value comes from the event log, the limiter's input, not from the planner's output. Reviewer mutants that drop the hold's `until` or hard-wire another time both fail this test.
+- **Affected paths**: tests/server/scheduler-plan.test.mjs
+- **Acceptance criteria**: Criterion 11, live state: `actions` is `[]` and `holds` deep-equals `[{ taskId: "T1", role: "implement", provider: "fake", reason: "dry", until: <the until of the world's one fuel.exhausted event for fake> }]`. The header's "expected values are literals" does not apply to that one value. Everything else unchanged.
