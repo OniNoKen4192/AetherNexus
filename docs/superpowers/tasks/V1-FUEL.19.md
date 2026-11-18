@@ -125,3 +125,29 @@ DEVIATIONS: <anything done differently than specified, and why — or "none".
   non-empty list>
 BLOCKED_REASON: <only if BLOCKED: what was needed that the spec didn't provide>
 ```
+
+## Amendments
+
+### A1 — 2026-11-18 — accepted deviation
+- **Original sha256**: 4a375fea8b01c447574a1c9226865b81f6051faddafa4895da3c1828dfccb63b
+- **Verdict ref**: APPROVE, V1-FUEL.19 round 0, lanes-reviewer
+- **Deviation**: test 6 does not assert a `dropped` status. It asserts the moon's row reads `body_status` `barren` and that exactly one `moon.dropped` event is in the moon's events.
+- **Reason accepted**: `dropMoon` appends `moon.dropped` and then `moon.cleared` in one call, and `moons.clear` sets `status` to NULL. The reviewer read the row after `dropMoon`: `status` null, `body_status` `barren`, `task_id` null. A `dropped` status is never readable on the stored row, so the original wording could not be asserted. Same form as the existing drop test in `tests/server/park.test.mjs`.
+- **Affected paths**: tests/server/launch-contraband.test.mjs
+- **Acceptance criteria**: criterion 6 reads: "After 1, `dropMoon` → exactly one `moon.dropped` event in the moon's events and the moon's row reads `body_status` `barren`; every ship `idle`; no decision pending."
+
+### A2 — 2026-11-18 — accepted deviation
+- **Original sha256**: 4a375fea8b01c447574a1c9226865b81f6051faddafa4895da3c1828dfccb63b
+- **Verdict ref**: APPROVE, V1-FUEL.19 round 0, lanes-reviewer
+- **Deviation**: tests 3 and 5 assert the moon's status on the value `launchMoon` resolves with (`moonStatus`), not on the stored moon. Test 3 also asserts the stored `park_reason`; test 5 also asserts the stored `round`.
+- **Reason accepted**: criterion 3 already says "resolves with `moonStatus: "adrift"`", and two mutants that return `adrift` without storing it turn test 3 red through `park_reason`. On criterion 5's path the returned value is `loadMoon(g, taskId).status`, read from the store in a line this task does not change; the existing relaunch tests use the same form.
+- **Affected paths**: tests/server/launch-contraband.test.mjs
+- **Acceptance criteria**: criterion 3 unchanged. Criterion 5's ending reads: "→ `launchMoon` resolves with `moonStatus: "audited"`, and the moon's stored `round` is one more than before that launch."
+
+### A3 — 2026-11-18 — accepted deviation
+- **Original sha256**: 4a375fea8b01c447574a1c9226865b81f6051faddafa4895da3c1828dfccb63b
+- **Verdict ref**: APPROVE, V1-FUEL.19 round 0, lanes-reviewer
+- **Deviation**: the implementer could not run the new tests against the old code, so "criteria 1, 2, 3, 5 and 6 fail before the change" was reported from reading only.
+- **Reason accepted**: the reviewer ran it, replacing the compiled `launch.js` in memory with the old `if (relaunch) throw` line (worktree unchanged): tests 1, 2, 3, 4, 5 and 6 fail with `carry-over audit refused the parked worktree (…)`, test 7 passes. Test 4 fails as a whole because its setup is criterion 1's park; its second half is behaviour that existed before.
+- **Affected paths**: tests/server/launch-contraband.test.mjs
+- **Acceptance criteria**: unchanged
