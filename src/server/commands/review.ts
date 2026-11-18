@@ -8,18 +8,11 @@ import type { AgentEvent, ReviewReport } from "../../providers/adapter.js";
 import { appendAmendment, hashSpec } from "../../validate/spec.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
+import { chooseProvider } from "../limiter/limiter.js";
 import { requireTreeAnswered } from "./decision.js";
-import { loadMoon, moonScope, parkVoyage, providerAtCap, recordTreeWrite, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
+import { loadMoon, moonScope, parkVoyage, recordTreeWrite, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
 
 type VoyageRow = { id: string; ship_id: string; status: string; round: number; report: string | null };
-
-function pickProvider(g: Galaxy, requested: string | undefined): string {
-  if (requested) return requested;
-  const ids = g.config.roles.review;
-  const first = ids.find((id) => g.adapters[id] && !providerAtCap(g, id) && pickIdleShip(g.db, "customs", id)) ?? ids[0];
-  if (!first) throw new Refusal("no provider is configured for the review role");
-  return first;
-}
 
 /** Header stays one line; the delta spec follows as an indented block. */
 function amendmentFor(text: string, round: number, reasoning: string, delta: string | undefined): string {
@@ -30,7 +23,7 @@ function amendmentFor(text: string, round: number, reasoning: string, delta: str
 }
 
 export async function inspectMoon(
-  g: Galaxy, input: { taskId: string; provider?: string; onEvent?: (e: AgentEvent) => void; reviewScript?: string; signal?: AbortSignal; onLaunched?: (voyageId: string) => void },
+  g: Galaxy, input: { taskId: string; provider?: string; override?: boolean; onEvent?: (e: AgentEvent) => void; reviewScript?: string; signal?: AbortSignal; onLaunched?: (voyageId: string) => void },
 ): Promise<{ voyageId: string; verdict: ReviewReport | null; moonStatus: MoonStatus }> {
   const { taskId } = input;
   requireTreeAnswered(g, taskId);
@@ -45,7 +38,18 @@ export async function inspectMoon(
   const auditJson = JSON.stringify(audited.payload["audit"], null, 2);
   const implReport = freighter.report ? (JSON.parse(freighter.report) as { raw?: string }) : {};
 
-  const provider = pickProvider(g, input.provider);
+  const choice = chooseProvider(g, {
+    role: "review", tier: moon.tier, mayRefuel: false,
+    ...(input.provider !== undefined ? { requested: input.provider } : {}), override: input.override === true,
+  });
+  if (choice.kind === "held") {
+    const reset = choice.until ? `, resets ${choice.until}` : "";
+    throw new Refusal(`moon ${taskId} is waiting on ${choice.provider} fuel (${choice.reason})${reset}`, {
+      provider: choice.provider, reason: choice.reason, until: choice.until ?? null, can_refuel: choice.canRefuel ?? null,
+    });
+  }
+  if (choice.kind === "none") throw new Refusal(choice.message);
+  const provider = choice.provider;
   if (!g.adapters[provider]) throw new Refusal(`provider '${provider}' is not configured`);
   if (!pickIdleShip(g.db, "customs", provider)) throw new Refusal(`all ${shipsNoun("customs")} in fleet '${provider}' are assigned`);
 
@@ -82,7 +86,7 @@ export async function inspectMoon(
     append(g.db, { kind: "voyage.quarantined", ...fscope, payload: {} });
     append(g.db, { kind: "ship.quarantined", ...fscope, payload: { voyage_id: freighter.id, outcome: "quarantined" } });
     append(g.db, { kind: "decision.opened", ...scope, payload: { kind: "reject", target_kind: "moon", target_id: taskId, reasoning: verdict.reasoning } });
-  } else if (moon.round >= g.config.automation.max_fix_rounds) {
+  } else if (g.db.all<{ verdict: string }>("verdicts.byAssignment", { assignment_id: moon.assignment_id }).filter((row) => row.verdict === "FIX").length >= g.config.automation.max_fix_rounds) {
     parkVoyage(g, { taskId, voyageId: freighter.id, shipId: freighter.ship_id, reason: "max_fix_rounds", details: `FIX verdict after round ${moon.round} (max ${g.config.automation.max_fix_rounds}): ${verdict.reasoning}` });
   } else {
     append(g.db, { kind: "voyage.superseded", ...fscope, payload: {} });

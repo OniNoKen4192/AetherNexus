@@ -18,10 +18,11 @@ export type CommandOutcome = { status: 200; body: { result: unknown } } | { stat
 export class UnknownCommand extends Error {}
 export class BadRequest extends Error {}
 
-type Field = { type: "string" | "integer" | "strings"; optional?: true; values?: readonly string[] };
+type Field = { type: "string" | "integer" | "strings" | "boolean"; optional?: true; values?: readonly string[] };
 type Definition = { fields: Record<string, Field>; run: (g: Galaxy, runner: VoyageRunner, input: Record<string, unknown>) => unknown | Promise<unknown> };
 const s = (optional = false, values?: readonly string[]): Field => ({ type: "string", ...(optional ? { optional: true as const } : {}), ...(values ? { values } : {}) });
 const strings = (optional = false): Field => ({ type: "strings", ...(optional ? { optional: true as const } : {}) });
+const boolean = (optional = false): Field => ({ type: "boolean", ...(optional ? { optional: true as const } : {}) });
 
 const COMMANDS: Record<string, Definition> = {
   "system.create": { fields: { slug: s(), title: s(), brief: s(), kind: s(true, ["feature", "bug"]), seed: { type: "integer", optional: true } }, run: (g, _r, i) => createSystem(g, i as Parameters<typeof createSystem>[1]) },
@@ -32,8 +33,8 @@ const COMMANDS: Record<string, Definition> = {
     if (rel.startsWith("..") || path.isAbsolute(rel)) throw new BadRequest("specPath must be inside the repository");
     return assignMoon(g, i as Parameters<typeof assignMoon>[1]);
   } },
-  "moon.launch": { fields: { taskId: s(), provider: s(true) }, run: (g, runner, i) => runner.start(i["taskId"] as string, ({ signal, onLaunched }) => launchMoon(g, { ...(i as { taskId: string; provider?: string }), signal, onLaunched })) },
-  "voyage.inspect": { fields: { taskId: s(), provider: s(true) }, run: (g, runner, i) => runner.start(i["taskId"] as string, ({ signal, onLaunched }) => inspectMoon(g, { ...(i as { taskId: string; provider?: string }), signal, onLaunched })) },
+  "moon.launch": { fields: { taskId: s(), provider: s(true), override: boolean(true), refuel: boolean(true) }, run: (g, runner, i) => runner.start(i["taskId"] as string, ({ signal, onLaunched }) => launchMoon(g, { ...(i as { taskId: string; provider?: string; override?: boolean; refuel?: boolean }), signal, onLaunched })) },
+  "voyage.inspect": { fields: { taskId: s(), provider: s(true), override: boolean(true) }, run: (g, runner, i) => runner.start(i["taskId"] as string, ({ signal, onLaunched }) => inspectMoon(g, { ...(i as { taskId: string; provider?: string; override?: boolean }), signal, onLaunched })) },
   "voyage.dock": { fields: { taskId: s() }, run: (g, _r, i) => dockMoon(g, i as Parameters<typeof dockMoon>[1]) },
   "voyage.cancel": { fields: { voyageId: s() }, run: (_g, runner, i) => { runner.cancel(i["voyageId"] as string); return { cancelled: true }; } },
   "moon.reply": { fields: { taskId: s(), note: s() }, run: (g, _r, i) => replyMoon(g, i as Parameters<typeof replyMoon>[1]) },
@@ -71,6 +72,8 @@ function validate(body: unknown, fields: Record<string, Field>): Record<string, 
       if (field.values && !field.values.includes(value)) throw new BadRequest(`field '${key}' has an invalid value`);
     } else if (field.type === "integer") {
       if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) throw new BadRequest(`field '${key}' must be a finite integer`);
+    } else if (field.type === "boolean") {
+      if (typeof value !== "boolean") throw new BadRequest(`field '${key}' must be true or false`);
     } else if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.length === 0)) {
       throw new BadRequest(`field '${key}' must be an array of non-empty strings`);
     }
