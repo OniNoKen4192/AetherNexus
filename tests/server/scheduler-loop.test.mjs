@@ -221,3 +221,91 @@ test("stop waits for the pass and leaves voyages alone", async () => {
     assert.equal(log(x).length, count, "a stopped scheduler writes nothing");
   } finally { await x.close(); }
 });
+
+// ---- fuel holds (v1 slice 2) ----
+
+/** One provider with a fuel pool, so a low or dry pool cannot be routed around. */
+const pooled = (c) => { c.roles = { implement: ["fake"], review: ["fake"] }; c.providers.fake.pool = { kind: "window", reserve_floor: 0.1 }; };
+const ahead = (ms) => new Date(Date.now() + ms).toISOString();
+const reading = (x, used, resets_at) => append(x.w.g.db, { kind: "fuel.reading", provider: "fake", payload: { window: "window", used, resets_at, source: "reported" } });
+const exhausted = (x, until) => append(x.w.g.db, { kind: "fuel.exhausted", provider: "fake", payload: { until, voyage_id: "v" } });
+const held = (x, taskId = "T1") => log(x).filter((e) => e.kind === "limiter.held" && e.task_id === taskId);
+
+test("a held freighter writes limiter.held once, not on every pass", async () => {
+  const x = await startWorld("happy", pooled, FAST);
+  try {
+    const resets = ahead(3_600_000);
+    reading(x, 0.95, resets);
+    setAutomationLevel(x.w.g, { level: "roundabout" });
+    await until(() => held(x).length === 1);
+    await sleep(700); // three ticks, and every event wakes a pass as well
+    const events = held(x);
+    assert.equal(events.length, 1);
+    assert.deepEqual(events[0].payload, { task_id: "T1", role: "implement", provider: "fake", reason: "low", until: resets });
+    assert.equal(events[0].moon_id, moon(x).id, "scoped to the moon");
+    assert.deepEqual(acted(x), []);
+    assert.equal(moon(x).status, "emitted");
+  } finally { await x.close(); }
+});
+
+test("a hold whose reason or until changes is written again", async () => {
+  const x = await startWorld("happy", pooled, FAST);
+  try {
+    const resets = ahead(3_600_000), until2 = ahead(7_200_000);
+    reading(x, 0.95, resets);
+    setAutomationLevel(x.w.g, { level: "roundabout" });
+    await until(() => held(x).length === 1);
+    exhausted(x, until2);
+    await until(() => held(x).length === 2);
+    await sleep(500);
+    assert.deepEqual(held(x).map((e) => [e.payload.reason, e.payload.until]), [["low", resets], ["dry", until2]]);
+  } finally { await x.close(); }
+});
+
+test("a hold is written again after the moon was visited in between", async () => {
+  const x = await startWorld("crash-midrun", pooled, FAST);
+  try {
+    const resets = ahead(3_600_000);
+    reading(x, 0.95, resets);
+    setAutomationLevel(x.w.g, { level: "roundabout" });
+    await until(() => held(x).length === 1);
+    reading(x, 0.1, resets); // the pool is back: the freighter is sent, and its ship breaks down mid-run
+    await until(() => moon(x).status === "adrift");
+    reading(x, 0.95, resets);
+    replyMoon(x.w.g, { taskId: "T1", note: "try again" });
+    await until(() => held(x).length === 2);
+    await sleep(500);
+    const events = held(x);
+    assert.equal(events.length, 2);
+    assert.deepEqual(events[1].payload, events[0].payload, "the same hold, written again because a freighter flew in between");
+    assert.deepEqual(acted(x), ["launch"]);
+  } finally { await x.close(); }
+});
+
+test("a pool that refills is acted on by the tick with no event", async () => {
+  const x = await startWorld("happy", pooled, { server: { pollMs: 20, schedulerTickMs: 100 } });
+  try {
+    exhausted(x, ahead(600));
+    setAutomationLevel(x.w.g, { level: "roundabout" });
+    await until(() => held(x).length === 1);
+    assert.deepEqual(acted(x), [], "held while the pool is dry");
+    await until(() => moon(x).status === "merged");
+    assert.deepEqual(acted(x), ["launch", "inspect", "dock"]);
+    assert.equal(held(x).length, 1);
+  } finally { await x.close(); }
+});
+
+test("holds never count as failures", async () => {
+  const x = await startWorld("happy", pooled, { server: { pollMs: 20, schedulerTickMs: 50 } });
+  try {
+    reading(x, 0.95, ahead(3_600_000));
+    setAutomationLevel(x.w.g, { level: "roundabout" });
+    await until(() => held(x).length === 1);
+    await sleep(600); // a dozen passes
+    assert.equal(moon(x).status, "emitted");
+    assert.deepEqual(log(x).filter((e) => e.kind === "moon.adrift"), []);
+    assert.deepEqual(pending(x), []);
+    assert.deepEqual(acted(x), []);
+    assert.equal(held(x).length, 1);
+  } finally { await x.close(); }
+});

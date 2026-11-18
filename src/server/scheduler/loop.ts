@@ -1,6 +1,6 @@
 import { GitRefusal } from "../../core/git.js";
 import { TransitionRefused } from "../../core/transitions.js";
-import { append, type EventRow } from "../../db/events.js";
+import { append, rowToEvent, type EventRow } from "../../db/events.js";
 import { reloadConfig } from "../commands/config.js";
 import { dockMoon } from "../commands/dock.js";
 import { launchMoon } from "../commands/launch.js";
@@ -11,7 +11,7 @@ import { Refusal } from "../errors.js";
 import { followEvents } from "../follow.js";
 import type { Galaxy } from "../galaxy.js";
 import type { VoyageRunner } from "../http/runner.js";
-import { effectiveRung, plan, type PlanCtx, type PlannedAction } from "./plan.js";
+import { effectiveRung, planWithHolds, type Hold, type PlanCtx, type PlannedAction } from "./plan.js";
 
 export type Scheduler = {
   /** Ask for a pass. Calls during a pass coalesce into one further pass. */
@@ -34,6 +34,8 @@ function messageOf(error: unknown): string {
 /**
  * The loop that acts on what `plan` decides: it sends freighters, has customs inspect, docks, and parks a moon whose
  * voyage's process is gone. Woken by every new event and by a slow tick. One pass at a time; an error never stops it.
+ * A ship the limiter holds for fuel is not an action and never a failure: the hold is written to the log once
+ * (`limiter.held`), and the tick sends the ship when the pool is back.
  */
 export function createScheduler(g: Galaxy, opts: { runner: VoyageRunner; pollMs: number; tickMs?: number }): Scheduler {
   const { runner } = opts;
@@ -61,8 +63,10 @@ export function createScheduler(g: Galaxy, opts: { runner: VoyageRunner; pollMs:
   async function execute(a: PlannedAction): Promise<void> {
     if (a.action === "dock") { dockMoon(g, { taskId: a.taskId }); return; }
     if (a.action === "park_stale") { parkStaleMoon(g, { taskId: a.taskId, reason: "the voyage's process is gone", details: "parked by the scheduler: the voyage's process is gone" }); return; }
+    // No provider is passed: the command asks the limiter again and records a reroute or a refuel itself. The plan's
+    // provider and model are a forecast; only its permission to refuel is handed on.
     const send: (input: { taskId: string; signal: AbortSignal; onLaunched: (voyageId: string) => void }) => Promise<unknown> =
-      a.action === "launch" ? (input) => launchMoon(g, input) : (input) => inspectMoon(g, input);
+      a.action === "launch" ? (input) => launchMoon(g, { ...input, ...(a.refuel ? { refuel: true } : {}) }) : (input) => inspectMoon(g, input);
     busy.add(a.taskId);
     try {
       // Resolves once the voyage is launched (or the command returned without one); rejects when it is refused before launch.
@@ -77,8 +81,34 @@ export function createScheduler(g: Galaxy, opts: { runner: VoyageRunner; pollMs:
     }
   }
 
+  /**
+   * Write `limiter.held` when a ship starts waiting on fuel. The plan reports the same hold on every pass, and every
+   * event wakes a pass, so it is written again only when the provider, reason or reset time changed, or a ship of the
+   * same role was launched for the moon since.
+   */
+  function recordHold(hold: Hold): void {
+    const moon = loadMoon(g, hold.taskId);
+    const events = g.db.all<EventRow>("events.byAssignment", { assignment_id: moon.assignment_id }).map(rowToEvent);
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i]!;
+      if (e.kind === "voyage.launched" && e.payload["role"] === hold.role) break;
+      if (e.kind !== "limiter.held" || e.payload["role"] !== hold.role) continue;
+      if (e.payload["provider"] === hold.provider && e.payload["reason"] === hold.reason && e.payload["until"] === hold.until) return;
+      break;
+    }
+    append(g.db, {
+      kind: "limiter.held", ...moonScope(g, moon),
+      payload: { task_id: hold.taskId, role: hold.role, provider: hold.provider, reason: hold.reason, ...(hold.until !== undefined ? { until: hold.until } : {}) },
+    });
+  }
+
   async function pass(): Promise<void> {
-    const actions = plan(g, ctx());
+    const { actions, holds } = planWithHolds(g, ctx());
+    for (const hold of holds) {
+      if (stopped) return;
+      try { recordHold(hold); }
+      catch (error) { notice(`the scheduler could not record that ${hold.taskId} is waiting on ${hold.provider} fuel: ${messageOf(error)}`); }
+    }
     for (const [k, record] of failed) if (statusOf(record.taskId) !== record.status) failed.delete(k);
     for (const action of actions) {
       if (stopped) return;
@@ -94,7 +124,8 @@ export function createScheduler(g: Galaxy, opts: { runner: VoyageRunner; pollMs:
         // If the plan no longer asks for this, the moon's state or the capacity moved under us (a human click, another
         // voyage taking the ship): a race, not a failure.
         let stillPlanned: boolean;
-        try { stillPlanned = plan(g, ctx()).some((a) => a.taskId === action.taskId && a.action === action.action); }
+        // A ship the limiter now holds is in the plan's holds, not its actions: also not a failure.
+        try { stillPlanned = planWithHolds(g, ctx()).actions.some((a) => a.taskId === action.taskId && a.action === action.action); }
         catch { stillPlanned = false; }
         if (!stillPlanned) continue;
         if (!failed.has(key(action))) {
