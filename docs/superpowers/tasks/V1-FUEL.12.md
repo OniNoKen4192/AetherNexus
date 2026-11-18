@@ -143,3 +143,29 @@ DEVIATIONS: <anything done differently than specified, and why — or "none".
   non-empty list>
 BLOCKED_REASON: <only if BLOCKED: what was needed that the spec didn't provide>
 ```
+
+## Amendments
+
+### A1 — 2026-11-18 — accepted deviation
+- **Original sha256**: 3edfa4457b78b41f9271a41c74b1e1982dab3cb359ca3b2d4525586c5ac38d1c
+- **Verdict ref**: APPROVE, V1-FUEL.12, lanes-reviewer (first pass)
+- **Deviation**: The consumed type `OwnerCtx` (spec: `{ ownPid; tracks? }`, "exact current code") gained an optional `assignmentEvents?: EventRow[]`. `voyageOwner` uses it in place of its own `events.byAssignment` read, so `availableActions` reuses the events `snapshot` and `moonDetail` already hold when called from the new `fuelFields` helper. `availableActions` and the `actions` of `moonDetail` therefore trust a caller-supplied list; `snapshot` overrides it per moon.
+- **Reason accepted**: No caller passes the field (`src/server/http/server.ts`, `src/server/scheduler/plan.ts`); the ctx is rebuilt per moon and never mutated; inside `fuelFields` the owner cannot change the result. `snapshot`, `moonDetail` and `availableActions` equal the base build on every existing key in 22 world states × 4 ctx variants, including two moons flying under different owners. It is what makes `snapshot` read an assignment's events exactly once. Follow-up for the final review: move the shared events to an internal helper argument and restore `OwnerCtx`.
+- **Affected paths**: `src/server/commands/query.ts`
+- **Acceptance criteria**: unchanged
+
+### A2 — 2026-11-18 — accepted deviation
+- **Original sha256**: 3edfa4457b78b41f9271a41c74b1e1982dab3cb359ca3b2d4525586c5ac38d1c
+- **Verdict ref**: APPROVE, V1-FUEL.12, lanes-reviewer (first pass)
+- **Deviation**: Tests 9, 10 and 11 do not assert the moon's status (`audited`, `merged`, `adrift`, `awaiting_pickup`) and rely on the fixture and command sequence. Test 5 asserts "windows still lists the reading" as `windows.length === 1`. Test 12 asserts `owner` (null) only on the launched voyage, and each of its worlds has exactly one voyage.
+- **Reason accepted**: The reviewer confirmed the states the tests rely on, and no mutant survives because of 5, 9, 10 or 11. Criterion 12's letter is met. One mutant survives because of its single-voyage worlds (`refuel_for` taken from the assignment's first launch event); the implementation was checked directly: on a moon with a refuelled freighter and a customs voyage, only the freighter carries `refuel_for: "fake"`, in both reads.
+- **Affected paths**: `tests/server/query-fuel.test.mjs`
+- **Acceptance criteria**: 1–11, 13 and 14 unchanged. 12 as tested: a refuelled freighter has `refuel_for` `"fake"` and a plain freighter `null`, in both reads, each on a moon with one voyage, with `owner` null once returned. The two-voyage case is owed by a later task (suggested: V1-FUEL.13).
+
+### A3 — 2026-11-18 — accepted deviation
+- **Original sha256**: 3edfa4457b78b41f9271a41c74b1e1982dab3cb359ca3b2d4525586c5ac38d1c
+- **Verdict ref**: APPROVE, V1-FUEL.12, lanes-reviewer (first pass)
+- **Deviation**: `moonDetail` calls `availableActions` twice (once inside `fuelFields`, once for `actions`). The second call is not given the shared events, so a moon with a flying voyage has its events read twice — against "the events of an assignment are read once per assignment".
+- **Reason accepted**: `actions` is unchanged in value against the base in every world compared. The count went down from the base (three reads to two); `snapshot` reads once per assigned moon.
+- **Affected paths**: `src/server/commands/query.ts`
+- **Acceptance criteria**: unchanged. The constraint is read as: once per assigned moon in `snapshot`, at most twice in `moonDetail`.
