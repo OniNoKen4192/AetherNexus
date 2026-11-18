@@ -167,10 +167,13 @@ export async function launchMoon(
     const runCarry = (): AuditReport => auditTask(g, { taskId, worktree }, deps?.audit ?? audit);
     const parkMoon = (reason: string, details: Record<string, unknown>): { voyageId: string; audit: AuditReport | null; moonStatus: MoonStatus } => {
       // A moon that is already parked cannot go adrift again: refuse and leave it as it is (fix the worktree, then relaunch).
-      if (relaunch) throw new Refusal(`carry-over audit refused the parked worktree (${reason})`, details);
+      if (status === "adrift" || status === "quarantined") throw new Refusal(`carry-over audit refused the parked worktree (${reason})`, details);
       // The previous freighter voyage is already superseded (cannot go adrift), so park the moon itself.
       append(g.db, { kind: "moon.adrift", ...scope, payload: { reason } });
-      append(g.db, { kind: "decision.opened", ...scope, payload: { kind: "adrift", target_kind: "moon", target_id: taskId, reasoning: `round ${moon.round} work changed after its audit (${reason}): ${JSON.stringify(details)}` } });
+      const reasoning = status === "awaiting_pickup"
+        ? `${reason === "baseline_tampered" ? "raided: the gate baseline changed while the cargo awaited pickup" : "contraband in the cargo awaiting pickup"}: ${JSON.stringify(details)}`
+        : `round ${moon.round} work changed after its audit (${reason}): ${JSON.stringify(details)}`;
+      append(g.db, { kind: "decision.opened", ...scope, payload: { kind: "adrift", target_kind: "moon", target_id: taskId, reasoning } });
       return { voyageId: "", audit: null, moonStatus: "adrift" };
     };
     let carry: AuditReport;
