@@ -135,3 +135,36 @@ test("a reviewing moon whose implement voyage is docked (a crashed dock) still o
     assert.deepEqual(availableActions(x.w.g, "T1", { ownPid: process.pid }), ["dock"]);
   } finally { await x.close(); }
 });
+
+test("fuel: snapshot and moon detail expose matching pool holds", async () => {
+  const x = await startWorld("happy", (c) => {
+    c.providers.fake.pool = { kind: "window", reserve_floor: 0.1 };
+    c.roles = { implement: ["fake"], review: ["fake"] };
+  });
+  try {
+    const until = new Date(Date.now() + 3_600_000).toISOString();
+    append(x.w.g.db, { kind: "fuel.reading", provider: "fake", payload: { window: "5h", used: 0.95, resets_at: until, source: "reported" } });
+    const snapshot = await x.api("/api/snapshot"), detail = await x.api("/api/moons/T1");
+    assert.equal(snapshot.status, 200); assert.equal(detail.status, 200);
+    assert.equal(snapshot.json.pools.length, 1); assert.equal(snapshot.json.pools[0].provider, "fake");
+    const assigned = snapshot.json.systems.flatMap((s) => s.planets).flatMap((p) => p.moons).filter((m) => m.task_id !== null);
+    assert.ok(assigned.length > 0); assert.ok(assigned.every((m) => Object.hasOwn(m, "waiting_on_fuel") && Object.hasOwn(m, "can_refuel")));
+    const moon = assigned.find((m) => m.task_id === "T1"), wait = { provider: "fake", reason: "low", until };
+    assert.deepEqual(moon.waiting_on_fuel, wait); assert.equal(moon.can_refuel, null);
+    assert.deepEqual(detail.json.moon.waiting_on_fuel, wait); assert.equal(detail.json.moon.can_refuel, null);
+  } finally { await x.close(); }
+});
+
+test("fuel: reads append nothing with current reading and exhaustion events", async () => {
+  const x = await startWorld("happy", (c) => {
+    c.providers.fake.pool = { kind: "window", reserve_floor: 0.1 };
+    c.roles = { implement: ["fake"], review: ["fake"] };
+  });
+  try {
+    append(x.w.g.db, { kind: "fuel.reading", provider: "fake", payload: { window: "5h", used: 0.95, resets_at: new Date(Date.now() + 3_600_000).toISOString(), source: "reported" } });
+    append(x.w.g.db, { kind: "fuel.exhausted", provider: "fake", payload: { until: new Date(Date.now() + 3_600_000).toISOString(), voyage_id: "prior" } });
+    const before = maxId(x.w);
+    assert.equal((await x.api("/api/snapshot")).status, 200); assert.equal(maxId(x.w), before);
+    assert.equal((await x.api("/api/moons/T1")).status, 200); assert.equal(maxId(x.w), before);
+  } finally { await x.close(); }
+});
