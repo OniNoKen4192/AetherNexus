@@ -74,9 +74,22 @@ test("FIX carry-over: work that changed after the audit is not committed; the mo
 
 test("a review voyage that parks reports verdict null, moon adrift, and writes no verdict", async () => {
   const w = await worldWithMoon("happy"); await launchMoon(w.g, { taskId: "T1", provider: "fake" });
-  const r = await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-rate-limited" });
+  const r = await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-crash" });
   assert.equal(r.verdict, null); assert.equal(r.moonStatus, "adrift");
   assert.equal(w.g.db.all("verdicts.byTask", { task_id: "T1" }).length, 0); w.cleanup();
+});
+
+test("customs that hits the wall leaves the moon audited for another inspection: verdict null, no verdict, no decision", async () => {
+  const w = await worldWithMoon("happy"); const l = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  const r = await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-rate-limited" });
+  assert.equal(r.verdict, null); assert.equal(r.moonStatus, "audited");
+  const moon = w.g.db.get("moons.byTask", { task_id: "T1" }); assert.equal(moon.park_reason, null); assert.equal(moon.round, 1);
+  assert.equal(w.g.db.all("verdicts.byTask", { task_id: "T1" }).length, 0); assert.equal(w.g.db.all("decisions.pending").length, 0);
+  const voyages = w.g.db.all("voyages.byTask", { task_id: "T1" });
+  assert.deepEqual(voyages.map((v) => [v.role, v.status]), [["implement", "holding"], ["review", "out_of_fuel"]]);
+  assert.equal(w.g.db.get("ships.byId", { id: voyages[1].ship_id }).status, "idle");
+  assert.equal(w.g.db.get("ships.byId", { id: w.g.db.get("voyages.byId", { id: l.voyageId }).ship_id }).status, "assigned");
+  w.cleanup();
 });
 
 test("launch refuses an audited moon whose FIX round is not reviewed yet; inspect and dock still work", async () => {

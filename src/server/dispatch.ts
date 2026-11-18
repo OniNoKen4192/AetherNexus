@@ -7,6 +7,8 @@ import { pickIdleShip, type ShipClass } from "../core/fleet.js";
 import type { AgentEvent, Job, Role } from "../providers/adapter.js";
 import { Refusal } from "./errors.js";
 import type { Galaxy } from "./galaxy.js";
+import { recordReading } from "./limiter/pool.js";
+import { endOutOfFuel } from "./limiter/wall.js";
 
 export type MoonRow = {
   id: string; planet_id: string; task_id: string; assignment_id: number; status: string | null; round: number;
@@ -16,7 +18,7 @@ export type PlanetRow = { id: string; system_id: string; branch: string | null; 
 export type DispatchOutcome = {
   voyageId: string; shipId: string; events: number;
   done?: AgentEvent & { kind: "done" }; error?: AgentEvent & { kind: "error" }; threw?: string;
-  /** Set when runVoyage itself parked the voyage (adrift): the reason recorded on the moon. */
+  /** Set when runVoyage itself ended the voyage without a result: the park reason recorded on the moon, or "out_of_fuel" when the ship hit the wall and the cargo awaits pickup (no park). */
   parkReason?: string;
 };
 export type VoyageInput = {
@@ -26,6 +28,10 @@ export type VoyageInput = {
   signal?: AbortSignal;
   /** Called once, synchronously, right after the voyage.launched append, with the new voyage id. */
   onLaunched?: (voyageId: string) => void;
+  /** Fly this model instead of the provider's default (a refuel). Only an explicit model is handed to the adapter. */
+  model?: string;
+  /** The provider whose pool this voyage is refuelling for; recorded on voyage.launched. */
+  refuelFor?: string;
 };
 
 const PROMPTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "prompts");
@@ -111,14 +117,14 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
   const ship = pickIdleShip(g.db, cls, input.provider);
   if (!ship) throw new Refusal(`all ${shipsNoun(cls)} in fleet '${input.provider}' are assigned`);
   const baseId = `${ship.id}/${input.taskId}/${input.role}/${input.job.round}`;
-  const model = input.role === "implement" && moon.tier ? g.config.providers[input.provider]?.models?.[moon.tier] : undefined;
+  const model = input.model ?? (input.role === "implement" && moon.tier ? g.config.providers[input.provider]?.models?.[moon.tier] : undefined);
 
   const before = mainTreeSnapshot(g); // before launch: if git fails here, nothing has been taken yet
 
   // One transaction: the voyage.launched reducer takes the ship, so a refused launch leaves it idle.
   const launched: NexusEvent = {
     kind: "voyage.launched", ...scope, voyage_id: baseId, ship_id: ship.id, provider: input.provider,
-    payload: { role: input.role, round: input.job.round, provider: input.provider, ...(model ? { model } : {}), ship_id: ship.id, worktree: input.worktree, owner_pid: process.pid },
+    payload: { role: input.role, round: input.job.round, provider: input.provider, ...(model ? { model } : {}), ...(input.refuelFor ? { refuel_for: input.refuelFor } : {}), ship_id: ship.id, worktree: input.worktree, owner_pid: process.pid },
   };
   const launchedRow = append(g.db, launched, () => {
     const cur = g.db.get<{ status: string }>("ships.byId", { id: ship.id });
@@ -157,9 +163,12 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
   };
   try {
     await withGitLog(gitLog, async () => {
-      for await (const e of adapter.dispatch({ ...input.job, voyageId }, { cwd: input.worktree, touch: input.touch, timeoutMs, signal: ac.signal })) {
+      for await (const e of adapter.dispatch({ ...input.job, voyageId, ...(input.model ? { model: input.model } : {}) }, { cwd: input.worktree, touch: input.touch, timeoutMs, signal: ac.signal })) {
         out.events++; logEvent(e); input.onEvent?.(e);
         if (e.kind === "usage" && e.data.cost_usd !== undefined) cost = (cost ?? 0) + e.data.cost_usd;
+        if (e.kind === "fuel" && typeof e.data.window === "string" && typeof e.data.used === "number" && e.data.used >= 0 && e.data.used <= 1) {
+          try { recordReading(g, { ...scope, voyage_id: voyageId, ship_id: ship.id }, input.provider, e.data); } catch { /* a reading must never break a voyage */ }
+        }
         if (e.kind === "done") out.done = e;
         if (e.kind === "error") out.error = e;
       }
@@ -208,6 +217,15 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
   const details = abortCause === "timeout" ? `no result within ${timeoutMs} ms`
     : abortCause === "interrupted" ? "the dispatching process was interrupted"
     : out.threw ?? out.error?.data.message ?? "the stream ended without a result";
+  // The provider's allowance ran out: nobody needs to look, the cargo waits for the pool to refill. An abort is not a wall hit.
+  if (!abortCause && reason === "rate_limited") {
+    const r = endOutOfFuel(g, {
+      taskId: input.taskId, voyageId, shipId: ship.id, role: input.role, provider: input.provider, ...(model ? { model } : {}),
+      ...(out.error?.data.resets_at ? { resetsAt: out.error.data.resets_at } : {}), ...(out.error?.data.model_family ? { modelFamily: out.error.data.model_family } : {}), details,
+    });
+    out.parkReason = r.parked ? "rate_limited" : "out_of_fuel";
+    return out;
+  }
   out.parkReason = reason;
   parkVoyage(g, { taskId: input.taskId, voyageId, shipId: ship.id, reason, details });
   return out;

@@ -1,0 +1,4 @@
+{ "name": "review-crash", "role": "review", "steps": [
+  { "text": "Reviewing the diff." },
+  { "crash": "socket hang up" }
+] }
