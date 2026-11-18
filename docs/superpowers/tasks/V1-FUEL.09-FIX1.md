@@ -123,3 +123,13 @@ DEVIATIONS: <anything done differently than specified, and why — or "none".
   non-empty list>
 BLOCKED_REASON: <only if BLOCKED: what was needed that the spec didn't provide>
 ```
+
+## Amendments
+
+### A1 — 2026-11-18 — accepted deviation
+- **Original sha256**: b7dd9d8aa396588df499d2df966640fb133b3620b3dcaa99d509c952b0bc9a78
+- **Verdict ref**: APPROVE, V1-FUEL.09-FIX1 (fix round 1 of V1-FUEL.09), lanes-reviewer
+- **Deviation**: the test for criterion 23 compares the number of `ship.released` events among the moon's own events (`events.byAssignment`, assignment id taken before the drop) before and after `dropMoon`, not the number in the whole log.
+- **Reason accepted**: neutral. `releaseMoonVoyages` appends every event in the moon's scope, so a wrongful release is counted: the count is 1 before the drop and a mutant that releases unconditionally fails the test with 2. A release appended outside the moon's scope would not be counted here; tests 21 and 22 fail on that mutant.
+- **Affected paths**: `tests/server/park-fuel.test.mjs`
+- **Acceptance criteria**: 23 reads "the number of `ship.released` events among the moon's own events is the same before and after the drop"; otherwise unchanged

@@ -19,7 +19,7 @@ export function releaseMoonVoyages(g: Galaxy, moon: MoonRow, outcome: "reply" | 
     const vscope = { ...scope, voyage_id: v.id, ship_id: v.ship_id };
     append(g.db, { kind: "voyage.superseded", ...vscope, payload: {} });
     const ship = g.db.get<{ status: string }>("ships.byId", { id: v.ship_id });
-    if (ship && ship.status !== "idle" && ship.status !== "retired") append(g.db, { kind: "ship.released", ...vscope, payload: { voyage_id: v.id, outcome } });
+    if (v.status !== "out_of_fuel" && ship && ship.status !== "idle" && ship.status !== "retired") append(g.db, { kind: "ship.released", ...vscope, payload: { voyage_id: v.id, outcome } });
   }
 }
 
