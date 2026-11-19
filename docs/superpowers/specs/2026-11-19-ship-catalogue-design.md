@@ -97,7 +97,7 @@ Consequences:
 - The refusal "all freighters in fleet '<p>' are assigned" goes away. `scheduler.max_concurrent_ships` and `scheduler.per_provider_max` are the only limits on how many fly.
 - Every "is there an idle ship" precheck goes: the limiter's (`limiter.ts`, including the `claimed` set and `shipId` in its capacity bookkeeping), and the ones in `delivery.ts` and `customs.ts`.
 - A roster grows per provider, job and weight until it matches the most ships of that kind ever held at once (in flight, or holding with cargo until docked), then stops.
-- **Open deliveries need their own cap (§7.9).** Today the six freighters per provider are the only bound on moons that have been sent to but not yet docked. That bound disappears with the fixed fleet.
+- Today the six freighters per provider also bound how many moons can be sent to but not yet docked. That bound disappears with the fixed fleet, on purpose (§7.9).
 - An `adrift` or `quarantined` ship stays unavailable, as today. `fleet retire` still retires only an idle ship; a retired ship's name is never reused.
 - `nexus init` no longer registers a fleet up front.
 - The config keys `fleet.freighters`, `fleet.customs`, `fleet.carriers`, `fleet.surveyors` are still accepted, so existing configs load, but have no effect. `fleet.name_theme` and `fleet.seed` keep their meaning for planet and moon names; `fleet.seed` also seeds ship picks (§7.3).
@@ -168,9 +168,14 @@ For a delivery, one cargo entry matching the voyage's weight is picked with the 
 - **Wording sweep:** every message, button and comment that uses "freighter" to mean the job says "delivery" or "delivery ship" instead: refusals, the rung selector text, `shipsNoun`, `shipClassFor` (becomes a job lookup), CLI output, `CLAUDE.md`. Historical specs and plans are left as they are.
 - **CLI:** `nexus fleet` lists the same columns as the panel.
 
-### 7.9 Open deliveries cap
+### 7.9 No cap on open deliveries (owner's decision)
 
-New config key `scheduler.max_open_deliveries` (positive integer, default 6 per provider, matching today's six freighters): the most moons per provider that may have a delivery ship assigned at once, counting ships in flight and ships holding with cargo. A first delivery, sent by a person or by the scheduler, is refused or held when the provider is at the cap; fix rounds and pickups for moons already counted are not. The scheduler treats it as capacity, like the other caps, not as a reason to park.
+There is no numeric limit on how many moons may have a delivery ship assigned at once. What bounds it is the shape of the work:
+
+- Jobs in series wait on customs: a first delivery is refused until the moon's dependencies are settled, as today.
+- Jobs in parallel may all go. The only limits on them are the in-flight caps (`max_concurrent_ships`, `per_provider_max`) and fuel.
+
+So when customs is held up, independent moons keep being sent to and their ships hold with cargo until customs returns. That is intended.
 
 ## 8. Constraints
 
@@ -192,7 +197,7 @@ New config key `scheduler.max_open_deliveries` (positive integer, default 6 per 
 9. An owner's catalogue entry is used; one with a built-in `id` replaces it; an invalid file is refused with its path.
 10. Editing the catalogue after a ship is commissioned does not change that ship.
 11. With more deliveries ready than `max_concurrent_ships`, the cap holds and no "all ships assigned" refusal appears.
-12. With `max_open_deliveries` reached, a first delivery to another moon is held; a fix round for a counted moon still flies; docking one frees a place.
+12. With customs unavailable, more independent moons than the old fleet size (seven or more on one provider) are all sent to, each on its own ship; a moon that depends on an unmerged one is still refused.
 13. Weight lookup: a refuel model resolves by model id; a default Claude review resolves by `default`; a tier name is not used when a model id was given.
 
 ## 10. Left to the builder
@@ -215,4 +220,3 @@ New config key `scheduler.max_open_deliveries` (positive integer, default 6 per 
 - Weight lookup order and the `default` key (§7.5); customs weight follows the reviewer's model.
 - Merge rules for the owner's catalogue file; weight order is display-only.
 - A ship keeps its faction when the provider's faction is renamed.
-- `max_open_deliveries` replaces the bound the fixed fleet used to give (§7.9). **Pending the owner's answer.**
