@@ -112,3 +112,10 @@ test("Wording", async () => {
   sources.push(...await Promise.all(names.filter((name) => name.endsWith(".js")).map((name) => readFile(path.join(assets, name), "utf8"))));
   for (const source of sources) assert.doesNotMatch(source, /moon is out of fuel|moon ran out|moon hit the wall|refuel the moon/i);
 });
+
+test("An attention label wraps its row instead of being squeezed", async () => {
+  const css = (await readFile("web/src/style.css", "utf8")).replace(/\s+/g, " ");
+  assert.ok(css.includes(".system-moons .row:has(> .attention-label) { flex-wrap: wrap; }"));
+  assert.match(css, /(?:^|\} )\.attention-label \{[^}]*white-space: normal;[^}]*\}/);
+  assert.match(css, /\.moon-detail > \.attention-label \{[^}]*padding: 2px 8px;[^}]*\}/);
+});
