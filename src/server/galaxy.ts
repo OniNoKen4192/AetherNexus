@@ -4,12 +4,15 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, type NexusConfig } from "../config/schema.js";
 import { openDb, type NexusDb } from "../db/open.js";
 import { Git } from "../core/git.js";
+import { loadCatalogue } from "../core/catalogue/load.js";
+import type { Catalogue } from "../core/catalogue/types.js";
 import { buildAdapters } from "../providers/index.js";
 import type { ProviderAdapter } from "../providers/adapter.js";
 import { Refusal } from "./errors.js";
 
 export type Galaxy = {
   repoRoot: string; config: NexusConfig; db: NexusDb; git: Git; adapters: Record<string, ProviderAdapter>;
+  catalogue: Catalogue;
   now: () => number;
   paths: { nexusDir: string; dbFile: string; stateDir: string; worktrees: string; specs: string; plans: string };
   close(): void;
@@ -37,8 +40,19 @@ export function openGalaxy(repoRoot: string, opts: { scriptsDir?: string } = {})
   let config: NexusConfig;
   try { config = loadConfig(repoRoot); } catch (err) { throw new Refusal((err as Error).message); }
   const paths = galaxyPaths(repoRoot, config);
+  let catalogue: Catalogue;
+  try { catalogue = loadCatalogue(paths.nexusDir); } catch (err) { throw new Refusal((err as Error).message); }
+  const weightErrors: string[] = [];
+  for (const [provider, providerConfig] of Object.entries(config.providers)) {
+    for (const [key, weight] of Object.entries(providerConfig.weights ?? {})) {
+      if (!catalogue.weights.includes(weight)) {
+        weightErrors.push(`'providers.${provider}.weights.${key}' names weight '${weight}', which the catalogue does not list (${catalogue.weights.join(", ")})`);
+      }
+    }
+  }
+  if (weightErrors.length > 0) throw new Refusal(weightErrors.join("; "));
   const db = openDb(paths.dbFile, { stats: config.db.stats });
   const git = new Git(repoRoot);
   const adapters = buildAdapters(config, { scriptsDir: opts.scriptsDir ?? defaultScriptsDir(repoRoot) });
-  return { repoRoot, config, db, git, adapters, now: () => Date.now(), paths, close: () => db.close() };
+  return { repoRoot, config, catalogue, db, git, adapters, now: () => Date.now(), paths, close: () => db.close() };
 }

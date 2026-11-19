@@ -8,6 +8,8 @@ import path from "node:path";
 
 export type ProviderConfig = {
   adapter: "fake" | "claude-sdk" | "codex-mcp";
+  faction?: string;
+  weights?: Record<string, string>;
   auth?: "login" | "api_key";
   api_key_env?: string;
   models?: Record<string, string>;
@@ -70,7 +72,7 @@ const FREEFORM_BLOCKS = new Set(["intake", "idle", "gravity"]);
 const ADAPTERS = ["fake", "claude-sdk", "codex-mcp"];
 const POOL_KINDS = ["window", "daily", "per-token", "free"];
 const LEVELS = ["manual", "verdicts", "roundabout", "highways", "autopilot"];
-const PROVIDER_KEYS = ["adapter", "auth", "api_key_env", "models", "tiers", "ratelimit_signal", "pool", "command", "endpoint", "max_budget_usd", "max_turns"];
+const PROVIDER_KEYS = ["adapter", "auth", "api_key_env", "models", "tiers", "ratelimit_signal", "pool", "command", "endpoint", "max_budget_usd", "max_turns", "faction", "weights"];
 
 function isObj(v: unknown): v is Obj {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -145,6 +147,13 @@ export function validateConfig(cfg: unknown): string[] {
   for (const [id, p] of Object.entries(providers)) {
     for (const k of Object.keys(p)) if (!PROVIDER_KEYS.includes(k)) errors.push(`unknown key 'providers.${id}.${k}'`);
     if (!ADAPTERS.includes(p["adapter"] as string)) errors.push(`'providers.${id}.adapter' must be one of ${ADAPTERS.join(", ")}`);
+    if (p["faction"] !== undefined && (typeof p["faction"] !== "string" || p["faction"].length === 0)) {
+      errors.push(`'providers.${id}.faction' must be a non-empty string`);
+    }
+    const weights = p["weights"];
+    if (weights !== undefined && !(isObj(weights) && Object.values(weights).every((x) => typeof x === "string" && x.length > 0))) {
+      errors.push(`'providers.${id}.weights' must be an object mapping a model id, a tier name or "default" to a weight name`);
+    }
     if (p["auth"] !== undefined) {
       if (p["adapter"] !== "claude-sdk") errors.push(`'providers.${id}.auth' is only valid for adapter 'claude-sdk'`);
       else if (!["login", "api_key"].includes(p["auth"] as string)) errors.push(`'providers.${id}.auth' must be "login" or "api_key"`);
@@ -247,7 +256,8 @@ export function normalizeConfig(cfg: unknown): NexusConfig {
     name_theme: fleet["name_theme"] ?? "classic",
     ...(fleet["seed"] !== undefined ? { seed: fleet["seed"] } : {}),
   };
-  for (const p of Object.values(providers)) {
+  for (const [id, p] of Object.entries(providers)) {
+    p.faction ??= id;
     if (p.pool?.refuel) p.pool.refuel.min_wait_minutes ??= 30;
     if (p.adapter === "claude-sdk") {
       p.auth ??= "login";
@@ -277,12 +287,16 @@ export const DEFAULT_CONFIG: NexusConfig = {
     fake: { adapter: "fake" },
     codex: {
       adapter: "codex-mcp",
+      faction: "openai",
+      weights: { sol: "heavy", terra: "standard", luna: "light" },
       tiers: ["sol", "terra", "luna"],
       ratelimit_signal: ["usage limit", "rate limit", "429"],
       pool: { kind: "window", reserve_floor: 0.1 },
     },
     claude: {
       adapter: "claude-sdk",
+      faction: "anthropic",
+      weights: { default: "heavy", "claude-haiku-5-5": "light" },
       auth: "login",
       models: { frontier: "claude-opus-5-5", fast: "claude-haiku-5-5" },
       pool: { kind: "window", reserve_floor: 0.25 },
