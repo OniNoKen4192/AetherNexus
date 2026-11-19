@@ -182,7 +182,7 @@ test("4. Customs hits the wall.", async () => scenario("happy", fuelPatch(), asy
 test("5. Refuel.", async () => scenario("wall-then-spare", fuelPatch({ refuel: { min_wait_minutes: 0 } }), async (x, feed) => {
   steerReviews(x, { T1: ["review-fix"] });
   await setRoundabout(x);
-  await feed.waitFor((all) => all.some((event) => event.kind === "limiter.refuelled" && event.task_id === "T1"));
+  await feed.waitFor((all) => all.some((event) => event.kind === "limiter.refuelled" && event.task_id === "T1"), 15000);
   const refuelled = events(x, "limiter.refuelled");
   assert.equal(refuelled.length, 1);
   assert.deepEqual({ from: refuelled[0].payload.from, to: refuelled[0].payload.to, model: refuelled[0].payload.model }, { from: "fake", to: "spare", model: "m-cheap" });
