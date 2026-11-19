@@ -28,7 +28,7 @@ async function voyageWorld() {
 function voyage(w, provider, launchedTs, returnedTs, model) {
   const scope = moonScope(w.g, loadMoon(w.g, "T1"));
   append(w.g.db, { kind: "moon.gated", ...scope, payload: { base_sha: "0".repeat(40), state_path: ".nexus/state/T1.json", round: 1 } });
-  const ship = w.g.db.get("ships.pickIdle", { class: "freighter", fleet: provider });
+  const ship = w.g.db.get("ships.pickIdle", { job: "delivery", fleet: provider, weight: "standard" });
   const voyageId = `${ship.id}/T1/implement/1`;
   append(w.g.db, { kind: "voyage.launched", ...scope, ts: launchedTs, voyage_id: voyageId, ship_id: ship.id, provider, payload: { role: "implement", round: 1, provider, ship_id: ship.id, worktree: "w", ...(model === undefined ? {} : { model }) } });
   if (returnedTs !== undefined) append(w.g.db, { kind: "voyage.returned", ...scope, ts: returnedTs, voyage_id: voyageId, payload: { role: "implement", report: {} } });

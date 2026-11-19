@@ -20,7 +20,7 @@ test("assign: planet and moon rows carry work columns; task lookup works", () =>
 });
 
 test("full freighter + customs lifecycle through reducers; rebuild matches", () => {
-  const { db, sys, planet, moon } = world(); const ship = db.get("ships.pickIdle", { class: "freighter", fleet: "fake" }); const customs = db.get("ships.pickIdle", { class: "customs", fleet: "fake" });
+  const { db, sys, planet, moon } = world(); const ship = db.get("ships.pickIdle", { job: "delivery", fleet: "fake", weight: "standard" }); const customs = db.get("ships.pickIdle", { job: "customs", fleet: "fake", weight: "standard" });
   const base = { system_id: sys, planet_id: planet, moon_id: moon };
   append(db, { kind: "moon.gated", ...base, payload: { base_sha: "0".repeat(40), state_path: ".nexus/state/T1.json", round: 1 } });
   assert.equal(db.get("moons.byId", { id: moon }).round, 1);
@@ -60,7 +60,7 @@ test("illegal transition inside append is refused and nothing is written", () =>
 test("REJECT -> quarantined + decision; drop -> dropped then moon.cleared -> barren", () => {
   const { db, sys, planet, moon } = world(); const base = { system_id: sys, planet_id: planet, moon_id: moon };
   // voyages.ship_id is a foreign key, so use real seeded ships
-  const f = db.get("ships.pickIdle", { class: "freighter", fleet: "fake" }).id; const c = db.get("ships.pickIdle", { class: "customs", fleet: "fake" }).id;
+  const f = db.get("ships.pickIdle", { job: "delivery", fleet: "fake", weight: "standard" }).id; const c = db.get("ships.pickIdle", { job: "customs", fleet: "fake", weight: "standard" }).id;
   const vi = `${f}/T1/implement/1`, vr = `${c}/T1/review/1`;
   // fast-forward to reviewing
   append(db, { kind: "moon.gated", ...base, payload: { base_sha: "0".repeat(40), state_path: "s", round: 1 } });
@@ -86,7 +86,7 @@ test("REJECT -> quarantined + decision; drop -> dropped then moon.cleared -> bar
 
 test("voyage.launched on a ship that is not idle is refused and writes nothing (ship and moon unchanged)", () => {
   const { db, sys, planet, moon } = world(); const base = { system_id: sys, planet_id: planet, moon_id: moon };
-  const f = db.get("ships.pickIdle", { class: "freighter", fleet: "fake" }).id;
+  const f = db.get("ships.pickIdle", { job: "delivery", fleet: "fake", weight: "standard" }).id;
   append(db, { kind: "moon.gated", ...base, payload: { base_sha: "0".repeat(40), state_path: "s", round: 1 } });
   append(db, { kind: "ship.adrift", ship_id: f, payload: { voyage_id: "elsewhere" } });
   const n = db.all("events.since", { id: 0 }).length;
@@ -100,7 +100,7 @@ test("assignment_id: moon.assigned sets it, moon.cleared nulls it, a voyage afte
   const first = db.get("moons.byId", { id: moon }).assignment_id;
   const assignedEv = db.all("events.since", { id: 0 }).filter((e) => e.kind === "moon.assigned").pop();
   assert.equal(first, assignedEv.id, "assignment_id is the moon.assigned event id");
-  const f = db.get("ships.pickIdle", { class: "freighter", fleet: "fake" }).id;
+  const f = db.get("ships.pickIdle", { job: "delivery", fleet: "fake", weight: "standard" }).id;
   append(db, { kind: "moon.gated", ...base, assignment_id: first, payload: { base_sha: "0".repeat(40), state_path: "s", round: 1 } });
   append(db, { kind: "voyage.launched", ...base, assignment_id: first, voyage_id: `${f}/T1/implement/1`, ship_id: f, provider: "fake", payload: { role: "implement", round: 1, provider: "fake", ship_id: f, worktree: "w" } });
   assert.equal(db.get("voyages.byId", { id: `${f}/T1/implement/1` }).assignment_id, first);

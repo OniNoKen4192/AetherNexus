@@ -1,6 +1,6 @@
-import { pickIdleShip, type ShipRow } from "../../core/fleet.js";
+import { jobFor, pickIdleShip, type ShipRow } from "../../core/fleet.js";
 import type { Role } from "../../providers/adapter.js";
-import { loadMoon, providerAtCap, shipClassFor, shipsNoun } from "../dispatch.js";
+import { loadMoon, providerAtCap, shipsNoun } from "../dispatch.js";
 import type { Galaxy } from "../galaxy.js";
 import { poolState } from "./pool.js";
 
@@ -24,11 +24,11 @@ function available(g: Galaxy, provider: string, role: Role, capacity?: Capacity)
   const max = g.config.scheduler.per_provider_max[provider];
   if (capacity) {
     if (max !== undefined && (capacity.providerUse.get(provider) ?? 0) >= max) return undefined;
-    const cls = shipClassFor(role);
-    return g.db.all<ShipRow>("ships.all").find((ship) => ship.fleet === provider && ship.class === cls && ship.status === "idle" && !capacity.claimed.has(ship.id));
+    const job = jobFor(role);
+    return g.db.all<ShipRow>("ships.all").find((ship) => ship.fleet === provider && ship.job === job && ship.weight === "standard" && ship.status === "idle" && !capacity.claimed.has(ship.id));
   }
   if (providerAtCap(g, provider)) return undefined;
-  return pickIdleShip(g.db, shipClassFor(role), provider);
+  return pickIdleShip(g.db, jobFor(role), provider, "standard");
 }
 
 function refusal(g: Galaxy, provider: string, role: Role, capacity?: Capacity): string {
@@ -36,7 +36,7 @@ function refusal(g: Galaxy, provider: string, role: Role, capacity?: Capacity): 
   const max = g.config.scheduler.per_provider_max[provider];
   const atCap = capacity ? max !== undefined && (capacity.providerUse.get(provider) ?? 0) >= max : providerAtCap(g, provider);
   if (atCap) return `provider '${provider}' is at its limit of ${max} (scheduler.per_provider_max)`;
-  return `all ${shipsNoun(shipClassFor(role))} in fleet '${provider}' are assigned`;
+  return `all ${shipsNoun(jobFor(role))} in fleet '${provider}' are assigned`;
 }
 
 function take(capacity: Capacity | undefined, provider: string, shipId: string): void {

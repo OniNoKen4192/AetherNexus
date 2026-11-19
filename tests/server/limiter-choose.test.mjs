@@ -30,7 +30,7 @@ async function assignedWorld(freighters, max) {
 function launch(w, provider = "fake") {
   const scope = moonScope(w.g, loadMoon(w.g, "T1"));
   append(w.g.db, { kind: "moon.gated", ...scope, payload: { base_sha: "0".repeat(40), state_path: ".nexus/state/T1.json", round: 1 } });
-  const ship = w.g.db.get("ships.pickIdle", { class: "freighter", fleet: provider });
+  const ship = w.g.db.get("ships.pickIdle", { job: "delivery", fleet: provider, weight: "standard" });
   const voyageId = `${ship.id}/T1/implement/1`;
   append(w.g.db, { kind: "voyage.launched", ...scope, ts: iso(0), voyage_id: voyageId, ship_id: ship.id, provider, payload: { role: "implement", round: 1, provider, ship_id: ship.id, worktree: "w" } });
   return voyageId;
@@ -70,7 +70,7 @@ test("chooser reproduces exact none messages and silently skips unavailable prov
     const capped = { free: 2, providerUse: new Map([["fake", 1]]), claimed: new Set() };
     const skipped = pick(w.g, { capacity: capped }); assert.equal(skipped.kind, "fly"); assert.equal(skipped.provider, "probe"); assert.equal(skipped.reroutedFrom, undefined);
     assert.deepEqual(pick(w.g, { requested: "fake", capacity: capped }), { kind: "none", message: "provider 'fake' is at its limit of 1 (scheduler.per_provider_max)" });
-    const claimed = new Set(w.g.db.all("ships.all").filter((s) => s.fleet === "fake" && s.class === "freighter").map((s) => s.id));
+    const claimed = new Set(w.g.db.all("ships.all").filter((s) => s.fleet === "fake" && s.job === "delivery").map((s) => s.id));
     assert.deepEqual(pick(w.g, { requested: "fake", capacity: { free: 1, providerUse: new Map(), claimed } }), { kind: "none", message: "all freighters in fleet 'fake' are assigned" });
   } finally { w.cleanup(); }
 });
@@ -137,7 +137,7 @@ test("c11: a single ok provider flies with no reroutedFrom", async () => {
     w.g.config.roles.implement = ["fake"];
     read(w, "fake", 0.2);
     const choice = pick(w.g);
-    const freighters = w.g.db.all("ships.all").filter((ship) => ship.fleet === "fake" && ship.class === "freighter" && ship.status === "idle").map((ship) => ship.id);
+    const freighters = w.g.db.all("ships.all").filter((ship) => ship.fleet === "fake" && ship.job === "delivery" && ship.status === "idle").map((ship) => ship.id);
     assert.equal(choice.kind, "fly");
     assert.equal(choice.provider, "fake");
     assert.ok(freighters.includes(choice.shipId));
@@ -155,7 +155,7 @@ test("c12: review flies on a low first provider", async () => {
     const ship = w.g.db.get("ships.byId", { id: choice.shipId });
     assert.equal(choice.kind, "fly");
     assert.equal(choice.provider, "fake");
-    assert.equal(ship.class, "customs");
+    assert.equal(ship.job, "customs");
     assert.equal(ship.fleet, "fake");
     assert.equal("reroutedFrom" in choice, false);
   } finally { w.cleanup(); }
@@ -229,7 +229,7 @@ test("c19: each refuel condition failing alone is held without canRefuel", async
     async (w) => { append(w.g.db, { kind: "fuel.exhausted", provider: "probe", ts: iso(1), payload: { until: "2026-11-17T14:00:00.000Z", voyage_id: "v" } }); },
     async (w) => { w.g.config.providers.fake.pool.refuel.min_wait_minutes = 90; },
     async (w) => { w.g.config.providers.fake.pool.refuel.min_wait_minutes = 60; },
-    async (w) => ({ capacity: { free: 5, providerUse: new Map(), claimed: new Set(w.g.db.all("ships.all").filter((ship) => ship.fleet === "probe" && ship.class === "freighter").map((ship) => ship.id)) } }),
+    async (w) => ({ capacity: { free: 5, providerUse: new Map(), claimed: new Set(w.g.db.all("ships.all").filter((ship) => ship.fleet === "probe" && ship.job === "delivery").map((ship) => ship.id)) } }),
     async (w) => { w.g.config.scheduler.per_provider_max.probe = 1; return { capacity: { free: 5, providerUse: new Map([["probe", 1]]), claimed: new Set() } }; },
   ];
   for (const setup of cases) {

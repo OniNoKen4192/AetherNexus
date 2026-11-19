@@ -43,7 +43,7 @@ function Ship({ b, ship }: { b: Bridge; ship: Row }) {
   };
 
   return <div className="fleet-ship">
-    <span>{String(ship["name"])}</span><span>{String(ship["class"])}</span><span className="badge">{status}</span>
+    <span>{String(ship["name"])}</span><span>{String(ship["job"])}</span><span className="badge">{status}</span>
     {status === "idle" && (!open ? <button className="btn" type="button" disabled={command.busy} onClick={() => setOpen(true)}>Retire</button> :
       <div className="fleet-retire">
         <input className="field" placeholder="Reason" aria-label={`Reason to retire ${String(ship["name"])}`} value={reason} disabled={command.busy} onInput={(event) => setReason(event.currentTarget.value)} />
@@ -63,7 +63,7 @@ export function Fleet({ b }: { b: Bridge }) {
   if (snapshot !== null) {
     for (const ship of snapshot.fleet) {
       const providerName = String(ship["fleet"]);
-      const className = String(ship["class"]);
+      const className = String(ship["job"]);
       const status = String(ship["status"]);
       let provider = providers.get(providerName);
       if (provider === undefined) {

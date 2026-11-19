@@ -26,7 +26,7 @@ test("13. customs is not held by a low pool", async () => {
 
 test("14. customs is held by a dry pool unless overridden", async () => {
   const w = await worldWithMoon("happy", (c) => config(c));
-  try { await sendDelivery(w.g, { taskId: "T1" }); dry(w); const before = w.g.db.get("events.maxId").id; await assert.rejects(sendCustoms(w.g, { taskId: "T1" }), (e) => { assert.match(e.message, /is waiting on fake fuel \(dry\)/); assert.equal(e.details.can_refuel, null); return true; }); assert.equal(loadMoon(w.g, "T1").status, "audited"); assert.ok(w.g.db.all("ships.all").filter((s) => s.class === "customs").every((s) => s.status === "idle")); assert.equal(w.g.db.get("events.maxId").id, before); assert.equal((await sendCustoms(w.g, { taskId: "T1", override: true })).verdict.verdict, "APPROVE"); } finally { w.cleanup(); }
+  try { await sendDelivery(w.g, { taskId: "T1" }); dry(w); const before = w.g.db.get("events.maxId").id; await assert.rejects(sendCustoms(w.g, { taskId: "T1" }), (e) => { assert.match(e.message, /is waiting on fake fuel \(dry\)/); assert.equal(e.details.can_refuel, null); return true; }); assert.equal(loadMoon(w.g, "T1").status, "audited"); assert.ok(w.g.db.all("ships.all").filter((s) => s.job === "customs").every((s) => s.status === "idle")); assert.equal(w.g.db.get("events.maxId").id, before); assert.equal((await sendCustoms(w.g, { taskId: "T1", override: true })).verdict.verdict, "APPROVE"); } finally { w.cleanup(); }
 });
 
 test("15. customs reroutes around a dry pool", async () => {

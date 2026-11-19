@@ -18,7 +18,7 @@ function launch(db, base, ship, role, voyage, round = 1) { append(db, { kind: "v
 function assertRebuildEqual(db) { const before = dumpProjections(db); rebuild(db); assert.equal(dumpProjections(db), before); }
 
 test("a freighter that runs out of fuel releases its ship and leaves cargo awaiting pickup", () => {
-  const { db, moon, base } = world(); const ship = db.get("ships.pickIdle", { class: "freighter", fleet: "fake" }); const voyage = `${ship.id}/T1/implement/1`; const count = ship.voyage_count;
+  const { db, moon, base } = world(); const ship = db.get("ships.pickIdle", { job: "delivery", fleet: "fake", weight: "standard" }); const voyage = `${ship.id}/T1/implement/1`; const count = ship.voyage_count;
   gate(db, base); launch(db, base, ship, "implement", voyage);
   append(db, { kind: "voyage.out_of_fuel", ...base, voyage_id: voyage, payload: {} });
   append(db, { kind: "ship.released", ...base, voyage_id: voyage, ship_id: ship.id, payload: { voyage_id: voyage, outcome: "out_of_fuel" } });
@@ -30,7 +30,7 @@ test("a freighter that runs out of fuel releases its ship and leaves cargo await
 });
 
 test("a customs ship that runs out of fuel abandons review without changing the cargo round", () => {
-  const { db, moon, base } = world(); const freighter = db.get("ships.pickIdle", { class: "freighter", fleet: "fake" }); const customs = db.get("ships.pickIdle", { class: "customs", fleet: "fake" });
+  const { db, moon, base } = world(); const freighter = db.get("ships.pickIdle", { job: "delivery", fleet: "fake", weight: "standard" }); const customs = db.get("ships.pickIdle", { job: "customs", fleet: "fake", weight: "standard" });
   const freightVoyage = `${freighter.id}/T1/implement/1`; const reviewVoyage = `${customs.id}/T1/review/1`;
   gate(db, base, 3); launch(db, base, freighter, "implement", freightVoyage, 3);
   append(db, { kind: "voyage.returned", ...base, voyage_id: freightVoyage, payload: { role: "implement", report: {} } });
@@ -45,7 +45,7 @@ test("a customs ship that runs out of fuel abandons review without changing the 
 });
 
 test("cargo awaiting pickup clears an earlier park reason", () => {
-  const { db, moon, base } = world(); const ship = db.get("ships.pickIdle", { class: "freighter", fleet: "fake" }); const voyage = `${ship.id}/T1/implement/1`;
+  const { db, moon, base } = world(); const ship = db.get("ships.pickIdle", { job: "delivery", fleet: "fake", weight: "standard" }); const voyage = `${ship.id}/T1/implement/1`;
   append(db, { kind: "moon.adrift", ...base, payload: { reason: "needs a person" } }); assert.equal(db.get("moons.byId", { id: moon }).park_reason, "needs a person");
   gate(db, base); launch(db, base, ship, "implement", voyage); append(db, { kind: "voyage.out_of_fuel", ...base, voyage_id: voyage, payload: {} }); append(db, { kind: "moon.awaiting_pickup", ...base, payload: {} });
   const cargo = db.get("moons.byId", { id: moon }); assert.equal(cargo.status, "awaiting_pickup"); assert.equal(cargo.park_reason, null);

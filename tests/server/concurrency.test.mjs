@@ -95,7 +95,7 @@ test("a throwing onLaunched cannot strand the voyage", async () => {
 
 test("per_provider_max: a named provider at its cap with no idle freighter reports the cap", async () => {
   const w = await worldWithTwoMoons("slow", "happy", (c) => { cap(2)(c); c.scheduler.per_provider_max = { fake: 1 }; c.fleet.freighters = 1; });
-  assert.equal(w.g.db.all("ships.all").filter((s) => s.class === "freighter" && s.fleet === "fake").length, 1, "one freighter for fake");
+  assert.equal(w.g.db.all("ships.all").filter((s) => s.job === "delivery" && s.fleet === "fake").length, 1, "one freighter for fake");
   const flying = sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   await assert.rejects(sendDelivery(w.g, { taskId: "T2", provider: "fake" }), /provider 'fake' is at its limit of 1 \(scheduler\.per_provider_max\)/);
   await flying; w.cleanup();

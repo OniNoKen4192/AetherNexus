@@ -3,7 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { append, rowToEvent, type NexusEvent } from "../db/events.js";
 import { withGitLog, type GitLog } from "../core/git.js";
-import { pickIdleShip, type ShipClass } from "../core/fleet.js";
+import { jobFor, pickIdleShip } from "../core/fleet.js";
+import type { ShipJob } from "../core/catalogue/types.js";
 import type { AgentEvent, Job, Role } from "../providers/adapter.js";
 import { Refusal } from "./errors.js";
 import type { Galaxy } from "./galaxy.js";
@@ -83,8 +84,7 @@ export function refuseIfAtCap(g: Galaxy, provider: string): void {
   if (providerAtCap(g, provider)) throw new Refusal(`provider '${provider}' is at its limit of ${g.config.scheduler.per_provider_max[provider]} (scheduler.per_provider_max)`);
 }
 
-export const shipClassFor = (role: Role): ShipClass => (role === "implement" ? "freighter" : "customs");
-export const shipsNoun = (cls: ShipClass): string => (cls === "customs" ? "customs" : `${cls}s`);
+export const shipsNoun = (job: ShipJob): string => (job === "delivery" ? "freighters" : job);
 
 /** Park sequence: voyage, ship, moon, then a pending decision. Each is its own transaction, so a crash leaves a visible, finishable park. */
 export function parkVoyage(g: Galaxy, p: { taskId: string; voyageId: string; shipId: string; reason: string; details?: string }): void {
@@ -112,10 +112,10 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
   const moon = loadMoon(g, input.taskId); const scope = moonScope(g, moon);
   const adapter = g.adapters[input.provider];
   if (!adapter) throw new Refusal(`provider '${input.provider}' is not configured`);
-  const cls = shipClassFor(input.role);
+  const job = jobFor(input.role);
   refuseIfAtCap(g, input.provider);
-  const ship = pickIdleShip(g.db, cls, input.provider);
-  if (!ship) throw new Refusal(`all ${shipsNoun(cls)} in fleet '${input.provider}' are assigned`);
+  const ship = pickIdleShip(g.db, job, input.provider, "standard");
+  if (!ship) throw new Refusal(`all ${shipsNoun(job)} in fleet '${input.provider}' are assigned`);
   const baseId = `${ship.id}/${input.taskId}/${input.role}/${input.job.round}`;
   const model = input.model ?? (input.role === "implement" && moon.tier ? g.config.providers[input.provider]?.models?.[moon.tier] : undefined);
 

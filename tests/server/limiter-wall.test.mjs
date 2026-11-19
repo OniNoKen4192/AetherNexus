@@ -28,8 +28,8 @@ function gate(w, round = 1) {
 }
 
 function launch(w, role = "implement", provider = "fake", round = 1) {
-  const cls = role === "implement" ? "freighter" : "customs";
-  const ship = w.db.get("ships.pickIdle", { class: cls, fleet: provider });
+  const cls = role === "implement" ? "delivery" : "customs";
+  const ship = w.db.get("ships.pickIdle", { job: cls, fleet: provider, weight: "standard" });
   assert.ok(ship, `idle ${provider} ${cls}`);
   const voyageId = `${ship.id}/T1/${role}/${round}#${++w.serial}`;
   append(w.db, {

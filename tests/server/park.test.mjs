@@ -34,7 +34,7 @@ test("reply/drop refuse a moon that is not parked", async () => {
   assert.throws(() => cancelDelivery(w.g, { taskId: "T1" }), /only an adrift or quarantined/); w.cleanup();
 });
 test("retire: idle only; retired ships are not picked", async () => {
-  const w = await worldWithMoon("happy"); const ships = fleet(w.g).filter((s) => s.class === "freighter" && s.fleet === "fake");
+  const w = await worldWithMoon("happy"); const ships = fleet(w.g).filter((s) => s.job === "delivery" && s.fleet === "fake");
   for (const s of ships) retireShip(w.g, { shipId: s.id, reason: "test" });
   await assert.rejects(sendDelivery(w.g, { taskId: "T1", provider: "fake" }), /all freighters/);
   assert.throws(() => retireShip(w.g, { shipId: ships[0].id, reason: "again" }), /not idle/); w.cleanup();

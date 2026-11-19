@@ -169,7 +169,7 @@ test("each synchronous command maps success to 200 and a refusal to 409", async 
         async before() {
           // A voyage owned by a dead process: moon.park refuses a voyage this server's runner is tracking.
           const moon = loadMoon(x.w.g, "T1"), scope = moonScope(x.w.g, moon);
-          const ship = x.w.g.db.all("ships.all").find((s) => s.class === "freighter");
+          const ship = x.w.g.db.all("ships.all").find((s) => s.job === "delivery");
           append(x.w.g.db, { kind: "moon.gated", ...scope, payload: { baseline_sha: "x" } });
           append(x.w.g.db, { kind: "voyage.launched", ...scope, voyage_id: "stale-v", ship_id: ship.id, provider: "fake",
             payload: { role: "implement", round: 0, provider: "fake", ship_id: ship.id, worktree: "x", owner_pid: 2147483646 } });

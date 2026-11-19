@@ -51,7 +51,7 @@ export async function sendCustoms(
   if (choice.kind === "none") throw new Refusal(choice.message);
   const provider = choice.provider;
   if (!g.adapters[provider]) throw new Refusal(`provider '${provider}' is not configured`);
-  if (!pickIdleShip(g.db, "customs", provider)) throw new Refusal(`all ${shipsNoun("customs")} in fleet '${provider}' are assigned`);
+  if (!pickIdleShip(g.db, "customs", provider, "standard")) throw new Refusal(`all ${shipsNoun("customs")} in fleet '${provider}' are assigned`);
 
   const specAbs = path.join(g.repoRoot, moon.spec_path);
   const specText = fs.readFileSync(specAbs, "utf8");

@@ -144,7 +144,7 @@ export async function sendDelivery(
   const provider = choice.provider;
   if (!g.adapters[provider]) throw new Refusal(`provider '${provider}' is not configured`);
   refuseIfAtCap(g, provider);
-  if (!pickIdleShip(g.db, "freighter", provider)) throw new Refusal(`all ${shipsNoun("freighter")} in fleet '${provider}' are assigned`);
+  if (!pickIdleShip(g.db, "delivery", provider, "standard")) throw new Refusal(`all ${shipsNoun("delivery")} in fleet '${provider}' are assigned`);
 
   const scope = moonScope(g, moon);
   const planet = loadPlanet(g, moon);
