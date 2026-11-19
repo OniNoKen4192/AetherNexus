@@ -158,3 +158,11 @@ BLOCKED_REASON: <only if BLOCKED: what was needed that the spec didn't provide>
 - **Reason accepted**: script `wall` redirects only round 2 to `happy`. As written, the FIX round (round 3) flies `wall` again: the ship hits the wall and the cargo awaits pickup (not parked — the previous freighter on `fake` returned normally), and the round-4 pickup is a second hit in a row, so the moon is parked `rate_limited`. The reviewer observed both; both are the designed behaviour, so the scenario as written cannot reach `merged`. Wrapping the fake adapter is a stimulus under the Constraints. The scenario still goes red when a wall hit is counted as a fix round (mutant: park when `moon.round >= max_fix_rounds`).
 - **Affected paths**: tests/e2e/fuel.test.mjs
 - **Acceptance criteria**: criterion 9 becomes: "**A wall hit is not a fix round.** `c.automation.max_fix_rounds = 2`; script `wall`; reviews steered FIX, then APPROVE (second review); the round-3 freighter (the FIX round) steered onto `happy` through the fake adapter wrapper: the moon is `merged`, and no `moon.adrift` event carries reason `max_fix_rounds`."
+
+### A2 — 2026-11-18 — accepted deviation
+- **Original sha256**: 5e2b68ac87db2746eadf5d7ca2be4ceb38ea0d310084ee078842d91cdd99a460
+- **Verdict ref**: APPROVE (review of fix round 1), task V1-FUEL.13 / V1-FUEL.13-FIX1, lanes-reviewer
+- **Deviation**: the Constraint "in a `finally` that also closes the world" is met without a literal `finally`: the wrapper catches the body's error, runs feed close, `finish` (server close plus rebuild byte-equal) and world close as three unconditional steps, then rethrows the body's error with any cleanup failure as its `cause`.
+- **Reason accepted**: see A1 on V1-FUEL.13-FIX1; verified by failure injection.
+- **Affected paths**: tests/e2e/fuel.test.mjs
+- **Acceptance criteria**: the Constraint becomes: "Every scenario ends with the server closed, `rebuild` leaving `dumpProjections` byte-equal, and the world closed, each step run unconditionally; a body failure is reported as itself."

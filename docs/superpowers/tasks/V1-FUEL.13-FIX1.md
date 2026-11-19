@@ -88,3 +88,29 @@ DEVIATIONS: <anything done differently than specified, and why — or "none".
   non-empty list>
 BLOCKED_REASON: <only if BLOCKED: what was needed that the spec didn't provide>
 ```
+
+## Amendments
+
+### A1 — 2026-11-18 — accepted deviation
+- **Original sha256**: 6917ddf5e2282fdbcf7b9cd366321e743d9fdbdd020023faca48eba121f6ff41
+- **Verdict ref**: APPROVE (review of fix round 1), task V1-FUEL.13-FIX1, lanes-reviewer
+- **Deviation**: `scenario()` has no literal `finally`. It catches the body's error, then runs `feed.close()`, `finish(x, server)` and `x.close()` as three separate unconditional try/catch steps, then rethrows.
+- **Reason accepted**: the guarantee D6 asks for holds and is stronger than a nested `finally`. The reviewer injected failures into a verbatim copy of the wrapper: a throwing body is reported as itself with server, world and database closed; a rebuild mismatch with a passing body fails the test; with both, the body's error is reported and the mismatch is its `cause`; two cleanup failures arrive as one `AggregateError`.
+- **Affected paths**: tests/e2e/fuel.test.mjs
+- **Acceptance criteria**: D6 becomes: "When a scenario body throws, the test reports that error; a failure of feed close, `finish` or world close is attached to it as `cause` (an `AggregateError` when more than one step failed), not substituted. Every cleanup step runs whether or not the body or an earlier step threw. When the body passes, a rebuild mismatch still fails the test."
+
+### A2 — 2026-11-18 — accepted deviation
+- **Original sha256**: 6917ddf5e2282fdbcf7b9cd366321e743d9fdbdd020023faca48eba121f6ff41
+- **Verdict ref**: APPROVE (review of fix round 1), task V1-FUEL.13-FIX1, lanes-reviewer
+- **Deviation**: the cleanup failure is attached by assigning `bodyError.cause`. This overwrites a cause the body's error already carried. If the body threw a primitive and cleanup also failed, the assignment's `TypeError` is reported instead. A falsy thrown value (`throw undefined`) is not treated as a failure at all (`if (bodyError)`).
+- **Reason accepted**: no scenario body, helper or imported function throws a non-Error or an Error with a cause; `node:assert` and the helpers throw `Error` objects. The reviewer observed all three edges by probe. Left as a Minor for the final review.
+- **Affected paths**: tests/e2e/fuel.test.mjs
+- **Acceptance criteria**: unchanged
+
+### A3 — 2026-11-18 — accepted deviation
+- **Original sha256**: 6917ddf5e2282fdbcf7b9cd366321e743d9fdbdd020023faca48eba121f6ff41
+- **Verdict ref**: APPROVE (review of fix round 1), task V1-FUEL.13-FIX1, lanes-reviewer
+- **Deviation**: the done-when failure message lists the log's events grouped by kind (`voyage.launched`, `fuel.exhausted`, `limiter.refuelled`, `moon.adrift`), not in log order.
+- **Reason accepted**: diagnostic text only; it reads the database as D1 requires and no assertion depends on it.
+- **Affected paths**: tests/e2e/fuel.test.mjs
+- **Acceptance criteria**: unchanged
