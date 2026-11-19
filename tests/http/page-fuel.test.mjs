@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { rmSync } from "node:fs";
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,20 +10,24 @@ import { pathToFileURL } from "node:url";
 const root = process.cwd();
 const gaugeSource = await readFile(path.join(root, "web", "src", "gauge.ts"), "utf8");
 const temporary = await mkdtemp(path.join(os.tmpdir(), "aether-fuel-"));
-await writeFile(path.join(temporary, "gauge.ts"), gaugeSource);
-await writeFile(path.join(temporary, "types.ts"), "export type PoolView = any;\n");
-await writeFile(path.join(temporary, "tsconfig.json"), JSON.stringify({
-  compilerOptions: { module: "esnext", target: "es2022", skipLibCheck: true, noCheck: true, outDir: "out" },
-  files: ["gauge.ts", "types.ts"],
-}));
-execFileSync(process.execPath, [
-  path.join(root, "node_modules", "typescript", "bin", "tsc"),
-  "-p", path.join(temporary, "tsconfig.json"),
-]);
-const modulePath = path.join(temporary, "out", "gauge.js");
-const { ageText, timeText, gaugeText, familyLines, meterValue } = await import(`${pathToFileURL(modulePath)}?v=${Date.now()}`);
-
-process.on("exit", () => { void rm(temporary, { recursive: true, force: true }); });
+let gaugeModule;
+try {
+  await writeFile(path.join(temporary, "gauge.mts"), gaugeSource);
+  await writeFile(path.join(temporary, "types.ts"), "export type PoolView = any;\n");
+  await writeFile(path.join(temporary, "tsconfig.json"), JSON.stringify({
+    compilerOptions: { module: "esnext", target: "es2022", skipLibCheck: true, noCheck: true, outDir: "out" },
+    files: ["gauge.mts", "types.ts"],
+  }));
+  execFileSync(process.execPath, [
+    path.join(root, "node_modules", "typescript", "bin", "tsc"),
+    "-p", path.join(temporary, "tsconfig.json"),
+  ]);
+  const modulePath = path.join(temporary, "out", "gauge.mjs");
+  gaugeModule = await import(`${pathToFileURL(modulePath)}?v=${Date.now()}`);
+} finally {
+  rmSync(temporary, { recursive: true, force: true });
+}
+const { ageText, timeText, gaugeText, familyLines, meterValue } = gaugeModule;
 
 const nowMs = new Date(2026, 10, 18, 12, 0, 0).getTime();
 const reset = new Date(nowMs + 60 * 60_000).toISOString();
@@ -79,6 +84,7 @@ test("meterValue", () => {
   assert.equal(meterValue({ state: "ok", remaining: 0.72 }), 0.72);
   assert.equal(meterValue({ state: "low", remaining: 1.7 }), 1);
   assert.equal(meterValue({ state: "dry" }), 0);
+  assert.equal(meterValue({ state: "dry", remaining: 0.5 }), 0);
   assert.equal(meterValue({ state: "unknown" }), null);
   assert.equal(meterValue({ state: "free" }), null);
 });
@@ -88,6 +94,7 @@ test("the page uses the fuel gauge declarations", async () => {
   const types = await readFile(path.join(root, "web", "src", "types.ts"), "utf8");
   assert.match(fleet, /from ["']\.\.\/gauge["']/);
   for (const copy of ["pools", "<meter", "aria-label"]) assert.ok(fleet.includes(copy));
+  assert.match(fleet, /<meter\b[^>]*aria-label=/);
   for (const copy of ["pools", "PoolView", "FuelWait", "RefuelOffer", "refuel_for"]) assert.ok(types.includes(copy));
   const imports = gaugeSource.match(/^import .*$/gm) ?? [];
   assert.ok(imports.every((line) => line.startsWith("import type ")));
