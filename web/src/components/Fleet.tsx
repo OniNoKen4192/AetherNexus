@@ -1,6 +1,7 @@
 import { useState } from "preact/hooks";
+import { familyLines, gaugeText, meterValue } from "../gauge";
 import type { Bridge } from "../store";
-import type { Row } from "../types";
+import type { PoolView, Row } from "../types";
 import { useCommand } from "./ActionBar";
 
 type ShipClass = {
@@ -13,6 +14,19 @@ type ProviderFleet = {
   classes: Map<string, ShipClass>;
   ships: Row[];
 };
+
+function Gauge({ pool }: { pool: PoolView }) {
+  const value = meterValue(pool);
+  const stateClass = {
+    ok: "gauge-ok", low: "gauge-low", dry: "gauge-dry",
+    unknown: "gauge-unknown", free: "gauge-free",
+  }[pool.state];
+  return <div className={`gauge ${stateClass}`}>
+    {value !== null && <meter min="0" max="1" low={pool.reserve_floor} value={value} aria-label={`${pool.provider} fuel`} />}
+    <div className="gauge-text">{gaugeText(pool, Date.now())}</div>
+    {familyLines(pool).map((line, index) => <div className="gauge-family" key={`${line}-${index}`}>{line}</div>)}
+  </div>;
+}
 
 function Ship({ b, ship }: { b: Bridge; ship: Row }) {
   const [open, setOpen] = useState(false);
@@ -43,6 +57,8 @@ function Ship({ b, ship }: { b: Bridge; ship: Row }) {
 export function Fleet({ b }: { b: Bridge }) {
   const snapshot = b.snapshot;
   const providers = new Map<string, ProviderFleet>();
+  const pools = snapshot?.pools ?? [];
+  const poolsByProvider = new Map(pools.map((pool) => [pool.provider, pool]));
 
   if (snapshot !== null) {
     for (const ship of snapshot.fleet) {
@@ -69,12 +85,14 @@ export function Fleet({ b }: { b: Bridge }) {
       <h2>Fleet</h2>
       {snapshot === null ? (
         <div>Loading</div>
-      ) : snapshot.fleet.length === 0 ? (
+      ) : snapshot.fleet.length === 0 && pools.length === 0 ? (
         <div>No ships.</div>
       ) : (
-        Array.from(providers.values()).map((provider) => (
+        <>
+        {Array.from(providers.values()).map((provider) => (
           <div className="fleet-group" key={provider.name}>
             <h3>{provider.name}</h3>
+            {poolsByProvider.has(provider.name) && <Gauge pool={poolsByProvider.get(provider.name)!} />}
             {Array.from(provider.classes.values()).map((shipClass) => (
               <div className="fleet-line" key={shipClass.name}>
                 <span>{shipClass.name}</span>
@@ -90,7 +108,14 @@ export function Fleet({ b }: { b: Bridge }) {
               {provider.ships.map((ship) => <Ship b={b} ship={ship} key={String(ship["id"])} />)}
             </div>
           </div>
-        ))
+        ))}
+        {Array.from(poolsByProvider.values()).filter((pool) => !providers.has(pool.provider)).map((pool) => (
+          <div className="fleet-group" key={pool.provider}>
+            <h3>{pool.provider}</h3>
+            <Gauge pool={pool} />
+          </div>
+        ))}
+        </>
       )}
     </section>
   );

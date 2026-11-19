@@ -8,13 +8,22 @@ export type SpecEntry = { path: string; taskId: string | null; touch: string[]; 
 export type Failure = { ts: string; taskId: string; voyageId: string | null; message: string };
 export type Action = "launch" | "inspect" | "dock" | "reply" | "drop" | "park_stale" | "cancel" | "answer";
 
+export type PoolView = {
+  provider: string; kind: string; state: "dry" | "free" | "low" | "ok" | "unknown";
+  remaining?: number; resets_at?: string; until?: string; reading_ts?: string;
+  reserve_floor: number; refuel?: { provider: string; models: Record<string, string> };
+  windows: { window: string; used: number; resets_at?: string; model_family?: string; ts: string }[];
+};
+export type FuelWait = { provider: string; reason: string; until?: string };
+export type RefuelOffer = { provider: string; model: string };
+
 export type Snapshot = {
   cursor: number; repo: string; rung: string; ready_to_send: number;
   limits: { max_concurrent_ships: number; per_provider_max: Record<string, number>; in_flight: number };
   roles: { implement: string[]; review: string[] };
   systems: (Row & { planets: (Row & { moons: Row[] })[] })[];
-  voyages: (Row & { owner: Owner | null })[];
-  fleet: Row[]; decisions: Row[]; specs: SpecEntry[]; failures: Failure[];
+  voyages: (Row & { owner: Owner | null; refuel_for: string | null })[];
+  fleet: Row[]; pools: PoolView[]; decisions: Row[]; specs: SpecEntry[]; failures: Failure[];
 };
 
 /** One event row with its payload parsed (as the feed sends it). */
@@ -27,6 +36,6 @@ export type FeedEvent = {
 
 export type MoonDetail = {
   moon: Row; spec: string | null;
-  voyages: (Row & { owner: Owner | null })[];
+  voyages: (Row & { owner: Owner | null; refuel_for: string | null })[];
   verdicts: Row[]; events: FeedEvent[]; decisions: Row[]; actions: Action[];
 };

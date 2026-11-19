@@ -141,3 +141,13 @@ DEVIATIONS: <anything done differently than specified, and why — or "none".
   non-empty list>
 BLOCKED_REASON: <only if BLOCKED: what was needed that the spec didn't provide>
 ```
+
+## Amendments
+
+### A1 — 2026-11-18 — accepted deviation
+- **Original sha256**: 0851ecb5fd564fe368310107e3696b846c0f6e203bb23998aff603e2adde2272
+- **Verdict ref**: FIX, V1-FUEL.14 round 0, lanes-reviewer
+- **Deviation**: Tests 1–8 do not use `typescript`'s `transpileModule`. They copy `web/src/gauge.ts` into a directory under `os.tmpdir()` beside a stub `types.ts`, compile it with the project's `tsc` CLI (`node_modules/typescript/bin/tsc`, run with `process.execPath`, `noCheck`), and import the emitted module.
+- **Reason accepted**: `typescript` is 7.0.2; its package exports only `version` and `versionMajorMinor`, so `transpileModule` does not exist and no new dependency is allowed. The CLI is the compiler the build already uses; the step costs about 135 ms. Type errors in `web/src` are caught by `npm run build:web` (`tsc -p web/tsconfig.json --noEmit`), which `npm test` runs first.
+- **Affected paths**: tests/http/page-fuel.test.mjs
+- **Acceptance criteria**: replaces the bracketed mechanism sentence of "Behavioral criteria": tests 1–8 compile a copy of `web/src/gauge.ts` with the project's `tsc` CLI and import the emitted file, which has the `.mjs` extension; the temporary directory is removed before the test process ends, also when the compile fails; nothing is left in `os.tmpdir()`. Criteria 1–11 are otherwise unchanged. (The `.mjs` extension and the cleanup are enforced by V1-FUEL.14-FIX1.)
