@@ -5,6 +5,36 @@ import { append } from "../../dist/db/events.js";
 import { generateSystem } from "../../dist/core/bodies.js";
 import { generateFleet } from "../../dist/core/fleet.js";
 
+/**
+ * Config for scheduler fuel scenarios. The fixture specs use the `terra` tier.
+ * The optional callback deliberately runs last so individual scenarios can
+ * adjust one setting without losing the fake-only provider guard.
+ */
+export function fuelPatch(opts = {}, extra) {
+  return (c) => {
+    c.providers.fake = {
+      ...c.providers.fake,
+      adapter: "fake",
+      pool: {
+        kind: "window",
+        reserve_floor: 0.1,
+        ...(opts.refuel ? {
+          refuel: {
+            provider: "spare",
+            models: { terra: "m-cheap" },
+            min_wait_minutes: opts.refuel.min_wait_minutes,
+          },
+        } : {}),
+      },
+    };
+    c.providers.spare = { adapter: "fake", pool: { kind: "window", reserve_floor: 0.25 } };
+    c.roles = { implement: ["fake"], review: ["fake"] };
+    c.routing.security_routed = ["src/auth.ts"];
+    c.routing.do_not_touch = [".env"];
+    extra?.(c);
+  };
+}
+
 export function seedSystem(db, id = "S-20261013-demo", seed = 42) {
   const gen = generateSystem(seed);
   append(db, { kind: "system.created", system_id: id, payload: { kind: "feature", title: "Demo", brief: "demo brief", base_sha: "0".repeat(40), integration_branch: `system/${id}/integration`, seed, theme: gen.theme, planets: gen.planets } });
