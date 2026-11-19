@@ -11,7 +11,7 @@
 On the Bridge a moon that waits on fuel says so, cargo awaiting pickup and a ship out of fuel are named in plain words, a moon parked for contraband or a raid stands out with what to do about it, and a person can refuel or send a ship anyway with one click.
 
 ## Context
-Slice 2 of v1. The reads already carry everything (`waiting_on_fuel`, `can_refuel` on moon rows and the moon detail; `refuel_for` on voyage rows; `park_reason`), and the commands already accept `refuel` and `override`; this task only draws and wires them. As in V1-FUEL.14, the words are built by pure functions in a new file with no imports, which the test transpiles with the `typescript` package and calls directly; the reviewer renders what only a browser can show. Two park reasons were given owner-chosen wording on 2026-11-18 because they must stand out from the normal flow: `carryover_violations` reads **contraband in the cargo**, `baseline_tampered` reads **raided by pirates**. Wording rule: a *ship* runs out of fuel or hits the wall, a moon never does; a moon *waits on fuel*; its *cargo awaits pickup*; `adrift` means only "needs a person". Affected workflow IDs is `none` because this project has no review suite.
+Slice 2 of v1. The reads already carry everything (`waiting_on_fuel`, `can_refuel` on moon rows and the moon detail; `refuel_for` on voyage rows; `park_reason`), and the commands already accept `refuel` and `override`; this task only draws and wires them. As in V1-FUEL.14, the words are built by pure functions in a new file with no imports, which the test compiles with the project's `tsc` and calls directly; the reviewer renders what only a browser can show. Two park reasons were given owner-chosen wording on 2026-11-18 because they must stand out from the normal flow: `carryover_violations` reads **contraband in the cargo**, `baseline_tampered` reads **raided by pirates**. Wording rule: a *ship* runs out of fuel or hits the wall, a moon never does; a moon *waits on fuel*; its *cargo awaits pickup*; `adrift` means only "needs a person". Affected workflow IDs is `none` because this project has no review suite.
 
 Facts about the reads the page must live with:
 - `waiting_on_fuel` is `null` whenever no launch or inspect is available for the moon, and also while the held provider has no idle ship; the label may come and go. Do not try to remember it.
@@ -105,6 +105,7 @@ export function ActionBar({ b }: { b: Bridge })     // renders one control per b
   - `refuelLabel(offer)` when the moon detail's `can_refuel` is set and `refuelCommand` is not null; a click sends that command.
   - `sendAnywayLabel(reason)` when `waiting_on_fuel` is set and `overrideCommand` is not null; a click sends that command.
   - Neither button is rendered otherwise. The existing Launch, Inspect, Drop and other controls and their copy are unchanged.
+- **Test mechanism.** The installed `typescript` is 7.x and has no `transpileModule`; do not import the `typescript` package. Copy `web/src/labels.ts` as `labels.mts` into a directory made with `mkdtemp` under `os.tmpdir()` (prefix `aether-labels-`) beside a stub `types.ts`, compile it with `node_modules/typescript/bin/tsc` run through `process.execPath` (as `tests/http/page-fuel.test.mjs` does), import the emitted `out/labels.mjs`, and remove the directory synchronously (`rmSync`, recursive, force) in a `finally` that also runs when `tsc` throws. Nothing is left in the temp directory; no `process.on("exit")` handler.
 - `labels.ts` has no runtime import and no JSX. The three components import from `../labels`. Nothing overflows at a 400 px viewport. No new dependencies.
 
 ## Acceptance
@@ -114,7 +115,7 @@ export function ActionBar({ b }: { b: Bridge })     // renders one control per b
 npm test -- "tests/http/page-*.test.mjs"
 ```
 
-**Behavioral criteria** (each a named test in `tests/http/page-fuel-actions.test.mjs`; tests 1–7 transpile `web/src/labels.ts` with `typescript`'s `transpileModule` (ES module output), write it to a temp `.mjs` file and import it):
+**Behavioral criteria** (each a named test in `tests/http/page-fuel-actions.test.mjs`; tests 1–7 compile a copy of `web/src/labels.ts` the way `tests/http/page-fuel.test.mjs` compiles `gauge.ts` and import the emitted `.mjs` — see Constraints):
 1. **statusText.** `awaiting_pickup` → `cargo awaiting pickup`; `out_of_fuel` → `out of fuel`; `adrift` → `adrift`; `""` → `""`.
 2. **Park reasons.** `parkReasonText`: `carryover_violations` → `contraband in the cargo`; `baseline_tampered` → `raided by pirates`; `rate_limited` → `rate_limited`. `needsAttention` is true for exactly those two and false for `rate_limited`, `null`, `undefined`, `7`. `parkReasonHint` returns the two exact strings above and `null` for `rate_limited`.
 3. **fuelWaitText.** `{ provider: "codex", reason: "low", until: "X" }` with `formatTime = (iso) => "T(" + iso + ")"` → `waiting on codex fuel · resets T(X)`; without `until` → `waiting on codex fuel`, and `formatTime` is not called.
