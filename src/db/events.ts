@@ -15,16 +15,27 @@ export function applyEvent(db: NexusDb, ev: EventRow): void {
   if (!reducer) throw new Error(`no reducer for '${ev.kind}'`);
   reducer(db, ev);
 }
+/**
+ * Several events in one transaction. `build` runs inside it, so it may read the database to decide what to append
+ * (which ship is idle, which names are taken) and two processes sharing the file cannot both decide on the same answer.
+ * Events are applied in order: a later one sees the rows an earlier one wrote. A throw anywhere appends nothing.
+ */
+export function appendAll(db: NexusDb, build: () => NexusEvent[]): EventRow[] {
+  return db.transaction(() => build().map((ev) => insertAndApply(db, ev)));
+}
+function insertAndApply(db: NexusDb, ev: NexusEvent): EventRow {
+  const ts = ev.ts ?? new Date().toISOString();
+  const { lastInsertRowid } = db.run("events.insert", {
+    ts, kind: ev.kind, system_id: ev.system_id ?? null, planet_id: ev.planet_id ?? null, moon_id: ev.moon_id ?? null,
+    voyage_id: ev.voyage_id ?? null, ship_id: ev.ship_id ?? null, task_id: ev.task_id ?? null, assignment_id: ev.assignment_id ?? null, provider: ev.provider ?? null, payload: JSON.stringify(ev.payload),
+  });
+  const row = rowToEvent(db.get("events.byId", { id: lastInsertRowid })!);
+  applyEvent(db, row);
+  return row;
+}
 export function append(db: NexusDb, ev: NexusEvent, precheck?: () => void): EventRow {
   return db.transaction(() => {
     precheck?.();
-    const ts = ev.ts ?? new Date().toISOString();
-    const { lastInsertRowid } = db.run("events.insert", {
-      ts, kind: ev.kind, system_id: ev.system_id ?? null, planet_id: ev.planet_id ?? null, moon_id: ev.moon_id ?? null,
-      voyage_id: ev.voyage_id ?? null, ship_id: ev.ship_id ?? null, task_id: ev.task_id ?? null, assignment_id: ev.assignment_id ?? null, provider: ev.provider ?? null, payload: JSON.stringify(ev.payload),
-    });
-    const row = rowToEvent(db.get("events.byId", { id: lastInsertRowid })!);
-    applyEvent(db, row);
-    return row;
+    return insertAndApply(db, ev);
   });
 }

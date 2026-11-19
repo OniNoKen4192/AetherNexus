@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { append } from "../../db/events.js";
 import { rowToEvent } from "../../db/events.js";
-import { pickIdleShip } from "../../core/fleet.js";
 import type { MoonStatus } from "../../core/transitions.js";
 import type { AgentEvent, ReviewReport } from "../../providers/adapter.js";
 import { appendAmendment, hashSpec } from "../../validate/spec.js";
@@ -10,7 +9,7 @@ import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
 import { chooseProvider } from "../limiter/limiter.js";
 import { requireTreeAnswered } from "./decision.js";
-import { loadMoon, moonScope, parkVoyage, recordTreeWrite, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
+import { loadMoon, moonScope, parkVoyage, recordTreeWrite, promptPath, moonTouch, renderPrompt, runVoyage } from "../dispatch.js";
 
 type VoyageRow = { id: string; ship_id: string; status: string; round: number; report: string | null };
 
@@ -51,7 +50,6 @@ export async function sendCustoms(
   if (choice.kind === "none") throw new Refusal(choice.message);
   const provider = choice.provider;
   if (!g.adapters[provider]) throw new Refusal(`provider '${provider}' is not configured`);
-  if (!pickIdleShip(g.db, "customs", provider, "standard")) throw new Refusal(`all ${shipsNoun("customs")} in fleet '${provider}' are assigned`);
 
   const specAbs = path.join(g.repoRoot, moon.spec_path);
   const specText = fs.readFileSync(specAbs, "utf8");

@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { append, rowToEvent } from "../../db/events.js";
-import { pickIdleShip } from "../../core/fleet.js";
 import type { MoonStatus } from "../../core/transitions.js";
 import type { AgentEvent, ImplementReport } from "../../providers/adapter.js";
 import { gate } from "../../validate/gate.js";
@@ -13,7 +12,7 @@ import { chooseProvider } from "../limiter/limiter.js";
 import { endOutOfFuel } from "../limiter/wall.js";
 import { requireTreeAnswered } from "./decision.js";
 import { dependencyState } from "./deps.js";
-import { loadMoon, loadPlanet, moonScope, parkVoyage, refuseIfAtCap, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
+import { loadMoon, loadPlanet, moonScope, parkVoyage, refuseIfAtCap, refuseIfSkyFull, promptPath, moonTouch, renderPrompt, runVoyage } from "../dispatch.js";
 
 const NEXUS_AUTHOR = { name: "nexus", email: "nexus@nexus.local" };
 const PARK_STATUSES = new Set(["BLOCKED", "BACKEND_FAILURE"]);
@@ -129,7 +128,7 @@ export async function sendDelivery(
   const specText = fs.readFileSync(specAbs, "utf8");
   if (hashSpec(specText).bodySha !== moon.spec_sha) throw new Refusal("spec body changed since assign — amend under ## Amendments instead");
 
-  // Precheck 3: a free ship, before any side effect.
+  // Precheck 3: a provider that can fly it and a free flight slot, before any side effect. A ship is never the limit.
   const choice = chooseProvider(g, {
     role: "implement", tier: moon.tier, mayRefuel: input.refuel === true || g.config.automation.level !== "manual",
     ...(input.provider !== undefined ? { requested: input.provider } : {}), override: input.override === true,
@@ -144,7 +143,7 @@ export async function sendDelivery(
   const provider = choice.provider;
   if (!g.adapters[provider]) throw new Refusal(`provider '${provider}' is not configured`);
   refuseIfAtCap(g, provider);
-  if (!pickIdleShip(g.db, "delivery", provider, "standard")) throw new Refusal(`all ${shipsNoun("delivery")} in fleet '${provider}' are assigned`);
+  refuseIfSkyFull(g);
 
   const scope = moonScope(g, moon);
   const planet = loadPlanet(g, moon);

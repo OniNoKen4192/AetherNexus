@@ -91,7 +91,6 @@ export function planWithHolds(g: Galaxy, ctx: PlanCtx): { actions: PlannedAction
   const capacity: Capacity = {
     free: g.config.scheduler.max_concurrent_ships - inFlight.length,
     providerUse,
-    claimed: new Set<string>(),
   };
   const actions: PlannedAction[] = [];
   const holds: Hold[] = [];

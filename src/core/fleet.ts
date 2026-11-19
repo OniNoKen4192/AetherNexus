@@ -1,6 +1,6 @@
 import { mulberry32 } from "./rng.js";
-import { THEMES, pickName } from "./names.js";
-import type { ShipFormation, ShipJob } from "./catalogue/types.js";
+import { pickCargo, pickFormation, shipName } from "./catalogue/pick.js";
+import type { Catalogue, ShipFormation, ShipJob } from "./catalogue/types.js";
 import type { NexusDb } from "../db/open.js";
 /** The four ship classes of the fleet that was registered up front, before migration 003. They survive only in old `ship.registered` events. */
 export type LegacyShipClass = "freighter" | "customs" | "carrier" | "surveyor";
@@ -38,12 +38,25 @@ export function legacyShip(old: { id: string; name: string; class: string; fleet
   };
 }
 
-export function generateFleet(seed: number, theme: string, counts: { freighters: number; customs: number; carriers: number; surveyors: number }, fleets: string[]): GeneratedShip[] {
-  const rng = mulberry32((seed ^ 0x53484950) >>> 0); const t = THEMES[theme] ?? THEMES["classic"]!;   // 0x53484950 = "SHIP": a fixed salt so fleet names differ from body names for the same seed
-  const used = new Set<string>(); const out: GeneratedShip[] = [];
-  const plan: [LegacyShipClass, number][] = [["freighter", counts.freighters], ["customs", counts.customs], ["carrier", counts.carriers], ["surveyor", counts.surveyors]];
-  for (const fleet of fleets) for (const [cls, n] of plan) for (let i = 0; i < n; i++) { const name = pickName(rng, t.ships, used); out.push({ id: slug(name), name, class: cls, fleet }); }
-  return out;
+const mix = (seed: number, salt: number, n: number): number => ((seed ^ salt) + Math.imul(n + 1, 0x9e3779b1)) >>> 0;
+/**
+ * A new ship for a job no idle ship can take. Call it inside the launch transaction: the name and id are chosen against
+ * every ship the galaxy has ever had (a retired ship's name is never given out again), and the pick is seeded from
+ * `seed` and the number of ships so far, so the same history gives the same ship.
+ */
+export function commissionShip(db: NexusDb, p: { catalogue: Catalogue; fleet: string; job: ShipJob; faction: string; weight: string; theme: string; seed: number }): ShipRecord {
+  const ships = db.all<{ id: string; name: string }>("ships.all");
+  const rng = mulberry32(mix(p.seed, 0x53484950, ships.length));   // 0x53484950 = "SHIP"
+  const formation = pickFormation(p.catalogue, { job: p.job, weight: p.weight, faction: p.faction }, rng);
+  const name = shipName(p.catalogue, { faction: p.faction, theme: p.theme }, rng, new Set(ships.map((s) => s.name)));
+  const ids = new Set(ships.map((s) => s.id)); const base = slug(name) || "ship";
+  let id = base; for (let n = 2; ids.has(id); n++) id = `${base}-${n}`;   // two names can share a slug
+  return { id, name, fleet: p.fleet, job: p.job, faction: p.faction, weight: p.weight, formation };
+}
+/** The cargo of one trip, drawn per voyage (seeded from `seed` and the number of voyages so far); null when the catalogue has none for the weight. */
+export function drawCargo(db: NexusDb, catalogue: Catalogue, weight: string, seed: number): { id: string; label: string } | null {
+  const voyages = db.get<{ n: number }>("voyages.count")!.n;
+  return pickCargo(catalogue, weight, mulberry32(mix(seed, 0x43415247, voyages)));   // 0x43415247 = "CARG"
 }
 /** An idle ship of this fleet, job and weight: the least-flown first. There is no nearest-weight fallback. */
 export function pickIdleShip(db: NexusDb, job: ShipJob, fleet: string, weight: string): ShipRow | undefined {

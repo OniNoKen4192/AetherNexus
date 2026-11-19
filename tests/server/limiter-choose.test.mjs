@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { makeGalaxy } from "../helpers.mjs";
-import { worldWithMoon } from "../fixtures/world.mjs";
+import { idleShip, worldWithMoon } from "../fixtures/world.mjs";
 import { append } from "../../dist/db/events.js";
 import { loadMoon, moonScope } from "../../dist/server/dispatch.js";
 import { chooseProvider, fuelCheck, fuelHold } from "../../dist/server/limiter/limiter.js";
@@ -30,7 +30,7 @@ async function assignedWorld(freighters, max) {
 function launch(w, provider = "fake") {
   const scope = moonScope(w.g, loadMoon(w.g, "T1"));
   append(w.g.db, { kind: "moon.gated", ...scope, payload: { base_sha: "0".repeat(40), state_path: ".nexus/state/T1.json", round: 1 } });
-  const ship = w.g.db.get("ships.pickIdle", { job: "delivery", fleet: provider, weight: "standard" });
+  const ship = idleShip(w.g.db, provider);
   const voyageId = `${ship.id}/T1/implement/1`;
   append(w.g.db, { kind: "voyage.launched", ...scope, ts: iso(0), voyage_id: voyageId, ship_id: ship.id, provider, payload: { role: "implement", round: 1, provider, ship_id: ship.id, worktree: "w" } });
   return voyageId;
@@ -67,11 +67,15 @@ test("chooser reproduces exact none messages and silently skips unavailable prov
     assert.deepEqual(pick(w.g, { requested: "missing" }), { kind: "none", message: "provider 'missing' is not configured" });
     w.g.config.roles.implement = ["fake", "probe"];
     w.g.config.scheduler.per_provider_max.fake = 1;
-    const capped = { free: 2, providerUse: new Map([["fake", 1]]), claimed: new Set() };
+    const capped = { free: 2, providerUse: new Map([["fake", 1]]) };
     const skipped = pick(w.g, { capacity: capped }); assert.equal(skipped.kind, "fly"); assert.equal(skipped.provider, "probe"); assert.equal(skipped.reroutedFrom, undefined);
     assert.deepEqual(pick(w.g, { requested: "fake", capacity: capped }), { kind: "none", message: "provider 'fake' is at its limit of 1 (scheduler.per_provider_max)" });
-    const claimed = new Set(w.g.db.all("ships.all").filter((s) => s.fleet === "fake" && s.job === "delivery").map((s) => s.id));
-    assert.deepEqual(pick(w.g, { requested: "fake", capacity: { free: 1, providerUse: new Map(), claimed } }), { kind: "none", message: "all freighters in fleet 'fake' are assigned" });
+    assert.deepEqual(capped, { free: 1, providerUse: new Map([["fake", 1], ["probe", 1]]) }, "only the flight that was chosen is counted");
+    // A fleet with no idle ship (here: no ship at all) is not a reason to refuse: the launch commissions one.
+    assert.equal(w.g.db.all("ships.all").length, 0);
+    const open = { free: 1, providerUse: new Map() };
+    assert.deepEqual(pick(w.g, { requested: "fake", capacity: open }), { kind: "fly", provider: "fake" });
+    assert.deepEqual(open, { free: 0, providerUse: new Map([["fake", 1]]) });
   } finally { w.cleanup(); }
 });
 
@@ -88,15 +92,17 @@ test("refuel flies or advertises canRefuel only when all conditions pass", async
   } finally { w.cleanup(); }
 });
 
-test("capacity claims unique ships, enforces free and provider caps, and mutates only its view", async () => {
+test("capacity enforces free and provider caps, and mutates only its view", async () => {
   const w = await world();
   try {
     w.g.config.scheduler.per_provider_max.fake = 1;
-    const capacity = { free: 2, providerUse: new Map(), claimed: new Set() };
+    const capacity = { free: 2, providerUse: new Map() };
+    const before = w.g.db.get("events.maxId").id;
     const a = pick(w.g, { capacity }); const b = pick(w.g, { capacity }); const c = pick(w.g, { capacity });
-    assert.equal(a.provider, "fake"); assert.equal(b.provider, "probe"); assert.notEqual(a.shipId, b.shipId);
+    assert.deepEqual(a, { kind: "fly", provider: "fake" }); assert.deepEqual(b, { kind: "fly", provider: "probe" });
     assert.deepEqual(c, { kind: "none", message: "the concurrency limit is reached" });
-    assert.equal(capacity.providerUse.get("fake"), 1); assert.equal(capacity.claimed.size, 2);
+    assert.deepEqual(capacity, { free: 0, providerUse: new Map([["fake", 1], ["probe", 1]]) });
+    assert.equal(w.g.db.get("events.maxId").id, before); assert.equal(w.g.db.all("ships.all").length, 0); assert.deepEqual(w.g.db.all("voyages.inFlight"), []);
   } finally { w.cleanup(); }
 });
 
@@ -137,10 +143,9 @@ test("c11: a single ok provider flies with no reroutedFrom", async () => {
     w.g.config.roles.implement = ["fake"];
     read(w, "fake", 0.2);
     const choice = pick(w.g);
-    const freighters = w.g.db.all("ships.all").filter((ship) => ship.fleet === "fake" && ship.job === "delivery" && ship.status === "idle").map((ship) => ship.id);
     assert.equal(choice.kind, "fly");
     assert.equal(choice.provider, "fake");
-    assert.ok(freighters.includes(choice.shipId));
+    assert.deepEqual(choice, { kind: "fly", provider: "fake" });
     assert.equal("reroutedFrom" in choice, false);
     assert.equal("refuelFor" in choice, false);
     assert.equal("model" in choice, false);
@@ -152,19 +157,20 @@ test("c12: review flies on a low first provider", async () => {
   try {
     read(w, "fake", 0.95); read(w, "probe", 0.2);
     const choice = chooseProvider(w.g, { role: "review", tier: null, mayRefuel: false });
-    const ship = w.g.db.get("ships.byId", { id: choice.shipId });
     assert.equal(choice.kind, "fly");
     assert.equal(choice.provider, "fake");
-    assert.equal(ship.job, "customs");
-    assert.equal(ship.fleet, "fake");
+    assert.deepEqual(choice, { kind: "fly", provider: "fake" });
     assert.equal("reroutedFrom" in choice, false);
   } finally { w.cleanup(); }
 });
 
-test("c13: a first provider with every freighter assigned is skipped without reroutedFrom", async () => {
+test("c13: a first provider whose every delivery ship is assigned still flies; at its cap it is skipped without reroutedFrom", async () => {
   const w = await assignedWorld(1);
   try {
     read(w, "fake", 0.2); read(w, "probe", 0.2); launch(w, "fake");
+    assert.ok(w.g.db.all("ships.all").every((ship) => ship.status === "assigned"));
+    assert.deepEqual(pick(w.g), { kind: "fly", provider: "fake" });
+    w.g.config.scheduler.per_provider_max.fake = 1;
     const choice = pick(w.g);
     assert.equal(choice.kind, "fly");
     assert.equal(choice.provider, "probe");
@@ -184,13 +190,14 @@ test("c14: a low provider is held with until and a dry one is held for both role
   } finally { w.cleanup(); }
 });
 
-test("c15: without capacity the at-limit and all-assigned messages are exact", async () => {
+test("c15: without capacity the at-limit message is exact, and a fleet with every ship assigned is no limit", async () => {
   const capped = await assignedWorld(2, 1), assigned = await assignedWorld(1);
   try {
     launch(capped, "fake");
     assert.deepEqual(pick(capped.g, { requested: "fake" }), { kind: "none", message: "provider 'fake' is at its limit of 1 (scheduler.per_provider_max)" });
     launch(assigned, "fake");
-    assert.deepEqual(pick(assigned.g, { requested: "fake" }), { kind: "none", message: "all freighters in fleet 'fake' are assigned" });
+    assert.ok(assigned.g.db.all("ships.all").every((ship) => ship.status === "assigned"));
+    assert.deepEqual(pick(assigned.g, { requested: "fake" }), { kind: "fly", provider: "fake" });
   } finally { capped.cleanup(); assigned.cleanup(); }
 });
 
@@ -229,8 +236,7 @@ test("c19: each refuel condition failing alone is held without canRefuel", async
     async (w) => { append(w.g.db, { kind: "fuel.exhausted", provider: "probe", ts: iso(1), payload: { until: "2026-11-17T14:00:00.000Z", voyage_id: "v" } }); },
     async (w) => { w.g.config.providers.fake.pool.refuel.min_wait_minutes = 90; },
     async (w) => { w.g.config.providers.fake.pool.refuel.min_wait_minutes = 60; },
-    async (w) => ({ capacity: { free: 5, providerUse: new Map(), claimed: new Set(w.g.db.all("ships.all").filter((ship) => ship.fleet === "probe" && ship.job === "delivery").map((ship) => ship.id)) } }),
-    async (w) => { w.g.config.scheduler.per_provider_max.probe = 1; return { capacity: { free: 5, providerUse: new Map([["probe", 1]]), claimed: new Set() } }; },
+    async (w) => { w.g.config.scheduler.per_provider_max.probe = 1; return { capacity: { free: 5, providerUse: new Map([["probe", 1]]) } }; },
   ];
   for (const setup of cases) {
     const w = await world(true);
@@ -240,6 +246,15 @@ test("c19: each refuel condition failing alone is held without canRefuel", async
       assert.deepEqual(pick(w.g, { requested: "fake", ...extra }), LOW);
     } finally { w.cleanup(); }
   }
+  // The refuel fleet having no idle ship is not one of the conditions: with room in the capacity view the refuel is offered.
+  const w = await world(true);
+  try {
+    read(w, "fake", 0.95);
+    assert.equal(w.g.db.all("ships.all").filter((ship) => ship.fleet === "probe").length, 0);
+    const capacity = { free: 5, providerUse: new Map() };
+    assert.deepEqual(pick(w.g, { requested: "fake", capacity }), { ...LOW, canRefuel: { provider: "probe", model: "haiku-model" } });
+    assert.deepEqual(capacity, { free: 5, providerUse: new Map() }, "an offer takes no slot");
+  } finally { w.cleanup(); }
 });
 
 test("c19: an unknown until allows the refuel", async () => {
@@ -263,17 +278,20 @@ test("c19: a tier that is not an own key of refuel.models cannot refuel", async 
   } finally { w.cleanup(); }
 });
 
-test("c21: flights on one fleet take different ships", async () => {
+test("c21: flights on one fleet are limited by free slots, never by the ships the fleet has", async () => {
   const w = await world();
   try {
     read(w, "fake", 0.2);
-    const capacity = { free: 5, providerUse: new Map(), claimed: new Set() };
+    const capacity = { free: 5, providerUse: new Map() };
     const choices = [pick(w.g, { requested: "fake", capacity }), pick(w.g, { requested: "fake", capacity }), pick(w.g, { requested: "fake", capacity })];
     assert.deepEqual(choices.map((choice) => choice.kind), ["fly", "fly", "fly"]);
-    assert.equal(new Set(choices.map((choice) => choice.shipId)).size, 3);
+    assert.ok(choices.every((choice) => choice.provider === "fake" && !("shipId" in choice)));
     assert.equal(capacity.free, 2);
     assert.equal(capacity.providerUse.get("fake"), 3);
-    assert.deepEqual(capacity.claimed, new Set(choices.map((choice) => choice.shipId)));
-    assert.deepEqual(pick(w.g, { requested: "fake", capacity }), { kind: "none", message: "all freighters in fleet 'fake' are assigned" });
+    // world() asks for three fake delivery ships (fleet.freighters, now ignored): a fourth and fifth flight still fly.
+    assert.deepEqual(pick(w.g, { requested: "fake", capacity }), { kind: "fly", provider: "fake" });
+    assert.deepEqual(pick(w.g, { requested: "fake", capacity }), { kind: "fly", provider: "fake" });
+    assert.deepEqual(capacity, { free: 0, providerUse: new Map([["fake", 5]]) });
+    assert.deepEqual(pick(w.g, { requested: "fake", capacity }), { kind: "none", message: "the concurrency limit is reached" });
   } finally { w.cleanup(); }
 });

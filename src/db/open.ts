@@ -59,6 +59,10 @@ function migrate(raw: DatabaseSync): void {
     const n = Number(f.slice(0, 3)); if (n <= cur) continue;
     raw.exec("BEGIN IMMEDIATE");
     try {
+      // Read the version again now that the write lock is held: another process opening the same file may have run this
+      // migration while we waited, and running it twice would fail (003 adds a column).
+      const now = Number((raw.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as Row | undefined)?.["value"] ?? 0);
+      if (n <= now) { raw.exec("COMMIT"); continue; }
       raw.exec(fs.readFileSync(path.join(MIGRATIONS_DIR, f), "utf8"));
       raw.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version', ?)").run(String(n));
       raw.exec("COMMIT");

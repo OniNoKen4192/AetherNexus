@@ -192,9 +192,9 @@ test("a planet dependency blocks only the first freighter", async () => {
   });
 });
 
-test("global, provider, and idle-freighter capacity limit first freighters", async () => {
+test("global and provider capacity limit first delivery ships; fleet size does not", async () => {
   const moons = [{ taskId: "T1" }, { taskId: "T2" }, { taskId: "T3" }];
-  for (const [options, expected] of [[{ max: 2 }, 2], [{ providerMax: 1 }, 1], [{ freighters: 2, max: 6 }, 2]]) {
+  for (const [options, expected] of [[{ max: 2 }, 2], [{ providerMax: 1 }, 1], [{ freighters: 2, max: 6 }, 3]]) {
     await withWorld(() => world(moons, options), async (w) => {
       const planned = plan(w.g, ctx("roundabout"));
       assert.equal(planned.length, expected);
@@ -321,13 +321,14 @@ test("capacity holds across reroutes", async () => {
   });
 });
 
-test("two freighters planned on one fleet in one call take different ships", async () => {
+test("two deliveries on one fleet are both planned in one call, whatever the fleet size", async () => {
   const moons = [{ taskId: "T1" }, { taskId: "T2" }];
   await withWorld(() => world(moons, { freighters: 2, max: 4 }), async (w) => {
     assert.deepEqual(planWithHolds(w.g, ctx("roundabout")).actions, [action("send", "T1", true), action("send", "T2", true)]);
   });
   await withWorld(() => world(moons, { freighters: 1, max: 4 }), async (w) => {
-    assert.deepEqual(planWithHolds(w.g, ctx("roundabout")), { actions: [action("send", "T1", true)], holds: [] });
+    assert.deepEqual(planWithHolds(w.g, ctx("roundabout")), { actions: [action("send", "T1", true), action("send", "T2", true)], holds: [] });
+    assert.equal(w.g.db.all("ships.all").length, 0, "planning commissions no ship");
   });
 });
 

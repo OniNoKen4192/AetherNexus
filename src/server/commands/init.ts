@@ -2,8 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { DEFAULT_CONFIG, normalizeConfig } from "../../config/schema.js";
 import { openDb } from "../../db/open.js";
-import { append } from "../../db/events.js";
-import { generateFleet } from "../../core/fleet.js";
 import { Refusal } from "../errors.js";
 import { galaxyPaths } from "../galaxy.js";
 
@@ -30,12 +28,7 @@ export function initGalaxy(repoRoot: string, opts: { force?: boolean; patchConfi
   const config = normalizeConfig(initial);
   const db = openDb(paths.dbFile, { stats: config.db.stats });
   try {
-    const have = new Set(db.all("ships.all").map((s) => String(s["id"])));
-    const ships = generateFleet(config.fleet.seed ?? 1, config.fleet.name_theme, config.fleet, Object.keys(config.providers));
-    for (const ship of ships) {
-      if (have.has(ship.id)) continue;
-      append(db, { kind: "ship.registered", ship_id: ship.id, provider: ship.fleet, payload: { ship } });
-    }
+    // No fleet is registered up front: a ship is commissioned the first time a job needs one (fleet.* counts are ignored).
     return { configPath, dbFile: paths.dbFile, ships: db.all("ships.all").length };
   } finally { db.close(); }
 }

@@ -46,6 +46,7 @@ export const STATEMENTS = {
   "moons.byStatus": "SELECT * FROM moons WHERE status = @status ORDER BY planet_id, orbit_index",
   "voyages.insert": "INSERT INTO voyages(id, ship_id, moon_id, planet_id, task_id, assignment_id, role, round, provider, model, session_id, status, launched_ts, last_event_id, cargo) VALUES (@id, @ship_id, @moon_id, @planet_id, @task_id, @assignment_id, @role, @round, @provider, @model, @session_id, 'launched', @launched_ts, @last_event_id, @cargo)",
   "voyages.byId": "SELECT * FROM voyages WHERE id = @id",
+  "voyages.count": "SELECT COUNT(*) AS n FROM voyages",
   "voyages.inFlight": "SELECT * FROM voyages WHERE status IN ('launched','working') ORDER BY launched_ts, rowid",
   // Only a voyage launched after @ts counts: one already in flight when another ship hit the wall proves nothing about the pool.
   "voyages.returnedByProviderSince": "SELECT model FROM voyages WHERE provider = @provider AND launched_ts > @ts AND returned_ts > @ts",

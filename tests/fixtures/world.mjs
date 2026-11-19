@@ -3,7 +3,7 @@ import { createSystem } from "../../dist/server/commands/system.js";
 import { assignPlanet, assignMoon } from "../../dist/server/commands/assign.js";
 import { append } from "../../dist/db/events.js";
 import { generateSystem } from "../../dist/core/bodies.js";
-import { generateFleet } from "../../dist/core/fleet.js";
+import { slug } from "../../dist/core/fleet.js";
 
 /**
  * Config for scheduler fuel scenarios. The fixture specs use the `terra` tier.
@@ -41,10 +41,29 @@ export function seedSystem(db, id = "S-20261013-demo", seed = 42) {
   return gen;
 }
 
+// A fleet as a galaxy made before ships were commissioned on demand registered it: `ship.registered` events with a class.
+// Reducer tests use it to have idle ships without a launch; such ships read as standard weight with a legacy formation.
+const LEGACY_NAMES = ["Vigilant", "Slow Thunder", "Pilgrim", "Pale Meridian", "Kindly Keel", "Dawn Treader", "Meridian", "Steadfast", "Far Harbor", "Wayfarer", "Sojourner", "Resolute", "Intrepid", "Concord", "Sentinel"];
 export function seedFleet(db, fleets = ["fake"]) {
-  const ships = generateFleet(1, "classic", { freighters: 2, customs: 1, carriers: 1, surveyors: 1 }, fleets);
+  const ships = []; let n = 0;
+  for (const fleet of fleets) for (const [cls, count] of [["freighter", 2], ["customs", 1], ["carrier", 1], ["surveyor", 1]]) {
+    for (let i = 0; i < count; i++) { const name = LEGACY_NAMES[n++]; ships.push({ id: slug(name), name, class: cls, fleet }); }
+  }
   for (const ship of ships) append(db, { kind: "ship.registered", ship_id: ship.id, provider: ship.fleet, payload: { ship } });
   return ships;
+}
+
+/**
+ * An idle ship to raw-append a `voyage.launched` on, for a test that does not run a real launch. Returns the idle ship of
+ * this fleet, job and weight when there is one; otherwise commissions one (as a launch would) and returns its row.
+ */
+export function idleShip(db, fleet = "fake", job = "delivery", weight = "standard") {
+  const idle = db.get("ships.pickIdle", { job, fleet, weight });
+  if (idle) return idle;
+  const n = db.all("ships.all").length + 1;
+  const ship = { id: `test-ship-${n}`, name: `Test Ship ${n}`, fleet, job, faction: fleet, weight, formation: { id: "plain", name: "Ship", vessels: [{ hull: "ship", count: 1, role: "lead" }] } };
+  append(db, { kind: "ship.commissioned", ship_id: ship.id, provider: fleet, payload: { ship } });
+  return db.get("ships.byId", { id: ship.id });
 }
 
 /**

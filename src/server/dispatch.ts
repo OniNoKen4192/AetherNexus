@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { append, rowToEvent, type NexusEvent } from "../db/events.js";
+import { append, appendAll, rowToEvent, type NexusEvent } from "../db/events.js";
 import { withGitLog, type GitLog } from "../core/git.js";
-import { jobFor, pickIdleShip } from "../core/fleet.js";
-import type { ShipJob } from "../core/catalogue/types.js";
+import { commissionShip, drawCargo, jobFor, pickIdleShip } from "../core/fleet.js";
+import { factionOf, weightFor } from "../core/weight.js";
 import type { AgentEvent, Job, Role } from "../providers/adapter.js";
 import { Refusal } from "./errors.js";
 import type { Galaxy } from "./galaxy.js";
@@ -79,12 +79,17 @@ export function providerAtCap(g: Galaxy, provider: string): boolean {
   return g.db.all<InFlightRow>("voyages.inFlight").filter((v) => v.provider === provider).length >= max;
 }
 
-/** Advisory early refusal with the same wording as the authoritative check in the voyage.launched transaction, so a cap wins over "no idle ship". */
+/** Advisory early refusal with the same wording as the authoritative check in the voyage.launched transaction. */
 export function refuseIfAtCap(g: Galaxy, provider: string): void {
   if (providerAtCap(g, provider)) throw new Refusal(`provider '${provider}' is at its limit of ${g.config.scheduler.per_provider_max[provider]} (scheduler.per_provider_max)`);
 }
 
-export const shipsNoun = (job: ShipJob): string => (job === "delivery" ? "freighters" : job);
+const skyFull = (inFlight: number, total: number): string => `${inFlight} ${inFlight === 1 ? "voyage" : "voyages"} in flight — the limit is ${total} (scheduler.max_concurrent_ships)`;
+/** Advisory early refusal when every flight slot is taken, with the wording of the authoritative check in the launch transaction: a full sky refuses before anything is committed or gated. */
+export function refuseIfSkyFull(g: Galaxy): void {
+  const inFlight = g.db.all("voyages.inFlight").length, total = g.config.scheduler.max_concurrent_ships;
+  if (inFlight >= total) throw new Refusal(skyFull(inFlight, total));
+}
 
 /** Park sequence: voyage, ship, moon, then a pending decision. Each is its own transaction, so a crash leaves a visible, finishable park. */
 export function parkVoyage(g: Galaxy, p: { taskId: string; voyageId: string; shipId: string; reason: string; details?: string }): void {
@@ -114,35 +119,48 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
   if (!adapter) throw new Refusal(`provider '${input.provider}' is not configured`);
   const job = jobFor(input.role);
   refuseIfAtCap(g, input.provider);
-  const ship = pickIdleShip(g.db, job, input.provider, "standard");
-  if (!ship) throw new Refusal(`all ${shipsNoun(job)} in fleet '${input.provider}' are assigned`);
-  const baseId = `${ship.id}/${input.taskId}/${input.role}/${input.job.round}`;
   const model = input.model ?? (input.role === "implement" && moon.tier ? g.config.providers[input.provider]?.models?.[moon.tier] : undefined);
+  // The weight of the trip is read from what the adapter is told to fly, never from what it reports back.
+  const weight = weightFor(g.config, input.provider, { role: input.role, ...(model ? { model } : {}), tier: moon.tier });
+  const seed = g.config.fleet.seed ?? 1;
 
   const before = mainTreeSnapshot(g); // before launch: if git fails here, nothing has been taken yet
 
-  // One transaction: the voyage.launched reducer takes the ship, so a refused launch leaves it idle.
-  const launched: NexusEvent = {
-    kind: "voyage.launched", ...scope, voyage_id: baseId, ship_id: ship.id, provider: input.provider,
-    payload: { role: input.role, round: input.job.round, provider: input.provider, ...(model ? { model } : {}), ...(input.refuelFor ? { refuel_for: input.refuelFor } : {}), ship_id: ship.id, worktree: input.worktree, owner_pid: process.pid },
-  };
-  const launchedRow = append(g.db, launched, () => {
-    const cur = g.db.get<{ status: string }>("ships.byId", { id: ship.id });
-    if (cur?.status !== "idle") throw new Refusal(`ship ${ship.id} is no longer idle`);
-    // A dropped-and-reassigned task restarts its rounds, so the readable id can repeat: suffix #2, #3, ...
-    let id = baseId;
-    for (let n = 2; g.db.get("voyages.byId", { id }); n++) id = `${baseId}#${n}`;
-    launched.voyage_id = id;
-    // Scheduler limits are checked here, in the launch transaction, so they hold across processes sharing the file.
+  // One transaction decides everything about the launch, so it holds across processes sharing the file: the limits, which
+  // ship flies (an idle one of this fleet, job and weight, or a new one commissioned here), the voyage id and the cargo.
+  // A refused launch appends nothing: no ship is commissioned for a voyage that does not fly.
+  const ship = { id: "" }; let voyageId = "";
+  const rows = appendAll(g.db, () => {
+    // Scheduler limits first. They are the only limits on how many ships fly: the fleet grows to whatever the work needs.
     const inFlight = g.db.all<InFlightRow>("voyages.inFlight");
     const total = g.config.scheduler.max_concurrent_ships;
-    if (inFlight.length >= total) throw new Refusal(`${inFlight.length} ${inFlight.length === 1 ? "voyage" : "voyages"} in flight — the limit is ${total} (scheduler.max_concurrent_ships)`);
+    if (inFlight.length >= total) throw new Refusal(skyFull(inFlight.length, total));
     const perProvider = g.config.scheduler.per_provider_max[input.provider];
     if (perProvider !== undefined && inFlight.filter((v) => v.provider === input.provider).length >= perProvider) {
       throw new Refusal(`provider '${input.provider}' is at its limit of ${perProvider} (scheduler.per_provider_max)`);
     }
+    const events: NexusEvent[] = [];
+    // Ships are fungible within a fleet, job and weight; a ship of another weight is never taken (no nearest-weight fallback).
+    const idle = pickIdleShip(g.db, job, input.provider, weight);
+    if (idle) ship.id = idle.id;
+    else {
+      const record = commissionShip(g.db, { catalogue: g.catalogue, fleet: input.provider, job, faction: factionOf(g.config, input.provider), weight, theme: g.config.fleet.name_theme, seed });
+      events.push({ kind: "ship.commissioned", ship_id: record.id, provider: input.provider, payload: { ship: record } });
+      ship.id = record.id;
+    }
+    // A dropped-and-reassigned task restarts its rounds, so the readable id can repeat: suffix #2, #3, ...
+    const baseId = `${ship.id}/${input.taskId}/${input.role}/${input.job.round}`;
+    voyageId = baseId;
+    for (let n = 2; g.db.get("voyages.byId", { id: voyageId }); n++) voyageId = `${baseId}#${n}`;
+    // Cargo is per trip and only a delivery carries any; a missing catalogue entry never stops the launch.
+    const cargo = input.role === "implement" ? drawCargo(g.db, g.catalogue, weight, seed) : null;
+    events.push({
+      kind: "voyage.launched", ...scope, voyage_id: voyageId, ship_id: ship.id, provider: input.provider,
+      payload: { role: input.role, round: input.job.round, provider: input.provider, ...(model ? { model } : {}), ...(input.refuelFor ? { refuel_for: input.refuelFor } : {}), ship_id: ship.id, ...(cargo ? { cargo } : {}), worktree: input.worktree, owner_pid: process.pid },
+    });
+    return events;
   });
-  const voyageId = launched.voyage_id!;
+  const launchedRow = rows.at(-1)!;
   // A throwing callback must not strand a launched voyage: report it and run on.
   try { input.onLaunched?.(voyageId); } catch (err) { process.stderr.write(`onLaunched callback threw for voyage ${voyageId}: ${err instanceof Error ? err.message : String(err)}
 `); }

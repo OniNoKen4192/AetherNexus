@@ -77,6 +77,7 @@ test("followEvents sees another database handle and waits when since is the maxi
 
 test("nexus events --follow --json prints an event appended after startup", async () => {
   const { dir, g, cleanup } = await makeGalaxy();
+  append(g.db, event(["cli-existing-marker"]));   // a new galaxy's log is empty: the CLI needs a row to print before it follows
   const child = spawn(process.execPath, [CLI, "events", "--follow", "--json"], {
     cwd: dir,
     env: process.env,
@@ -90,7 +91,7 @@ test("nexus events --follow --json prints an event appended after startup", asyn
   child.stderr.on("data", (chunk) => { stderr += chunk; });
   try {
     await waitFor(
-      () => stdout.split(/\r?\n/).some((text) => text.trim() !== ""),
+      () => stdout.split(/\r?\n/).some((text) => text.includes("cli-existing-marker")),
       `CLI did not print the existing log; stderr: ${stderr}`,
       5000,
     );
@@ -113,6 +114,7 @@ test("nexus events --follow --json prints an event appended after startup", asyn
 
 test("nexus events --follow table mode prints the header once", async () => {
   const { dir, g, cleanup } = await makeGalaxy();
+  const existing = append(g.db, event(["table-existing-marker"]));   // a new galaxy's log is empty: the CLI needs a row to print before it follows
   const child = spawn(process.execPath, [CLI, "events", "--follow"], {
     cwd: dir,
     env: process.env,
@@ -125,11 +127,12 @@ test("nexus events --follow table mode prints the header once", async () => {
   child.stdout.on("data", (chunk) => { stdout += chunk; });
   child.stderr.on("data", (chunk) => { stderr += chunk; });
   try {
-    await waitFor(
-      () => stdout.split(/\r?\n/).some((text) => text.includes("ship.registered")),
-      `CLI did not print the existing ship.registered row; stderr: ${stderr}`,
+    const existingLine = await waitFor(
+      () => stdout.split(/\r?\n/).find((text) => text.includes("table-existing-marker")),
+      `CLI did not print the existing tree.written row; stderr: ${stderr}`,
       5000,
     );
+    assert.ok(existingLine.startsWith(String(existing.id)));
     assert.equal(child.exitCode, null, `CLI exited before following; stderr: ${stderr}`);
 
     const first = append(g.db, event(["table-follow-marker-one"]));

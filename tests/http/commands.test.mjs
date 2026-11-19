@@ -11,6 +11,7 @@ import { rebuild, dumpProjections } from "../../dist/db/rebuild.js";
 import { append } from "../../dist/db/events.js";
 import { loadMoon, moonScope } from "../../dist/server/dispatch.js";
 import { writeSpec } from "../helpers.mjs";
+import { idleShip } from "../fixtures/world.mjs";
 import { rawRequest, readFeed, startWorld } from "./helpers.mjs";
 
 const waitFor = async (fn, ms = 5000) => {
@@ -169,7 +170,7 @@ test("each synchronous command maps success to 200 and a refusal to 409", async 
         async before() {
           // A voyage owned by a dead process: moon.park refuses a voyage this server's runner is tracking.
           const moon = loadMoon(x.w.g, "T1"), scope = moonScope(x.w.g, moon);
-          const ship = x.w.g.db.all("ships.all").find((s) => s.job === "delivery");
+          const ship = idleShip(x.w.g.db);
           append(x.w.g.db, { kind: "moon.gated", ...scope, payload: { baseline_sha: "x" } });
           append(x.w.g.db, { kind: "voyage.launched", ...scope, voyage_id: "stale-v", ship_id: ship.id, provider: "fake",
             payload: { role: "implement", round: 0, provider: "fake", ship_id: ship.id, worktree: "x", owner_pid: 2147483646 } });

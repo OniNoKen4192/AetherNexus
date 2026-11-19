@@ -35,7 +35,7 @@ function generatedName(pattern: string, pools: Record<string, string[]>, rng: Rn
 }
 
 export function shipName(c: Catalogue, q: { faction: string; theme: string }, rng: Rng, used: Set<string>): string {
-  const rules = c.names[q.faction];
+  const rules = Object.hasOwn(c.names, q.faction) ? c.names[q.faction] : undefined;   // own keys only: a faction may be called "constructor"
   if (rules !== undefined) {
     let candidate = "";
     for (let attempt = 0; attempt < 32; attempt++) {
@@ -47,6 +47,6 @@ export function shipName(c: Catalogue, q: { faction: string; theme: string }, rn
     }
     return pickName(rng, [candidate], used);
   }
-  const theme = THEMES[q.theme] ?? THEMES.classic!;
+  const theme = (Object.hasOwn(THEMES, q.theme) ? THEMES[q.theme] : undefined) ?? THEMES.classic!;
   return pickName(rng, theme.ships, used);
 }

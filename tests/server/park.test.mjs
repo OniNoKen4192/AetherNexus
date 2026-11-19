@@ -1,5 +1,5 @@
 import { test } from "node:test"; import assert from "node:assert/strict"; import fs from "node:fs"; import path from "node:path";
-import { worldWithMoon } from "../fixtures/world.mjs";
+import { idleShip, worldWithMoon } from "../fixtures/world.mjs";
 import { sendDelivery } from "../../dist/server/commands/delivery.js"; import { sendCustoms } from "../../dist/server/commands/customs.js";
 import { replyMoon, cancelDelivery, retireShip } from "../../dist/server/commands/park.js"; import { status, events, fleet } from "../../dist/server/commands/query.js";
 
@@ -34,10 +34,15 @@ test("reply/drop refuse a moon that is not parked", async () => {
   assert.throws(() => cancelDelivery(w.g, { taskId: "T1" }), /only an adrift or quarantined/); w.cleanup();
 });
 test("retire: idle only; retired ships are not picked", async () => {
-  const w = await worldWithMoon("happy"); const ships = fleet(w.g).filter((s) => s.job === "delivery" && s.fleet === "fake");
+  const w = await worldWithMoon("happy"); idleShip(w.g.db); const ships = fleet(w.g).filter((s) => s.job === "delivery" && s.fleet === "fake");
+  assert.equal(ships.length, 1);
   for (const s of ships) retireShip(w.g, { shipId: s.id, reason: "test" });
-  await assert.rejects(sendDelivery(w.g, { taskId: "T1", provider: "fake" }), /all freighters/);
-  assert.throws(() => retireShip(w.g, { shipId: ships[0].id, reason: "again" }), /not idle/); w.cleanup();
+  // The only delivery ship is retired: the send does not take it, and a new one is commissioned for the voyage.
+  const r = await sendDelivery(w.g, { taskId: "T1", provider: "fake" }); assert.equal(r.moonStatus, "audited");
+  const flown = w.g.db.get("voyages.byId", { id: r.voyageId }).ship_id; assert.notEqual(flown, ships[0].id);
+  const retired = w.g.db.get("ships.byId", { id: ships[0].id }); assert.equal(retired.status, "retired"); assert.equal(retired.voyage_count, 0);
+  assert.throws(() => retireShip(w.g, { shipId: ships[0].id, reason: "again" }), /not idle/);
+  assert.throws(() => retireShip(w.g, { shipId: flown, reason: "busy" }), /not idle/); w.cleanup();
 });
 test("status/events/fleet shapes", async () => {
   const w = await worldWithMoon("happy"); await sendDelivery(w.g, { taskId: "T1", provider: "fake" });

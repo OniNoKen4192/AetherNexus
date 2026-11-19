@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { normalizeConfig, validateConfig, type NexusConfig } from "../../config/schema.js";
 import { append } from "../../db/events.js";
+import { unknownWeights } from "../../core/weight.js";
 import { recordTreeWrite } from "../dispatch.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
@@ -142,6 +143,9 @@ export function reloadConfig(g: Galaxy): { ok: true } | { ok: false; error: stri
     const errors = validateConfig(file);
     if (errors.length) throw new Error(errors.join("; "));
     const config = normalizeConfig(file);
+    // the same check openGalaxy makes: a running server must not pick up a weight its catalogue does not list
+    const weightErrors = unknownWeights(config, g.catalogue);
+    if (weightErrors.length) throw new Error(weightErrors.join("; "));
     g.config = config;
     return { ok: true };
   } catch (err) {
