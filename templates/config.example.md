@@ -170,3 +170,29 @@ Projects configured before schema v1 have a free-form Markdown config.
 Run `/lanes-doctor`: it detects the legacy file, drafts the JSON
 conversion, writes it on your confirmation, and offers to delete the
 stale `.md` (recommended — a leftover copy invites drift).
+
+## AetherNexus: `providers.<id>.pool`  (`.nexus/config.json`, schema v2)
+
+This file documents the Lanes config. AetherNexus keeps its own config in `.nexus/config.json`; its provider pools are documented here because `config.example.json` is strict JSON and declares no refuel (a new galaxy starts without one).
+
+```jsonc
+"providers": {
+  "codex": {
+    "adapter": "codex-mcp",
+    "pool": {
+      "kind": "window",            // window | daily | per-token | free
+      "reserve_floor": 0.1,        // below 10 % left the pool is "low": freighters are held, customs still flies
+      "refuel": {                  // optional: what a held freighter may fly instead of waiting
+        "provider": "claude",      // the provider whose ship flies
+        "models": { "terra": "claude-haiku-5-5" },   // spec tier → model on that provider; a tier not listed waits
+        "min_wait_minutes": 30     // refuel only when the pool's reset is further away than this (default 30)
+      }
+    }
+  }
+}
+```
+
+- A provider with no `pool` block is `free`: never held for a low reading, but still held until the reset after one of its ships hits the wall.
+- A refuel happens by itself at `verdicts` and `roundabout`; at `manual` the Bridge offers a `Refuel` button (CLI: `nexus moon launch <task> --refuel`).
+- The refuel provider's own pool must not be low or dry for that model, and it must have an idle freighter; otherwise the moon waits.
+- `Send anyway` on the Bridge (CLI: `--override`) sends one ship past a hold. The pool's state follows what that ship finds: if it returns, a dry pool is cleared; if it hits the wall, the pool is dry until the new reset.

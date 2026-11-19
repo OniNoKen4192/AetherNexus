@@ -11,40 +11,93 @@ import { pendingTreeDecision } from "./decision.js";
 import { dependencyState } from "./deps.js";
 import { repliedSincePark } from "./launch.js";
 import { showSystem } from "./system.js";
+import { fuelHold } from "../limiter/limiter.js";
+import { poolReadings, poolState } from "../limiter/pool.js";
 
 export type Owner = "server" | "other" | "stale";
 export type SpecEntry = { path: string; taskId: string | null; touch: string[]; error: string | null };
 export type Failure = { ts: string; taskId: string; voyageId: string | null; message: string };
 export type Action = "launch" | "inspect" | "dock" | "reply" | "drop" | "park_stale" | "cancel" | "answer";
+export type PoolView = {
+  provider: string; kind: string; state: "dry" | "free" | "low" | "ok" | "unknown";
+  remaining?: number; resets_at?: string; until?: string; reading_ts?: string;
+  reserve_floor: number;
+  refuel?: { provider: string; models: Record<string, string> };
+  windows: { window: string; used: number; resets_at?: string; model_family?: string; ts: string }[];
+};
+export type FuelWait = { provider: string; reason: string; until?: string };
+export type RefuelOffer = { provider: string; model: string };
+type FuelFields = { waiting_on_fuel: FuelWait | null; can_refuel: RefuelOffer | null };
+type VoyageView = Row & { owner: Owner | null; refuel_for: string | null };
 export type Snapshot = {
   cursor: number; repo: string; rung: string;
   /** First freighters that would be sent right now if the rung were roundabout; 0 when the caller did not supply it. */
   ready_to_send: number;
   limits: { max_concurrent_ships: number; per_provider_max: Record<string, number>; in_flight: number };
   roles: { implement: string[]; review: string[] };
-  systems: (Row & { planets: (Row & { moons: Row[] })[] })[];
-  voyages: (Row & { owner: Owner | null })[];
+  systems: (Row & { planets: (Row & { moons: (Row | (Row & FuelFields))[] })[] })[];
+  pools: PoolView[];
+  voyages: VoyageView[];
   fleet: Row[]; decisions: Row[]; specs: SpecEntry[]; failures: Failure[];
 };
 export type MoonDetail = {
-  moon: Row; spec: string | null;
-  voyages: (Row & { owner: Owner | null })[];
+  moon: Row & FuelFields; spec: string | null;
+  voyages: VoyageView[];
   verdicts: Row[]; events: EventRow[]; decisions: Row[]; actions: Action[];
 };
 
-type OwnerCtx = { ownPid: number; tracks?: (voyageId: string) => boolean };
+type OwnerCtx = { ownPid: number; tracks?: (voyageId: string) => boolean; assignmentEvents?: EventRow[] };
 
-function voyageOwner(g: Galaxy, voyage: Row, ctx: OwnerCtx): Owner | null {
+function ownerFromLaunch(voyage: Row, launched: EventRow | undefined, ctx: OwnerCtx): Owner | null {
   if (voyage["status"] !== "launched" && voyage["status"] !== "working") return null;
-  const launched = g.db.all("events.byAssignment", { assignment_id: voyage["assignment_id"] }).map(rowToEvent)
-    .find((e) => e.kind === "voyage.launched" && e.voyage_id === voyage["id"]);
   const ownerPid = launched?.payload["owner_pid"];
   if (ownerPid === ctx.ownPid) return ctx.tracks && !ctx.tracks(String(voyage["id"])) ? "stale" : "server";
   return typeof ownerPid === "number" && pidAlive(ownerPid) ? "other" : "stale";
 }
 
-function withOwner(g: Galaxy, voyages: Row[], ctx: OwnerCtx): (Row & { owner: Owner | null })[] {
-  return voyages.map((v) => ({ ...v, owner: voyageOwner(g, v, ctx) }));
+function voyageOwner(g: Galaxy, voyage: Row, ctx: OwnerCtx): Owner | null {
+  const launched = (ctx.assignmentEvents ?? g.db.all("events.byAssignment", { assignment_id: voyage["assignment_id"] }).map(rowToEvent))
+    .find((e) => e.kind === "voyage.launched" && e.voyage_id === voyage["id"]);
+  return ownerFromLaunch(voyage, launched, ctx);
+}
+
+function voyageRows(voyages: Row[], assignmentEvents: EventRow[], ctx: OwnerCtx): VoyageView[] {
+  return voyages.map((voyage) => {
+    const launched = assignmentEvents.find((event) => event.kind === "voyage.launched" && event.voyage_id === voyage["id"]);
+    const refuelFor = launched?.payload["refuel_for"];
+    return { ...voyage, owner: ownerFromLaunch(voyage, launched, ctx), refuel_for: typeof refuelFor === "string" ? refuelFor : null };
+  });
+}
+
+function fuelFields(g: Galaxy, taskId: string, ctx: OwnerCtx): FuelFields {
+  const actions = availableActions(g, taskId, ctx);
+  const action = actions.includes("launch") ? "launch" : actions.includes("inspect") ? "inspect" : null;
+  if (action === null) return { waiting_on_fuel: null, can_refuel: null };
+  const hold = fuelHold(g, taskId, action);
+  if (hold === null) return { waiting_on_fuel: null, can_refuel: null };
+  return {
+    waiting_on_fuel: { provider: hold.provider, reason: hold.reason, ...(hold.until !== undefined ? { until: hold.until } : {}) },
+    can_refuel: hold.canRefuel ?? null,
+  };
+}
+
+function pools(g: Galaxy): PoolView[] {
+  const providers = [...new Set([...g.config.roles.implement, ...g.config.roles.review])];
+  return providers.map((provider) => {
+    const config = g.config.providers[provider]?.pool;
+    const state = poolState(g, provider);
+    return {
+      provider, kind: config?.kind ?? "free", state: state.state,
+      ...(state.state === "dry" ? { until: state.until } : {}),
+      ...(state.state === "low" || state.state === "ok" ? {
+        remaining: state.remaining, reading_ts: state.reading_ts,
+        ...(state.resets_at !== undefined ? { resets_at: state.resets_at } : {}),
+      } : {}),
+      reserve_floor: config?.reserve_floor ?? 0,
+      ...(config?.refuel ? { refuel: { provider: config.refuel.provider, models: config.refuel.models } } : {}),
+      windows: poolReadings(g, provider),
+    };
+  });
 }
 
 function specEntries(g: Galaxy, assigned: Set<string>): SpecEntry[] {
@@ -76,27 +129,29 @@ export function snapshot(g: Galaxy, ctx: OwnerCtx & { failures: Failure[]; ready
     const shown = showSystem(g, String(s["id"]));
     return { ...shown.system, planets: shown.planets };
   });
-  const assigned = new Set<string>(); const rawVoyages: Row[] = [];
+  const assigned = new Set<string>(); const voyages: VoyageView[] = [];
   for (const system of systems) for (const planet of system.planets) for (const moon of planet.moons) {
     if (typeof moon["task_id"] !== "string" || typeof moon["assignment_id"] !== "number") continue;
     const dependencies = dependencyState(g, moon["task_id"]);
     moon["waiting_on"] = dependencies.visited ? [] : dependencies.waitingOn;
     moon["waiting_on_planets"] = dependencies.visited ? [] : dependencies.waitingOnPlanets;
-    assigned.add(moon["task_id"]); rawVoyages.push(...g.db.all("voyages.byAssignment", { assignment_id: moon["assignment_id"] }));
+    const assignmentEvents = g.db.all("events.byAssignment", { assignment_id: moon["assignment_id"] }).map(rowToEvent);
+    Object.assign(moon, fuelFields(g, moon["task_id"], { ...ctx, assignmentEvents }));
+    assigned.add(moon["task_id"]); voyages.push(...voyageRows(g.db.all("voyages.byAssignment", { assignment_id: moon["assignment_id"] }), assignmentEvents, ctx));
   }
   const inFlight = g.db.all("voyages.inFlight");
   return {
     cursor, repo: path.basename(g.repoRoot), rung: g.config.automation.level, ready_to_send: ctx.readyToSend ?? 0,
     limits: { max_concurrent_ships: g.config.scheduler.max_concurrent_ships, per_provider_max: g.config.scheduler.per_provider_max, in_flight: inFlight.length },
-    roles: { implement: g.config.roles.implement, review: g.config.roles.review }, systems,
-    voyages: withOwner(g, rawVoyages, ctx), fleet: g.db.all("ships.all"), decisions: g.db.all("decisions.pending"),
+    roles: { implement: g.config.roles.implement, review: g.config.roles.review }, systems, pools: pools(g),
+    voyages, fleet: g.db.all("ships.all"), decisions: g.db.all("decisions.pending"),
     specs: specEntries(g, assigned), failures: ctx.failures,
   };
 }
 
 export function availableActions(g: Galaxy, taskId: string, ctx: OwnerCtx): Action[] {
   const moon = loadMoon(g, taskId);
-  if (pendingTreeDecision(g, taskId)) return ["answer", ...((moon.status === "adrift" || moon.status === "quarantined") ? ["drop" as const] : [])];
+  if (pendingTreeDecision(g, taskId)) return ["answer", ...((moon.status === "adrift" || moon.status === "quarantined" || moon.status === "awaiting_pickup") ? ["drop" as const] : [])];
   if (moon.status === "emitted" || moon.status === "gated") return ["launch"];
   const voyages = g.db.all("voyages.byAssignment", { assignment_id: moon.assignment_id });
   if (moon.status === "implementing" || moon.status === "reviewing") {
@@ -120,6 +175,7 @@ export function availableActions(g: Galaxy, taskId: string, ctx: OwnerCtx): Acti
   if (moon.status === "adrift" || moon.status === "quarantined") {
     return ["reply", "drop", ...(repliedSincePark(g, moon.assignment_id) ? ["launch" as const] : [])];
   }
+  if (moon.status === "awaiting_pickup") return ["launch", "drop"];
   return [];
 }
 
@@ -130,9 +186,10 @@ export function moonDetail(g: Galaxy, taskId: string, ctx: OwnerCtx): MoonDetail
   try { spec = fs.readFileSync(path.join(g.repoRoot, moon.spec_path), "utf8"); }
   catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; spec = null; }
   const events = g.db.all("events.byAssignment", { assignment_id: moon.assignment_id }).map(rowToEvent);
+  const fuel = fuelFields(g, taskId, { ...ctx, assignmentEvents: events });
   return {
-    moon: { ...moon, waiting_on: dependencies.visited ? [] : dependencies.waitingOn, waiting_on_planets: dependencies.visited ? [] : dependencies.waitingOnPlanets }, spec,
-    voyages: withOwner(g, g.db.all("voyages.byAssignment", { assignment_id: moon.assignment_id }), ctx),
+    moon: { ...moon, waiting_on: dependencies.visited ? [] : dependencies.waitingOn, waiting_on_planets: dependencies.visited ? [] : dependencies.waitingOnPlanets, ...fuel }, spec,
+    voyages: voyageRows(g.db.all("voyages.byAssignment", { assignment_id: moon.assignment_id }), events, ctx),
     verdicts: g.db.all("verdicts.byAssignment", { assignment_id: moon.assignment_id }), events,
     decisions: g.db.all("decisions.pendingByTarget", { target_id: taskId }), actions: availableActions(g, taskId, ctx),
   };

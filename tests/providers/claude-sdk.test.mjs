@@ -41,6 +41,49 @@ test("mapMessage: assistant text/tool_use, result → usage + done with parsed r
   const tr = mapMessage(ur, "implement")[0]; assert.equal(tr.kind, "tool_result"); assert.equal(tr.data.ok, false); assert.equal(tr.data.output.length, 2000);
 });
 
+const rateLimit = (rate_limit_info) => mapMessage({ type: "rate_limit_event", rate_limit_info, session_id: "s", uuid: "u" }, "implement");
+
+test("rate limit fuel identifies each window and per-model family", () => {
+  for (const [window, family] of [["five_hour", undefined], ["seven_day", undefined], ["seven_day_opus", "opus"], ["seven_day_sonnet", "sonnet"]]) {
+    const fuel = rateLimit({ status: "allowed", rateLimitType: window, utilization: 0.4 })[0];
+    assert.equal(fuel.kind, "fuel"); assert.equal(fuel.data.window, window); assert.equal(fuel.data.model_family, family);
+  }
+});
+
+test("rate limit fuel uses unknown for an absent type and excludes overage", () => {
+  assert.equal(rateLimit({ status: "allowed", utilization: 0.4 })[0].data.window, "unknown");
+  assert.deepEqual(rateLimit({ status: "allowed", rateLimitType: "overage", utilization: 0.4 }).map((e) => e.kind), ["text"]);
+});
+
+test("rate limit fuel accepts finite nonnegative fractional or percentage utilization", () => {
+  for (const utilization of [undefined, NaN, -0.1, "0.4", Infinity]) {
+    assert.equal(rateLimit({ status: "allowed", utilization }).some((e) => e.kind === "fuel"), false, String(utilization));
+  }
+  for (const [utilization, used] of [[0.4, 0.4], [1, 1], [40, 0.4], [140, 1]]) {
+    assert.equal(rateLimit({ status: "allowed", utilization })[0].data.used, used);
+  }
+});
+
+test("rate limit reset accepts seconds or milliseconds and drops invalid values", () => {
+  const expected = new Date(1795186480000).toISOString();
+  for (const resetsAt of [1795186480, 1795186480000]) assert.equal(rateLimit({ status: "allowed", utilization: 0.4, resetsAt })[0].data.resets_at, expected);
+  for (const resetsAt of [0, -5, NaN]) assert.equal("resets_at" in rateLimit({ status: "allowed", utilization: 0.4, resetsAt })[0].data, false);
+});
+
+test("rejected rate limits emit fuel before error and retain reset and family without fuel", () => {
+  const resets_at = new Date(1795186480000).toISOString();
+  const withFuel = rateLimit({ status: "rejected", rateLimitType: "seven_day_opus", utilization: 40, resetsAt: 1795186480 });
+  assert.deepEqual(withFuel.map((e) => e.kind), ["fuel", "error"]); assert.equal(withFuel[1].data.classification, "rate_limited");
+  assert.equal(withFuel[1].data.resets_at, resets_at); assert.equal(withFuel[1].data.model_family, "opus");
+  const withoutFuel = rateLimit({ status: "rejected", rateLimitType: "seven_day_sonnet", resetsAt: 1795186480000 });
+  assert.deepEqual(withoutFuel.map((e) => e.kind), ["error"]); assert.equal(withoutFuel[0].data.resets_at, resets_at); assert.equal(withoutFuel[0].data.model_family, "sonnet");
+});
+
+test("allowed rate limits emit fuel before status text", () => {
+  const events = rateLimit({ status: "allowed", utilization: 0.4 });
+  assert.deepEqual(events.map((e) => e.kind), ["fuel", "text"]); assert.equal(events[1].data.text, "rate limit status: allowed");
+});
+
 const okResult = { type: "result", subtype: "success", session_id: "s", num_turns: 1, total_cost_usd: 0, usage: {}, result: "STATUS: IMPLEMENTED" };
 const job = { voyageId: "v", role: "implement", specPath: "s", specText: "", prompt: "P", round: 2, previousSessionId: "prev" };
 const ctx = (signal = new AbortController().signal) => ({ cwd: "/wt", touch: ["src/**"], timeoutMs: 1000, signal });
@@ -57,6 +100,16 @@ test("adapter wires query options: cwd, env, strictMcpConfig, settingSources, ho
   await run(a, { ...job, role: "review" }); assert.deepEqual(seen.options.tools, ["Read", "Grep", "Glob", "Bash"]); assert.deepEqual(seen.options.allowedTools, seen.options.tools);
   assert.equal(a.classify(new Error("rate limit exceeded (429)")), "rate_limited"); assert.equal(a.classify(new Error("ECONNRESET")), "backend_failure");
   assert.equal(a.classify(new Error("overloaded")), "capacity"); assert.equal(a.classify(new Error("???")), "unknown");
+});
+test("adapter prefers the job model, falls back to frontier, and omits an absent model", async () => {
+  const optionsFor = async (config, dispatchedJob = job) => {
+    let options; const fakeQuery = (args) => { options = args.options; return (async function* () { yield okResult; })(); };
+    await run(createClaudeAdapter("claude", config, { query: fakeQuery }), dispatchedJob);
+    return options;
+  };
+  assert.equal((await optionsFor({ adapter: "claude-sdk", auth: "login", models: { frontier: "m1" } }, { ...job, model: "m-cheap" })).model, "m-cheap");
+  assert.equal((await optionsFor({ adapter: "claude-sdk", auth: "login", models: { frontier: "m1" } })).model, "m1");
+  assert.equal("model" in await optionsFor({ adapter: "claude-sdk", auth: "login" }), false);
 });
 test("iterator that yields a result then throws yields exactly one done and no extra error", async () => {
   const fakeQuery = () => (async function* () { yield okResult; throw new Error("Claude Code returned an error result: boom"); })();
@@ -86,4 +139,49 @@ test("I4c: the Bash hook denies git state changes and passes inspection and othe
   }
   for (const c of ["git status", "git log --oneline", "git diff HEAD", "git branch --list", "git show HEAD:src/a.js", "npm test", "echo committed"]) assert.deepEqual(await bash(c), {}, c);
   assert.deepEqual(await hook({ hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { command: "git commit" }, tool_use_id: "1", session_id: "s", cwd: "/wt" }, "1", sig), {});
+});
+
+// The shape the real SDK sent on an ordinary run (live check 2026-11-19): no top-level utilization, the readings sit
+// under unifiedWindows, utilization is a fraction and resetsAt is epoch seconds. Rate-limit numbers only.
+const REAL_RATE_LIMIT_INFO = {
+  status: "allowed", resetsAt: 1795586400, rateLimitType: "seven_day", overageStatus: "allowed", overageResetsAt: 1796083200,
+  isUsingOverage: false, unifiedWindows: { seven_day: { utilization: 0.11, resetsAt: 1795586400 } },
+};
+
+test("rate limit fuel is read from unifiedWindows, as the real SDK sends it", () => {
+  const events = rateLimit(REAL_RATE_LIMIT_INFO);
+  assert.deepEqual(events.map((e) => e.kind), ["fuel", "text"]);
+  assert.deepEqual(events[0].data, { window: "seven_day", used: 0.11, resets_at: new Date(1795586400 * 1000).toISOString() });
+});
+
+test("every unified window gives one reading, with its own reset and model family", () => {
+  const events = rateLimit({
+    status: "allowed", rateLimitType: "five_hour", resetsAt: 1795186480,
+    unifiedWindows: {
+      five_hour: { utilization: 0.5, resetsAt: 1795186480 }, seven_day: { utilization: 0.11, resetsAt: 1795586400 },
+      seven_day_opus: { utilization: 0.9 }, seven_day_sonnet: { utilization: 20, resetsAt: 1795586400000 },
+      overage: { utilization: 0.3 }, broken: { utilization: "0.4" }, empty: null,
+    },
+  }).filter((e) => e.kind === "fuel").map((e) => e.data);
+  assert.deepEqual(events, [
+    { window: "five_hour", used: 0.5, resets_at: new Date(1795186480 * 1000).toISOString() },
+    { window: "seven_day", used: 0.11, resets_at: new Date(1795586400 * 1000).toISOString() },
+    { window: "seven_day_opus", used: 0.9, model_family: "opus" },
+    { window: "seven_day_sonnet", used: 0.2, resets_at: new Date(1795586400 * 1000).toISOString(), model_family: "sonnet" },
+  ]);
+});
+
+test("a top-level utilization is still read, and not twice when unifiedWindows names the same window", () => {
+  assert.deepEqual(rateLimit({ status: "allowed", rateLimitType: "five_hour", utilization: 0.4 }).filter((e) => e.kind === "fuel").map((e) => e.data), [{ window: "five_hour", used: 0.4 }]);
+  const both = rateLimit({ status: "allowed", rateLimitType: "seven_day", utilization: 0.4, unifiedWindows: { seven_day: { utilization: 0.11 }, five_hour: { utilization: 0.5 } } }).filter((e) => e.kind === "fuel").map((e) => e.data);
+  assert.deepEqual(both, [{ window: "seven_day", used: 0.11 }, { window: "five_hour", used: 0.5 }]);
+  const other = rateLimit({ status: "allowed", rateLimitType: "five_hour", utilization: 0.4, unifiedWindows: { seven_day: { utilization: 0.11 } } }).filter((e) => e.kind === "fuel").map((e) => e.data);
+  assert.deepEqual(other, [{ window: "five_hour", used: 0.4 }, { window: "seven_day", used: 0.11 }]);
+});
+
+test("a rejection carries the reset of the window that rejected", () => {
+  const events = rateLimit({ ...REAL_RATE_LIMIT_INFO, status: "rejected" });
+  assert.deepEqual(events.map((e) => e.kind), ["fuel", "error"]);
+  assert.equal(events[1].data.classification, "rate_limited");
+  assert.equal(events[1].data.resets_at, new Date(1795586400 * 1000).toISOString());
 });

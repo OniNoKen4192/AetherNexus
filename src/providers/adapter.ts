@@ -1,5 +1,5 @@
 export type Role = "implement" | "review";
-export type AgentEventKind = "text" | "tool_use" | "tool_result" | "file_changed" | "usage" | "done" | "error";
+export type AgentEventKind = "text" | "tool_use" | "tool_result" | "file_changed" | "usage" | "fuel" | "done" | "error";
 export type ErrorClass = "rate_limited" | "capacity" | "backend_failure" | "unknown";
 export type ImplementReport = { status: "IMPLEMENTED" | "IMPLEMENTED_WITH_DEVIATIONS" | "BLOCKED" | "BACKEND_FAILURE" | "RATE_LIMITED"; files_changed?: string[]; test_output?: string; deviations?: string; blocked_reason?: string; raw: string };
 export type ReviewReport = { verdict: "APPROVE" | "FIX" | "REJECT"; reasoning: string; delta_spec?: string; raw: string };
@@ -9,16 +9,15 @@ export type AgentEvent =
   | { kind: "tool_result"; ts: string; data: { id?: string; ok: boolean; output?: string } }
   | { kind: "file_changed"; ts: string; data: { path: string } }
   | { kind: "usage"; ts: string; data: { input_tokens?: number; output_tokens?: number; cost_usd?: number } }
+  | { kind: "fuel"; ts: string; data: { window: string; used: number; resets_at?: string; model_family?: string } }
   | { kind: "done"; ts: string; data: { report: ImplementReport | ReviewReport; session_id?: string } }
-  | { kind: "error"; ts: string; data: { classification: ErrorClass; message: string; raw?: unknown } };
-export type Job = { voyageId: string; role: Role; specPath: string; specText: string; prompt: string; round: number; deltaSpec?: string; auditJson?: string; previousSessionId?: string };
+  | { kind: "error"; ts: string; data: { classification: ErrorClass; message: string; raw?: unknown; resets_at?: string; model_family?: string } };
+export type Job = { voyageId: string; role: Role; specPath: string; specText: string; prompt: string; round: number; deltaSpec?: string; auditJson?: string; previousSessionId?: string; model?: string };
 export type DispatchCtx = { cwd: string; touch: string[]; timeoutMs: number; signal: AbortSignal };
-export type FuelReading = { source: "unknown" } | { source: "estimated" | "reported"; remaining: number; resets_at?: string };
 export interface ProviderAdapter {
   readonly id: string; readonly roles: Role[];
   dispatch(job: Job, ctx: DispatchCtx): AsyncIterable<AgentEvent>;
   classify(err: unknown): ErrorClass;
-  fuel(): Promise<FuelReading>;
 }
 
 const STATUSES: ImplementReport["status"][] = ["IMPLEMENTED", "IMPLEMENTED_WITH_DEVIATIONS", "BLOCKED", "BACKEND_FAILURE", "RATE_LIMITED"];

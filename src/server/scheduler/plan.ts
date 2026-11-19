@@ -1,8 +1,9 @@
-import type { ShipClass, ShipRow } from "../../core/fleet.js";
+import type { Role } from "../../providers/adapter.js";
 import { dependencyState } from "../commands/deps.js";
 import { availableActions } from "../commands/query.js";
 import { loadMoon } from "../dispatch.js";
 import type { Galaxy } from "../galaxy.js";
+import { chooseProvider, type Capacity } from "../limiter/limiter.js";
 
 export type Rung = "manual" | "verdicts" | "roundabout";
 
@@ -18,7 +19,15 @@ export type PlannedAction = {
   taskId: string;
   /** true when this would be the first freighter sent to the moon under its current assignment */
   first: boolean;
+  /** Present only when the limiter sent the ship somewhere other than a plain flight: a reroute or a refuel. */
+  provider?: string;
+  /** Present only on a refuel: the cheaper model the freighter flies. */
+  model?: string;
+  /** Present (true) only on a refuel. */
+  refuel?: true;
 };
+
+export type Hold = { taskId: string; role: Role; provider: string; reason: "dry" | "low"; until?: string };
 
 export type PlanCtx = {
   ownPid: number;
@@ -29,7 +38,7 @@ export type PlanCtx = {
   rung?: Rung;
 };
 
-type Candidate = PlannedAction & { assignmentId: number };
+type Candidate = PlannedAction & { assignmentId: number; tier: string | null };
 
 const group = (candidate: Candidate): number => {
   if (candidate.action === "dock") return 0;
@@ -38,9 +47,9 @@ const group = (candidate: Candidate): number => {
   return candidate.first ? 4 : 3;
 };
 
-export function plan(g: Galaxy, ctx: PlanCtx): PlannedAction[] {
+export function planWithHolds(g: Galaxy, ctx: PlanCtx): { actions: PlannedAction[]; holds: Hold[] } {
   const rung = ctx.rung ?? effectiveRung(g.config.automation.level);
-  if (rung === "manual") return [];
+  if (rung === "manual") return { actions: [], holds: [] };
 
   const candidates: Candidate[] = [];
   for (const system of g.db.all("systems.all")) {
@@ -57,16 +66,19 @@ export function plan(g: Galaxy, ctx: PlanCtx): PlannedAction[] {
         else if (actions.includes("park_stale") && (moon.status === "implementing" || moon.status === "reviewing")) action = "park_stale";
         else if (actions.includes("inspect") && moon.status === "audited") action = "inspect";
         else if (actions.includes("launch")) {
-          const dependencies = dependencyState(g, taskId);
-          first = !dependencies.visited;
-          if (moon.status === "audited") action = "launch";
-          else if (moon.status === "adrift" || moon.status === "quarantined") {
-            if (dependencies.visited || (rung === "roundabout" && dependencies.waitingOn.length === 0 && dependencies.waitingOnPlanets.length === 0)) action = "launch";
-          } else if ((moon.status === "emitted" || moon.status === "gated") && rung === "roundabout"
-            && dependencies.waitingOn.length === 0 && dependencies.waitingOnPlanets.length === 0) action = "launch";
+          if (moon.status === "awaiting_pickup") action = "launch";
+          else {
+            const dependencies = dependencyState(g, taskId);
+            first = !dependencies.visited;
+            if (moon.status === "audited") action = "launch";
+            else if (moon.status === "adrift" || moon.status === "quarantined") {
+              if (dependencies.visited || (rung === "roundabout" && dependencies.waitingOn.length === 0 && dependencies.waitingOnPlanets.length === 0)) action = "launch";
+            } else if ((moon.status === "emitted" || moon.status === "gated") && rung === "roundabout"
+              && dependencies.waitingOn.length === 0 && dependencies.waitingOnPlanets.length === 0) action = "launch";
+          }
         }
 
-        if (action) candidates.push({ action, taskId, first: action === "launch" && first, assignmentId: moon.assignment_id });
+        if (action) candidates.push({ action, taskId, first: action === "launch" && first, assignmentId: moon.assignment_id, tier: moon.tier });
       }
     }
   }
@@ -74,41 +86,42 @@ export function plan(g: Galaxy, ctx: PlanCtx): PlannedAction[] {
   candidates.sort((a, b) => group(a) - group(b) || a.assignmentId - b.assignmentId);
 
   const inFlight = g.db.all<{ provider: string }>("voyages.inFlight");
-  let free = g.config.scheduler.max_concurrent_ships - inFlight.length;
   const providerUse = new Map<string, number>();
   for (const voyage of inFlight) providerUse.set(voyage.provider, (providerUse.get(voyage.provider) ?? 0) + 1);
-  const ships = g.db.all<ShipRow>("ships.all");
-  const claimed = new Set<string>();
-  const out: PlannedAction[] = [];
+  const capacity: Capacity = {
+    free: g.config.scheduler.max_concurrent_ships - inFlight.length,
+    providerUse,
+    claimed: new Set<string>(),
+  };
+  const actions: PlannedAction[] = [];
+  const holds: Hold[] = [];
 
   for (const candidate of candidates) {
     if (candidate.action !== "launch" && candidate.action !== "inspect") {
-      out.push({ action: candidate.action, taskId: candidate.taskId, first: candidate.first });
+      actions.push({ action: candidate.action, taskId: candidate.taskId, first: candidate.first });
       continue;
     }
-    if (free <= 0) continue;
-
-    const providers = candidate.action === "launch" ? g.config.roles.implement : g.config.roles.review;
-    const shipClass: ShipClass = candidate.action === "launch" ? "freighter" : "customs";
-    let selectedProvider: string | undefined;
-    let selectedShip: ShipRow | undefined;
-    for (const provider of providers) {
-      if (!(provider in g.adapters)) continue;
-      const limit = g.config.scheduler.per_provider_max[provider];
-      if (limit !== undefined && (providerUse.get(provider) ?? 0) >= limit) continue;
-      const ship = ships.find((item) => item.fleet === provider && item.class === shipClass && item.status === "idle" && !claimed.has(item.id));
-      if (!ship) continue;
-      selectedProvider = provider;
-      selectedShip = ship;
-      break;
+    const role: Role = candidate.action === "launch" ? "implement" : "review";
+    const choice = chooseProvider(g, { role, tier: candidate.tier, mayRefuel: true, capacity });
+    if (choice.kind === "held") {
+      holds.push({ taskId: candidate.taskId, role, provider: choice.provider, reason: choice.reason,
+        ...(choice.until !== undefined ? { until: choice.until } : {}) });
+      continue;
     }
-    if (!selectedProvider || !selectedShip) continue;
+    if (choice.kind !== "fly") continue;
 
-    free--;
-    providerUse.set(selectedProvider, (providerUse.get(selectedProvider) ?? 0) + 1);
-    claimed.add(selectedShip.id);
-    out.push({ action: candidate.action, taskId: candidate.taskId, first: candidate.first });
+    const planned: PlannedAction = { action: candidate.action, taskId: candidate.taskId, first: candidate.first };
+    if (choice.refuelFor) {
+      planned.provider = choice.provider;
+      planned.model = choice.model!;
+      planned.refuel = true;
+    } else if (choice.reroutedFrom) planned.provider = choice.provider;
+    actions.push(planned);
   }
 
-  return out;
+  return { actions, holds };
+}
+
+export function plan(g: Galaxy, ctx: PlanCtx): PlannedAction[] {
+  return planWithHolds(g, ctx).actions;
 }

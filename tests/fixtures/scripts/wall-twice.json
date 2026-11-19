@@ -1,0 +1,4 @@
+{ "name": "wall-twice", "role": "implement", "steps": [
+  { "text": "Starting work." },
+  { "error": { "classification": "rate_limited", "message": "usage limit reached", "resets_in_ms": 400 } }
+] }

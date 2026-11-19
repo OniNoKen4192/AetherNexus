@@ -13,7 +13,11 @@ export type ProviderConfig = {
   models?: Record<string, string>;
   tiers?: string[];
   ratelimit_signal?: string[];
-  pool?: { kind: "window" | "daily" | "per-token" | "free"; reserve_floor?: number };
+  pool?: {
+    kind: "window" | "daily" | "per-token" | "free";
+    reserve_floor?: number;
+    refuel?: { provider: string; models: Record<string, string>; min_wait_minutes: number };
+  };
   command?: string;
   endpoint?: string;
   max_budget_usd?: number;
@@ -166,10 +170,26 @@ export function validateConfig(cfg: unknown): string[] {
     if (pool !== undefined) {
       if (!isObj(pool)) errors.push(`'providers.${id}.pool' must be a JSON object`);
       else {
-        for (const k of Object.keys(pool)) if (k !== "kind" && k !== "reserve_floor") errors.push(`unknown key 'providers.${id}.pool.${k}'`);
+        for (const k of Object.keys(pool)) if (k !== "kind" && k !== "reserve_floor" && k !== "refuel") errors.push(`unknown key 'providers.${id}.pool.${k}'`);
         if (!POOL_KINDS.includes(pool["kind"] as string)) errors.push(`'providers.${id}.pool.kind' must be window, daily, per-token, or free`);
         const rf = pool["reserve_floor"];
         if (rf !== undefined && !(typeof rf === "number" && rf >= 0 && rf <= 1)) errors.push(`'providers.${id}.pool.reserve_floor' must be between 0 and 1`);
+        const refuel = pool["refuel"];
+        if (refuel !== undefined) {
+          const base = `providers.${id}.pool.refuel`;
+          if (!isObj(refuel)) errors.push(`'${base}' must be a JSON object`);
+          else {
+            for (const k of Object.keys(refuel)) if (k !== "provider" && k !== "models" && k !== "min_wait_minutes") errors.push(`unknown key '${base}.${k}'`);
+            const target = refuel["provider"];
+            if (typeof target !== "string" || target === id || !(target in providers)) errors.push(`'${base}.provider' must name a configured provider other than '${id}'`);
+            const mapped = refuel["models"];
+            if (!(isObj(mapped) && Object.keys(mapped).length > 0 && Object.values(mapped).every((x) => typeof x === "string" && x.length > 0))) {
+              errors.push(`'${base}.models' must be a non-empty object mapping tiers to non-empty model strings`);
+            }
+            const wait = refuel["min_wait_minutes"];
+            if (wait !== undefined && !(typeof wait === "number" && Number.isInteger(wait) && wait >= 0)) errors.push(`'${base}.min_wait_minutes' must be an integer >= 0`);
+          }
+        }
       }
     }
   }
@@ -228,6 +248,7 @@ export function normalizeConfig(cfg: unknown): NexusConfig {
     ...(fleet["seed"] !== undefined ? { seed: fleet["seed"] } : {}),
   };
   for (const p of Object.values(providers)) {
+    if (p.pool?.refuel) p.pool.refuel.min_wait_minutes ??= 30;
     if (p.adapter === "claude-sdk") {
       p.auth ??= "login";
       p.api_key_env ??= "ANTHROPIC_API_KEY";

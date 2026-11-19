@@ -335,6 +335,8 @@ Rules, in order, evaluated at every launch:
 4. Idle housekeeping launches only on `free` pools, ever (D13).
 5. On a `rate_limited` classification from an adapter mid-run, the pool is marked exhausted until its next known reset, the moon takes the failover edge if declared, else parks. No persistent "dry" latch beyond the reset time (Lanes' reasoning holds: zero failover state to corrupt).
 
+**As built (v1 slice 2, 2026-11-18):** "else parks" is superseded. A ship that hits the wall ends out of fuel and the moon's cargo awaits pickup; the scheduler resumes it after the reset (wait-and-resume), or sends a cheaper model on another provider when `pool.refuel` is declared (refuelling). Only a second hit in a row on the same provider parks the moon. See `docs/superpowers/specs/2026-11-15-v1-fuel-design.md`.
+
 Fuel is also the first-class gauge in the viz (§11).
 
 ---
@@ -475,7 +477,7 @@ v1 is several separate projects. Each gets its own design doc and plan, built in
 | # | Slice | Why here |
 |---|---|---|
 | 1 | Scheduler and the lower rungs (`verdicts`, `roundabout`); rung selector on the Bridge. **Built 2026-11-15** — design `docs/superpowers/specs/2026-11-14-v1-scheduler-design.md`, plan `docs/superpowers/plans/2026-11-15-v1-scheduler.md`. | As of v0.5 nothing launches a moon when its dependencies dock and nothing acts on a verdict without a click; the rung is stored and shown but changes no behaviour. Every later slice needs this. Provable on the fake adapter, so it spends nothing. |
-| 2 | Fuel readings and the limiter; fuel gauge on the Bridge | Every adapter's `fuel()` returns `unknown` as of v0.5, so estimation from usage events comes with it. In place before any real provider runs unattended. |
+| 2 | Fuel readings and the limiter; fuel gauge on the Bridge. **Built 2026-11-18** — design `docs/superpowers/specs/2026-11-15-v1-fuel-design.md`, plan `docs/superpowers/plans/2026-11-15-v1-fuel.md`. | Every adapter's `fuel()` returned `unknown` as of v0.5. As built, readings are the ones the providers report; estimating from usage events was dropped as a non-goal, and the real adapters' readings were confirmed by one live call each on 2026-11-19 (`tests/live/fuel.live.test.mjs`). In place before any real provider runs unattended. |
 | 3 | Intake adapters; `triage`, `decompose`, `plan` roles; `approve_map`; `highways` | Produces stream maps, which need slice 1 to be flown. |
 | 4 | Gravity and `autopilot` | The gravity gate is part of autopilot's safety floor (§7). |
 | 5 | Bug path with the repro invariant | Same pipeline plus three server-enforced rules (§6.5). |

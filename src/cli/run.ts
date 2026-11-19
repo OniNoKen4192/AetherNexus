@@ -34,7 +34,8 @@ const USAGE = `usage: nexus [--json] <command>
   system show <system-id>
   planet assign <system-id> --stream <id> [--mission <m>] [--territory <glob>]... [--planet <name>]
   moon assign <planet-id> <spec-path> [--moon <name>]
-  moon launch <task-id> [--provider <p>] [--quiet]
+  moon launch <task-id> [--provider <p>] [--override] [--refuel] [--quiet]
+  moon inspect <task-id> [--provider <p>] [--override] [--quiet]
   moon reply <task-id> --note <text>
   moon drop <task-id>
   moon park <task-id> --reason <text>      for a voyage whose process died (crash, kill, reboot):
@@ -42,7 +43,7 @@ const USAGE = `usage: nexus [--json] <command>
   decision answer <decision-id> --mine | --not-mine
                                            answer a main-tree question (was that change yours?)
   config set trust <manual|verdicts|roundabout>
-  voyage inspect <task-id> [--provider <p>] [--quiet]
+  voyage inspect <task-id> [--provider <p>] [--override] [--quiet]
   voyage dock <task-id>
   status [<system-id>]
   events [--follow] [--since <id>] [--moon <id>]
@@ -96,6 +97,7 @@ function streamEvent(e: AgentEvent): void {
     case "tool_result": summary = e.data.ok ? "ok" : "failed"; break;
     case "file_changed": summary = e.data.path; break;
     case "usage": summary = `in=${e.data.input_tokens ?? 0} out=${e.data.output_tokens ?? 0}`; break;
+    case "fuel": summary = `${e.data.window} ${Math.round(e.data.used * 100)}% used`; break;
     case "done": { const r = e.data.report as { status?: string; verdict?: string }; summary = r.status ?? r.verdict ?? ""; break; }
     case "error": summary = `${e.data.classification}: ${e.data.message}`; break;
   }
@@ -107,7 +109,7 @@ function parse(argv: string[]) {
     return parseArgs({
       args: argv, allowPositionals: true, strict: true,
       options: {
-        json: { type: "boolean" }, quiet: { type: "boolean" }, force: { type: "boolean" }, selftest: { type: "boolean" }, help: { type: "boolean", short: "h" }, follow: { type: "boolean" }, port: { type: "string" }, mine: { type: "boolean" }, "not-mine": { type: "boolean" },
+        json: { type: "boolean" }, quiet: { type: "boolean" }, force: { type: "boolean" }, selftest: { type: "boolean" }, help: { type: "boolean", short: "h" }, follow: { type: "boolean" }, override: { type: "boolean" }, refuel: { type: "boolean" }, port: { type: "string" }, mine: { type: "boolean" }, "not-mine": { type: "boolean" },
         title: { type: "string" }, brief: { type: "string" }, "brief-text": { type: "string" }, kind: { type: "string" }, seed: { type: "string" },
         stream: { type: "string" }, mission: { type: "string" }, territory: { type: "string", multiple: true }, moon: { type: "string" }, planet: { type: "string" },
         provider: { type: "string" }, note: { type: "string" }, since: { type: "string" }, reason: { type: "string" },
@@ -147,7 +149,8 @@ async function run(argv: string[]): Promise<void> {
 async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: () => string) => void): Promise<void> {
   const [c0, c1] = pos;
   const onEvent = o.quiet ? undefined : streamEvent;
-  const launchIn = (taskId: string) => ({ taskId, ...(o.provider ? { provider: o.provider } : {}), ...(onEvent ? { onEvent } : {}) });
+  const launchIn = (taskId: string) => ({ taskId, ...(o.provider ? { provider: o.provider } : {}), ...(o.override ? { override: true } : {}), ...(o.refuel ? { refuel: true } : {}), ...(onEvent ? { onEvent } : {}) });
+  const inspectIn = (taskId: string) => ({ taskId, ...(o.provider ? { provider: o.provider } : {}), ...(o.override ? { override: true } : {}), ...(onEvent ? { onEvent } : {}) });
 
   if (c0 === "serve") {
     let port: number | undefined;
@@ -238,7 +241,7 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
     }
     case "moon inspect": case "voyage inspect": {
       const taskId = need(rest[0], "<task-id>");
-      const r = await interruptible((signal) => inspectMoon(g, { ...launchIn(taskId), signal }));
+      const r = await interruptible((signal) => inspectMoon(g, { ...inspectIn(taskId), signal }));
       if (r.interrupted && interruptedPark(g, taskId)) return interruptedExit();
       return out(r.value, () => `voyage ${r.value.voyageId}: verdict ${r.value.verdict?.verdict ?? "none"}, moon ${r.value.moonStatus}`);
     }

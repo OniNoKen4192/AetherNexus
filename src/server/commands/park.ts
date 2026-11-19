@@ -9,9 +9,13 @@ import { loadMoon, moonScope, parkVoyage, recordTreeWrite, type MoonRow } from "
 
 type VoyageRow = { id: string; ship_id: string; status: string };
 type DecisionRow = { id: number };
-const SUPERSEDABLE = new Set(["holding", "cleared", "en_route", "adrift", "quarantined"]);
+const SUPERSEDABLE = new Set(["holding", "cleared", "en_route", "adrift", "quarantined", "out_of_fuel"]);
 
-/** Supersede every parked voyage of the moon and free its ship. A moon parked with no voyage (carry-over park) has nothing to do. */
+/**
+ * Supersede every parked or out-of-fuel voyage of the moon and free the ships they still hold. A voyage that ended out of
+ * fuel gave its ship back at the wall, and that ship may be flying for another moon by now: it is never released here.
+ * A moon parked with no voyage (carry-over park) has nothing to do.
+ */
 export function releaseMoonVoyages(g: Galaxy, moon: MoonRow, outcome: "reply" | "drop"): void {
   const scope = moonScope(g, moon);
   for (const v of g.db.all<VoyageRow>("voyages.byAssignment", { assignment_id: moon.assignment_id })) {
@@ -19,7 +23,7 @@ export function releaseMoonVoyages(g: Galaxy, moon: MoonRow, outcome: "reply" | 
     const vscope = { ...scope, voyage_id: v.id, ship_id: v.ship_id };
     append(g.db, { kind: "voyage.superseded", ...vscope, payload: {} });
     const ship = g.db.get<{ status: string }>("ships.byId", { id: v.ship_id });
-    if (ship && ship.status !== "idle" && ship.status !== "retired") append(g.db, { kind: "ship.released", ...vscope, payload: { voyage_id: v.id, outcome } });
+    if (v.status !== "out_of_fuel" && ship && ship.status !== "idle" && ship.status !== "retired") append(g.db, { kind: "ship.released", ...vscope, payload: { voyage_id: v.id, outcome } });
   }
 }
 
@@ -34,7 +38,13 @@ function requireParked(moon: MoonRow, verb: string): void {
   if (moon.status !== "adrift" && moon.status !== "quarantined") throw new Refusal(`moon ${moon.task_id} is '${moon.status}' — only an adrift or quarantined moon can be ${verb}`);
 }
 
-/** Park a moon that has no live voyage: moon.adrift + an 'adrift' decision. Legal from emitted, gated, audited, reviewing, adrift, quarantined. */
+function requireDroppable(moon: MoonRow): void {
+  if (moon.status !== "adrift" && moon.status !== "quarantined" && moon.status !== "awaiting_pickup") {
+    throw new Refusal(`moon ${moon.task_id} is '${moon.status}' — only an adrift or quarantined moon, or one whose cargo awaits pickup, can be dropped`);
+  }
+}
+
+/** Park a moon that has no live voyage: moon.adrift + an 'adrift' decision. Legal from emitted, gated, audited, reviewing, adrift, quarantined, awaiting_pickup. */
 export function parkMoonOnly(g: Galaxy, p: { taskId: string; reason: string; details: string }): void {
   const moon = loadMoon(g, p.taskId);
   const scope = moonScope(g, moon);
@@ -64,7 +74,7 @@ export function replyMoon(g: Galaxy, input: { taskId: string; note: string }): {
 
 export function dropMoon(g: Galaxy, input: { taskId: string }): { moonId: string } {
   const moon = loadMoon(g, input.taskId);
-  requireParked(moon, "dropped");
+  requireDroppable(moon);
   const scope = moonScope(g, moon);
   // Remove first: if either removal fails, nothing is recorded and the drop can simply be retried.
   const branch = `nexus/${moon.task_id}`;

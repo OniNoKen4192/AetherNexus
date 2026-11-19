@@ -14,7 +14,7 @@ test("reply: amendment appended, decision resolved, ship released; relaunch allo
   assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).round, 2); w.cleanup();
 });
 test("reply after a review-voyage park: freighter voyage superseded, both ships released, relaunch works", async () => {
-  const w = await worldWithMoon("happy"); await launchMoon(w.g, { taskId: "T1", provider: "fake" }); await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-rate-limited" });
+  const w = await worldWithMoon("happy"); await launchMoon(w.g, { taskId: "T1", provider: "fake" }); await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-crash" });
   assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).status, "adrift");
   replyMoon(w.g, { taskId: "T1", note: "retry" });
   assert.ok(w.g.db.all("voyages.byTask", { task_id: "T1" }).every((v) => v.status === "superseded"));

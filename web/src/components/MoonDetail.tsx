@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useBridgeStatus, type Bridge } from "../store";
 import type { FeedEvent } from "../types";
+import { timeText } from "../gauge";
+import { asFuelWait, fuelWaitText, needsAttention, parkReasonHint, parkReasonText, refuelledText, statusText } from "../labels";
 import { ActionBar } from "./ActionBar";
 
 type Tab = "Spec" | "Activity" | "Audit" | "Verdicts";
@@ -70,14 +72,25 @@ export function MoonDetail({ b }: { b: Bridge }) {
         const moon = b.detail.moon;
         const waitingOn = strings(moon["waiting_on"]);
         const waitingOnPlanets = strings(moon["waiting_on_planets"]);
+        const fuelWait = asFuelWait(moon["waiting_on_fuel"]);
+        const parkReason = text(moon["park_reason"]);
+        const attention = needsAttention(moon["park_reason"]);
         return <>
           <div className="moon-detail-heading">
             <strong>{text(moon["name"])}</strong><code>{b.taskId}</code>
-            <span className="badge">{text(moon["status"])}</span><span>round {number(moon["round"])}</span>
+            <span className="badge">{statusText(text(moon["status"]))}</span><span>round {number(moon["round"])}</span>
           </div>
+          {b.detail.voyages.map((voyage, index) => {
+            const label = refuelledText(voyage);
+            return label === null ? null : <div className="badge waiting-label" key={`${String(voyage["id"])}-${index}`}>{label}</div>;
+          })}
           {waitingOn.length > 0 && <div className="badge waiting-label">waiting on {waitingOn.join(", ")}</div>}
           {waitingOnPlanets.length > 0 && <div className="badge waiting-label">waiting on planet {waitingOnPlanets.join(", ")}</div>}
-          {moon["park_reason"] !== null && <div className="moon-park-reason">{text(moon["park_reason"])}</div>}
+          {waitingOn.length === 0 && waitingOnPlanets.length === 0 && fuelWait !== null && <div className="badge waiting-label">{fuelWaitText(fuelWait, (iso) => timeText(iso, Date.now()))}</div>}
+          {moon["park_reason"] !== null && <>
+            <div className={`moon-park-reason${attention ? " attention-label" : ""}`}>{parkReasonText(parkReason)}</div>
+            {attention && <div className="moon-park-reason attention-label">{parkReasonHint(parkReason)}</div>}
+          </>}
           <ActionBar b={b} />
           <div className="tabs">
             <button className={`tab${tab === "Spec" ? " active" : ""}`} type="button" onClick={() => setTab("Spec")}>Spec</button>

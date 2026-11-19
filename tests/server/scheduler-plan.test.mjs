@@ -7,21 +7,39 @@ import { assignMoon, assignPlanet } from "../../dist/server/commands/assign.js";
 import { launchMoon } from "../../dist/server/commands/launch.js";
 import { inspectMoon } from "../../dist/server/commands/review.js";
 import { parkMoonOnly, replyMoon } from "../../dist/server/commands/park.js";
-import { append } from "../../dist/db/events.js";
+import { append, rowToEvent } from "../../dist/db/events.js";
 import { loadMoon, moonScope } from "../../dist/server/dispatch.js";
-import { effectiveRung, plan } from "../../dist/server/scheduler/plan.js";
+import { effectiveRung, plan, planWithHolds } from "../../dist/server/scheduler/plan.js";
+
+const T = Date.parse("2026-11-17T12:00:00.000Z");
+const R = "2026-11-17T13:00:00.000Z";
+const U = "2026-11-17T14:00:00.000Z";
 
 const ctx = (rung, extra = {}) => ({ ownPid: process.pid, rung, ...extra });
 const action = (name, taskId = "T1", first = false) => ({ action: name, taskId, first });
 
 function patchConfig(config, options = {}) {
-  config.roles = { implement: ["fake"], review: ["fake"] };
+  if (options.pool) config.providers.fake.pool = { kind: "window", reserve_floor: 0.1,
+    ...(options.refuel ? { refuel: { provider: "probe", models: { terra: "m-cheap" }, min_wait_minutes: options.minWait ?? 0 } } : {}) };
+  if (options.probe || options.refuel) config.providers.probe = { adapter: "fake", pool: { kind: "window", reserve_floor: 0.1 } };
+  config.roles = { implement: options.probe ? ["fake", "probe"] : ["fake"], review: options.probe ? ["fake", "probe"] : ["fake"] };
   config.routing.security_routed = ["src/auth.ts"];
   config.routing.do_not_touch = [".env"];
   if (options.max !== undefined) config.scheduler.max_concurrent_ships = options.max;
   if (options.providerMax !== undefined) config.scheduler.per_provider_max = { fake: options.providerMax };
+  if (options.providerCaps !== undefined) config.scheduler.per_provider_max = options.providerCaps;
   if (options.freighters !== undefined) config.fleet.freighters = options.freighters;
   if (options.customs !== undefined) config.fleet.customs = options.customs;
+}
+
+function low(w, provider = "fake") {
+  append(w.g.db, { kind: "fuel.reading", provider, ts: new Date(T).toISOString(), payload: {
+    window: "window", used: 0.95, resets_at: R, source: "reported",
+  } });
+}
+
+function dry(w, provider = "fake") {
+  append(w.g.db, { kind: "fuel.exhausted", provider, ts: new Date(Date.now() + 60_000).toISOString(), payload: { until: U, voyage_id: "v" } });
 }
 
 function spec(taskId, dependsOn = "none", script = "happy") {
@@ -212,5 +230,165 @@ test("busy tasks are omitted and planning writes no events", async () => {
     const before = w.g.db.get("events.maxId").id;
     assert.deepEqual(plan(w.g, ctx("roundabout", { busy: new Set(["T1"]) })), []);
     assert.equal(w.g.db.get("events.maxId").id, before);
+  });
+});
+
+test("plan is planWithHolds(...).actions", async () => {
+  await withWorld(() => world([{ taskId: "T1" }]), async (w) => {
+    const planned = planWithHolds(w.g, ctx("roundabout"));
+    assert.deepEqual(planned, { actions: [{ action: "launch", taskId: "T1", first: true }], holds: [] });
+    assert.deepEqual(plan(w.g, ctx("roundabout")), planned.actions);
+  });
+});
+
+test("a low pool holds the first freighter at roundabout", async () => {
+  await withWorld(() => world([{ taskId: "T1" }], { pool: true }), async (w) => {
+    w.g.now = () => T; low(w);
+    assert.deepEqual(planWithHolds(w.g, ctx("roundabout")), { actions: [], holds: [
+      { taskId: "T1", role: "implement", provider: "fake", reason: "low", until: R },
+    ] });
+  });
+});
+
+test("a low pool does not hold customs", async () => {
+  await withWorld(() => world([{ taskId: "T1" }], { pool: true }), async (w) => {
+    w.g.now = () => T; await launchMoon(w.g, { taskId: "T1", provider: "fake" }); low(w);
+    for (const rung of ["verdicts", "roundabout"]) {
+      assert.deepEqual(planWithHolds(w.g, ctx(rung)), { actions: [{ action: "inspect", taskId: "T1", first: false }], holds: [] });
+    }
+  });
+});
+
+test("a dry pool holds customs too", async () => {
+  await withWorld(() => world([{ taskId: "T1" }], { pool: true }), async (w) => {
+    w.g.now = () => T; await launchMoon(w.g, { taskId: "T1", provider: "fake" }); dry(w);
+    assert.deepEqual(planWithHolds(w.g, ctx("verdicts")), { actions: [], holds: [
+      { taskId: "T1", role: "review", provider: "fake", reason: "dry", until: U },
+    ] });
+  });
+});
+
+test("a dry pool holds a later-visit freighter at verdicts", async () => {
+  await withWorld(() => world([{ taskId: "T1", script: "fix-round" }], { pool: true }), async (w) => {
+    w.g.now = () => T;
+    await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+    await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
+    dry(w);
+    assert.deepEqual(planWithHolds(w.g, ctx("verdicts")), { actions: [], holds: [
+      { taskId: "T1", role: "implement", provider: "fake", reason: "dry", until: U },
+    ] });
+  });
+});
+
+test("a low first provider reroutes a freighter", async () => {
+  await withWorld(() => world([{ taskId: "T1" }], { pool: true, probe: true }), async (w) => {
+    w.g.now = () => T; low(w);
+    assert.deepEqual(planWithHolds(w.g, ctx("roundabout")), { actions: [
+      { action: "launch", taskId: "T1", first: true, provider: "probe" },
+    ], holds: [] });
+  });
+});
+
+test("a low first provider refuels a freighter when the wait is worthwhile", async () => {
+  await withWorld(() => world([{ taskId: "T1" }], { pool: true, refuel: true }), async (w) => {
+    w.g.now = () => T; low(w);
+    assert.deepEqual(planWithHolds(w.g, ctx("roundabout")), { actions: [
+      { action: "launch", taskId: "T1", first: true, provider: "probe", model: "m-cheap", refuel: true },
+    ], holds: [] });
+  });
+  await withWorld(() => world([{ taskId: "T1" }], { pool: true, refuel: true, minWait: 90 }), async (w) => {
+    w.g.now = () => T; low(w);
+    assert.deepEqual(planWithHolds(w.g, ctx("roundabout")), { actions: [], holds: [
+      { taskId: "T1", role: "implement", provider: "fake", reason: "low", until: R },
+    ] });
+  });
+});
+
+test("capacity holds across reroutes", async () => {
+  const moons = [{ taskId: "T1" }, { taskId: "T2" }];
+  await withWorld(() => world(moons, { pool: true, probe: true, freighters: 2, max: 4, providerCaps: { probe: 1 } }), async (w) => {
+    w.g.now = () => T; low(w);
+    assert.deepEqual(planWithHolds(w.g, ctx("roundabout")), {
+      actions: [{ action: "launch", taskId: "T1", first: true, provider: "probe" }],
+      holds: [{ taskId: "T2", role: "implement", provider: "fake", reason: "low", until: R }],
+    });
+  });
+  await withWorld(() => world(moons, { pool: true, probe: true, freighters: 2, max: 1 }), async (w) => {
+    w.g.now = () => T;
+    assert.deepEqual(planWithHolds(w.g, ctx("roundabout")), {
+      actions: [{ action: "launch", taskId: "T1", first: true }], holds: [],
+    });
+  });
+});
+
+test("two freighters planned on one fleet in one call take different ships", async () => {
+  const moons = [{ taskId: "T1" }, { taskId: "T2" }];
+  await withWorld(() => world(moons, { freighters: 2, max: 4 }), async (w) => {
+    assert.deepEqual(planWithHolds(w.g, ctx("roundabout")).actions, [action("launch", "T1", true), action("launch", "T2", true)]);
+  });
+  await withWorld(() => world(moons, { freighters: 1, max: 4 }), async (w) => {
+    assert.deepEqual(planWithHolds(w.g, ctx("roundabout")), { actions: [action("launch", "T1", true)], holds: [] });
+  });
+});
+
+test("docking and parking a stale voyage ignore fuel", async () => {
+  await withWorld(() => world([{ taskId: "T1" }], { pool: true }), async (w) => {
+    w.g.now = () => T;
+    await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+    await inspectMoon(w.g, { taskId: "T1", provider: "fake" });
+    dry(w);
+    assert.deepEqual(planWithHolds(w.g, ctx("verdicts")), { actions: [action("dock")], holds: [] });
+  });
+  await withWorld(() => world([{ taskId: "T1" }], { pool: true }), async (w) => {
+    w.g.now = () => T;
+    let started;
+    const running = new Promise((resolve) => { started = resolve; });
+    w.g.adapters.fake = { ...w.g.adapters.fake, async *dispatch(_job, adapterCtx) {
+      started(); await new Promise((resolve) => adapterCtx.signal.addEventListener("abort", resolve, { once: true }));
+    } };
+    const abort = new AbortController();
+    const launch = launchMoon(w.g, { taskId: "T1", provider: "fake", signal: abort.signal });
+    await running; dry(w);
+    assert.deepEqual(planWithHolds(w.g, ctx("verdicts", { tracks: () => false })), { actions: [action("park_stale")], holds: [] });
+    abort.abort(); await launch;
+  });
+});
+
+test("cargo awaiting pickup is planned once the pool is back", async () => {
+  await withWorld(() => world([{ taskId: "T1", script: "wall" }], { pool: true }), async (w) => {
+    w.g.now = () => T;
+    assert.equal((await launchMoon(w.g, { taskId: "T1", provider: "fake" })).moonStatus, "awaiting_pickup");
+    const until = rowToEvent(w.g.db.all("events.latestByKindProvider", { kind: "fuel.exhausted", provider: "fake", limit: 1 })[0]).payload.until;
+    for (const rung of ["verdicts", "roundabout"]) {
+      assert.deepEqual(planWithHolds(w.g, ctx(rung)), { actions: [], holds: [
+        { taskId: "T1", role: "implement", provider: "fake", reason: "dry", until },
+      ] });
+    }
+    assert.deepEqual(planWithHolds(w.g, ctx("manual")), { actions: [], holds: [] });
+    w.g.now = () => Date.now() + 10 * 60_000;
+    for (const rung of ["verdicts", "roundabout"]) {
+      assert.deepEqual(planWithHolds(w.g, ctx(rung)), { actions: [{ action: "launch", taskId: "T1", first: false }], holds: [] });
+    }
+    assert.deepEqual(planWithHolds(w.g, ctx("manual")), { actions: [], holds: [] });
+  });
+});
+
+test("a busy task produces neither an action nor a hold", async () => {
+  await withWorld(() => world([{ taskId: "T1" }], { pool: true }), async (w) => {
+    w.g.now = () => T; low(w);
+    assert.deepEqual(planWithHolds(w.g, ctx("roundabout", { busy: new Set(["T1"]) })), { actions: [], holds: [] });
+  });
+});
+
+test("planWithHolds writes nothing", async () => {
+  await withWorld(() => world([{ taskId: "T1" }], { pool: true }), async (w) => {
+    w.g.now = () => T;
+    const beforeAction = w.g.db.get("events.maxId").id;
+    assert.equal(planWithHolds(w.g, ctx("roundabout")).actions.length, 1);
+    assert.equal(w.g.db.get("events.maxId").id, beforeAction);
+    low(w);
+    const beforeHold = w.g.db.get("events.maxId").id;
+    assert.equal(planWithHolds(w.g, ctx("roundabout")).holds.length, 1);
+    assert.equal(w.g.db.get("events.maxId").id, beforeHold);
   });
 });

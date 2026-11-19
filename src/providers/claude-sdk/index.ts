@@ -2,7 +2,7 @@ import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { ProviderConfig } from "../../config/schema.js";
 import { parseImplementReport, parseReviewReport } from "../adapter.js";
-import type { AgentEvent, ErrorClass, FuelReading, Job, DispatchCtx, ProviderAdapter, Role } from "../adapter.js";
+import type { AgentEvent, ErrorClass, Job, DispatchCtx, ProviderAdapter, Role } from "../adapter.js";
 import { makeBashGitGate, makeTouchGate, WRITE_TOOLS } from "./gate-hook.js";
 
 export { makeBashGitGate, makeTouchGate };
@@ -47,6 +47,25 @@ type Block = { type?: string; text?: string; id?: string; name?: string; input?:
 const blocksOf = (m: unknown): Block[] => { const c = (m as { message?: { content?: unknown } }).message?.content; return Array.isArray(c) ? (c as Block[]) : []; };
 const flatten = (c: unknown): string => typeof c === "string" ? c : Array.isArray(c) ? c.map((b) => (b && typeof b === "object" && "text" in b ? String((b as { text: unknown }).text) : "")).join("") : c == null ? "" : JSON.stringify(c);
 
+const familyOf = (window: string | undefined): string | undefined => window === "seven_day_opus" ? "opus" : window === "seven_day_sonnet" ? "sonnet" : undefined;
+
+/** Epoch seconds or milliseconds to an ISO time; undefined for anything else. */
+function isoOf(value: unknown): string | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
+  const date = new Date(value < 1e12 ? value * 1000 : value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+/** One fuel reading for a rate-limit window. Utilization at most 1 is a fraction; above 1 it is read as a percentage. */
+function readingOf(window: string, utilization: unknown, resets: unknown): AgentEvent | undefined {
+  if (typeof utilization !== "number" || !Number.isFinite(utilization) || utilization < 0 || window === "overage") return undefined;
+  const resetsAt = isoOf(resets); const modelFamily = familyOf(window);
+  return { kind: "fuel", ts: ts(), data: {
+    window, used: utilization <= 1 ? utilization : Math.min(utilization / 100, 1),
+    ...(resetsAt ? { resets_at: resetsAt } : {}), ...(modelFamily ? { model_family: modelFamily } : {}),
+  } };
+}
+
 export function mapMessage(m: SDKMessage, role: Role): AgentEvent[] {
   const msg = m as unknown as Record<string, unknown> & { type: string; subtype?: string };
   switch (msg.type) {
@@ -80,10 +99,27 @@ export function mapMessage(m: SDKMessage, role: Role): AgentEvent[] {
       return [u, errEvent(msg.subtype === "error_max_budget_usd" ? "capacity" : "backend_failure", errors.join("; ") || String(msg.subtype))];
     }
     case "rate_limit_event": {
-      const info = msg["rate_limit_info"] as { status?: string } | undefined;
-      return info?.status === "rejected"
-        ? [errEvent("rate_limited", `rate limit rejected: ${JSON.stringify(info)}`)]
-        : [text(`rate limit status: ${info?.status ?? "unknown"}`)];
+      // As the SDK sends it (live check 2026-11-19): the readings sit under unifiedWindows, one per window, with
+      // utilization as a fraction and resetsAt in epoch seconds. A top-level utilization is read too, for the window
+      // the event names, when unifiedWindows has no reading for it.
+      const info = msg["rate_limit_info"] as { status?: string; resetsAt?: unknown; rateLimitType?: string; utilization?: unknown; unifiedWindows?: unknown } | undefined;
+      const modelFamily = familyOf(info?.rateLimitType);
+      const resetsAt = isoOf(info?.resetsAt);
+      const out: AgentEvent[] = [];
+      const windows = info?.unifiedWindows !== null && typeof info?.unifiedWindows === "object" && !Array.isArray(info.unifiedWindows)
+        ? Object.entries(info.unifiedWindows as Record<string, { utilization?: unknown; resetsAt?: unknown } | null>) : [];
+      const fromWindows = windows.flatMap(([name, w]) => { const r = readingOf(name, w?.utilization, w?.resetsAt); return r ? [[name, r] as const] : []; });
+      if (!fromWindows.some(([name]) => name === info?.rateLimitType)) {
+        const top = readingOf(info?.rateLimitType ?? "unknown", info?.utilization, info?.resetsAt);
+        if (top) out.push(top);
+      }
+      for (const [, r] of fromWindows) out.push(r);
+      if (info?.status === "rejected") {
+        out.push({ kind: "error", ts: ts(), data: { classification: "rate_limited", message: `rate limit rejected: ${JSON.stringify(info)}`, ...(resetsAt ? { resets_at: resetsAt } : {}), ...(modelFamily ? { model_family: modelFamily } : {}) } });
+      } else {
+        out.push(text(`rate limit status: ${info?.status ?? "unknown"}`));
+      }
+      return out;
     }
     default:
       return [];
@@ -98,17 +134,17 @@ export function createClaudeAdapter(id: string, cfg: ProviderConfig, deps: { que
   return {
     id, roles: ["implement", "review"],
     classify,
-    async fuel(): Promise<FuelReading> { return { source: "unknown" }; },
     async *dispatch(job: Job, ctx: DispatchCtx): AsyncIterable<AgentEvent> {
       let built: ReturnType<typeof buildEnv>;
       try { built = buildEnv(cfg, process.env); } catch (e) { yield errEvent("unknown", e instanceof Error ? e.message : String(e)); return; }
       yield text(`auth mode: ${built.mode}`);
+      const model = job.model ?? cfg.models?.["frontier"];
       const options: Options = {
         cwd: ctx.cwd, env: built.env, strictMcpConfig: true, settingSources: ["project"], permissionMode: "dontAsk",
         tools: TOOLS[job.role], allowedTools: TOOLS[job.role], maxTurns: cfg.max_turns ?? 60,
         ...(cfg.max_budget_usd ? { maxBudgetUsd: cfg.max_budget_usd } : {}),
         ...(job.previousSessionId ? { resume: job.previousSessionId } : {}),
-        ...(cfg.models?.["frontier"] ? { model: cfg.models["frontier"] } : {}),
+        ...(model !== undefined ? { model } : {}),
         hooks: { PreToolUse: [
           { matcher: "Write|Edit|MultiEdit|NotebookEdit", hooks: [makeTouchGate(ctx.touch, ctx.cwd)] },
           { matcher: "Bash", hooks: [makeBashGitGate()] },

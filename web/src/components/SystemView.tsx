@@ -1,4 +1,6 @@
 import type { Bridge } from "../store";
+import { timeText } from "../gauge";
+import { asFuelWait, fuelWaitText, needsAttention, parkReasonText, refuelledText, statusText } from "../labels";
 import { NewSystem } from "./NewSystem";
 import { AssignStream, AssignSpec } from "./Assign";
 
@@ -48,13 +50,22 @@ export function SystemView({ b }: { b: Bridge }) {
                         }
                         const waitingOn = strings(moon["waiting_on"]);
                         const waitingOnPlanets = strings(moon["waiting_on_planets"]);
+                        const fuelWait = asFuelWait(moon["waiting_on_fuel"]);
+                        const parkReason = text(moon["park_reason"]);
+                        const refuelled = (b.snapshot?.voyages ?? [])
+                          .filter((voyage) => voyage["assignment_id"] === moon["assignment_id"] && (voyage["status"] === "launched" || voyage["status"] === "working"))
+                          .map(refuelledText)
+                          .filter((label): label is string => label !== null);
                         return (
                           <div className={`row${taskId === b.taskId ? " selected" : ""}`} key={moonId} onClick={() => b.openMoon(taskId)}>
                             <span>{name}</span>
                             <code>{taskId}</code>
-                            <span className="badge">{text(moon["status"])}</span>
+                            <span className="badge">{statusText(text(moon["status"]))}</span>
                             {waitingOn.length > 0 && <span className="badge waiting-label">waiting on {waitingOn.join(", ")}</span>}
                             {waitingOnPlanets.length > 0 && <span className="badge waiting-label">waiting on planet {waitingOnPlanets.join(", ")}</span>}
+                            {waitingOn.length === 0 && waitingOnPlanets.length === 0 && fuelWait !== null && <span className="badge waiting-label">{fuelWaitText(fuelWait, (iso) => timeText(iso, Date.now()))}</span>}
+                            {refuelled.map((label, index) => <span className="badge waiting-label" key={`${label}-${index}`}>{label}</span>)}
+                            {needsAttention(moon["park_reason"]) && <span className="badge attention-label">{parkReasonText(parkReason)}</span>}
                             {latestFailure !== undefined && <span className="badge failure-badge" title={latestFailure.message}>failed</span>}
                           </div>
                         );

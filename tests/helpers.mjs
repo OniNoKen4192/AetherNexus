@@ -38,6 +38,13 @@ export async function makeGalaxy(patchConfig) {
   initGalaxy(repo.dir, { patchConfig });
   repo.git("add", "-A"); repo.git("commit", "-qm", "nexus init");
   const g = openGalaxy(repo.dir, { scriptsDir: path.join(repoRoot, "tests", "fixtures", "scripts") });
+  // A test galaxy never flies a real adapter: the default config names codex and claude ahead of fake, and a patchConfig
+  // that forgets to pin c.roles would otherwise spend the owner's pools. The live tests build their own galaxy.
+  // NEXUS_LIVE is the owner's explicit go for real calls (tests/live); without it nothing real can fly.
+  for (const [id, provider] of Object.entries(g.config.providers)) {
+    if (provider.adapter === "fake" || process.env.NEXUS_LIVE) continue;
+    g.adapters[id] = { ...g.adapters[id], dispatch() { throw new Error(`test galaxy: provider '${id}' uses the real '${provider.adapter}' adapter — pin c.roles to a fake provider`); } };
+  }
   return { ...repo, g, cleanup: () => { g.close(); repo.cleanup(); } };
 }
 export function writeSpec(dir, taskId, body) {

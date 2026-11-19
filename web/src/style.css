@@ -61,6 +61,17 @@ textarea.field { font-family: inherit; resize: vertical; }
 
 .fleet-group + .fleet-group { margin-top: 10px; }
 .fleet-group h3, .routing h3 { margin: 6px 0 3px; font-size: 13px; }
+.gauge { min-width: 0; margin: 4px 8px 6px; padding: 6px 8px; border-left: 3px solid var(--border); background: var(--hover); }
+.gauge meter { display: block; width: 100%; max-width: 240px; margin-bottom: 3px; accent-color: var(--ok); }
+.gauge-text, .gauge-family { max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
+.gauge-family { color: var(--muted); font-size: 12px; }
+.gauge-ok { border-left-color: var(--ok); }
+.gauge-low { border-left-color: var(--warn); }
+.gauge-low meter { accent-color: var(--warn); }
+.gauge-dry { border-left-color: var(--danger); background: var(--danger-bg); }
+.gauge-dry meter { accent-color: var(--danger); }
+.gauge-unknown { border-left-color: var(--muted); }
+.gauge-free { border-left-color: var(--accent); }
 .fleet-line { display: flex; justify-content: space-between; gap: 12px; padding: 2px 8px; }
 .fleet-line span:last-child { color: var(--muted); }
 .routing ol { margin: 3px 0 8px; padding-left: 24px; }
@@ -109,6 +120,9 @@ textarea.field { font-family: inherit; resize: vertical; }
 .routing-list li > span:first-child { display: inline-block; min-width: 100px; }
 .routing-buttons { display: inline-flex; gap: 4px; margin-left: 8px; }
 .failure-badge { color: var(--danger); border-color: var(--danger); }
+.attention-label { max-width: 100%; white-space: normal; border-radius: 10px; color: var(--danger); background: var(--danger-bg); border: 1px solid var(--danger); overflow-wrap: anywhere; }
+.system-moons .row:has(> .attention-label) { flex-wrap: wrap; }
+.moon-detail > .attention-label { display: block; width: fit-content; padding: 2px 8px; margin-bottom: 4px; }
 
 /* An open moon's detail sits beside the system list and stays in view while the list scrolls. */
 @media (min-width: 1100px) {
