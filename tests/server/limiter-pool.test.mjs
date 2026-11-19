@@ -195,6 +195,17 @@ test("c6: a voyage returned before the exhaustion does not clear it", async () =
   } finally { w.cleanup(); }
 });
 
+test("c6: a voyage launched before the exhaustion does not clear it when it returns", async () => {
+  const w = await voyageWorld();
+  try {
+    // A sibling already in flight when another ship hit the wall says nothing about the pool being back.
+    const voyageId = voyage(w, "fake", "2026-11-17T11:59:55.000Z");
+    append(w.g.db, { kind: "fuel.exhausted", provider: "fake", ts: iso(0), payload: { until: iso(3_600_000), voyage_id: "v" } });
+    append(w.g.db, { kind: "voyage.returned", ...moonScope(w.g, loadMoon(w.g, "T1")), ts: iso(10_000), voyage_id: voyageId, payload: { role: "implement", report: {} } });
+    assert.deepEqual(poolState(w.g, "fake"), { state: "dry", until: "2026-11-17T13:00:00.000Z" });
+  } finally { w.cleanup(); }
+});
+
 test("c6: a voyage returned on another provider does not clear it", async () => {
   const w = await voyageWorld();
   try {

@@ -95,7 +95,7 @@ One pure function, `poolState(g, provider, now, model?)`, returns the first row 
 | `unknown` | none of the above |
 
 - **Model families.** A reading or an exhaustion that carries `model_family` counts only when `model` is given and belongs to that family (the family name appears in the model id); one without it counts for every model. With no `model` argument (the Fleet gauge) every reading counts. So customs filling the Opus window does not stop a Haiku refuel, and an Opus rejection does not shut Claude for Haiku **(call)**.
-- **Exhausted** means: there is a `fuel.exhausted` for the provider (matching the model family, as above) whose `until` is in the future, and no voyage on that provider has returned successfully (`voyage.returned`) since it. A successful run is proof the pool is back, which is the way out of a reset time that was guessed too far ahead.
+- **Exhausted** means: there is a `fuel.exhausted` for the provider (matching the model family, as above) whose `until` is in the future, and no voyage on that provider has returned successfully (`voyage.returned`) since it. A successful run is proof the pool is back, which is the way out of a reset time that was guessed too far ahead. *(Owner's decision 2026-11-19: only a voyage **launched** after the exhaustion counts. One already in flight when another ship hit the wall proves nothing, and counting it sent the waiting moon's pickup straight back into the wall.)*
 - A reading is **live** until its `resets_at` passes; a reading with no reset time is live for 24 hours **(call)**. After that the window has refilled and the reading says nothing.
 - **Tightest** means the highest `used` among the live readings that count **(call)**.
 - `reserve_floor` defaults to 0 when absent (never `low`).

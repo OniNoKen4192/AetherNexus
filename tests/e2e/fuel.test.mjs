@@ -371,7 +371,8 @@ test("done-when: three moons, nobody clicks.", async () => scenario("happy", fue
     const snap = await snapshot(x);
     if (["T1", "B", "C"].every((id) => findMoon(snap, id)?.status === "merged")) { done = snap; break; }
     const waiting = ["T1", "B", "C"].map((id) => findMoon(snap, id)).filter((moon) => moon?.waiting_on_fuel);
-    if (snap.fleet.every((ship) => ship.status === "idle") && waiting.length && waiting.every((moon) => moon.can_refuel === null)) {
+    // "Nothing in flight", as the criterion says: a ship holding an audited round is assigned, not flying.
+    if (snap.limits.in_flight === 0 && waiting.length && waiting.every((moon) => moon.can_refuel === null)) {
       idleSince ??= Date.now();
       if (Date.now() - idleSince >= 200) {
         movePast(x, waiting.map((moon) => moon.waiting_on_fuel.until).sort()[0]);
