@@ -4,7 +4,7 @@ import { nextMoonStatus, TransitionRefused } from "../../dist/core/transitions.j
 import { append } from "../../dist/db/events.js";
 import { rebuild, dumpProjections } from "../../dist/db/rebuild.js";
 import { loadMoon, moonScope } from "../../dist/server/dispatch.js";
-import { repliedSincePark } from "../../dist/server/commands/launch.js";
+import { repliedSincePark } from "../../dist/server/commands/delivery.js";
 import { parkMoonOnly, replyMoon } from "../../dist/server/commands/park.js";
 import { worldWithMoon } from "../fixtures/world.mjs";
 
@@ -57,7 +57,7 @@ test("scheduler.acted and config.changed append without projecting state", async
   try {
     const before = dumpProjections(w.g.db);
     const moon = loadMoon(w.g, "T1");
-    append(w.g.db, { kind: "scheduler.acted", ...moonScope(w.g, moon), payload: { action: "launch", task_id: "T1", rung: "roundabout" } });
+    append(w.g.db, { kind: "scheduler.acted", ...moonScope(w.g, moon), payload: { action: "send", task_id: "T1", rung: "roundabout" } });
     append(w.g.db, { kind: "config.changed", payload: { key: "automation.level", from: "manual", to: "verdicts", pid: 1 } });
     assert.equal(dumpProjections(w.g.db), before, "no state is projected");
     rebuild(w.g.db);

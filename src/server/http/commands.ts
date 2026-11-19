@@ -4,10 +4,10 @@ import { TransitionRefused } from "../../core/transitions.js";
 import { assignMoon, assignPlanet } from "../commands/assign.js";
 import { setAutomationLevel, setRoleOrder } from "../commands/config.js";
 import { answerDecision } from "../commands/decision.js";
-import { dockMoon } from "../commands/dock.js";
-import { launchMoon } from "../commands/launch.js";
-import { dropMoon, parkStaleMoon, replyMoon, retireShip } from "../commands/park.js";
-import { inspectMoon } from "../commands/review.js";
+import { dockCargo } from "../commands/dock.js";
+import { sendDelivery } from "../commands/delivery.js";
+import { cancelDelivery, parkStaleMoon, replyMoon, retireShip } from "../commands/park.js";
+import { sendCustoms } from "../commands/customs.js";
 import { createSystem } from "../commands/system.js";
 import { loadMoon } from "../dispatch.js";
 import { Refusal } from "../errors.js";
@@ -33,12 +33,12 @@ const COMMANDS: Record<string, Definition> = {
     if (rel.startsWith("..") || path.isAbsolute(rel)) throw new BadRequest("specPath must be inside the repository");
     return assignMoon(g, i as Parameters<typeof assignMoon>[1]);
   } },
-  "moon.launch": { fields: { taskId: s(), provider: s(true), override: boolean(true), refuel: boolean(true) }, run: (g, runner, i) => runner.start(i["taskId"] as string, ({ signal, onLaunched }) => launchMoon(g, { ...(i as { taskId: string; provider?: string; override?: boolean; refuel?: boolean }), signal, onLaunched })) },
-  "voyage.inspect": { fields: { taskId: s(), provider: s(true), override: boolean(true) }, run: (g, runner, i) => runner.start(i["taskId"] as string, ({ signal, onLaunched }) => inspectMoon(g, { ...(i as { taskId: string; provider?: string; override?: boolean }), signal, onLaunched })) },
-  "voyage.dock": { fields: { taskId: s() }, run: (g, _r, i) => dockMoon(g, i as Parameters<typeof dockMoon>[1]) },
+  "delivery.send": { fields: { taskId: s(), provider: s(true), override: boolean(true), refuel: boolean(true) }, run: (g, runner, i) => runner.start(i["taskId"] as string, ({ signal, onLaunched }) => sendDelivery(g, { ...(i as { taskId: string; provider?: string; override?: boolean; refuel?: boolean }), signal, onLaunched })) },
+  "customs.send": { fields: { taskId: s(), provider: s(true), override: boolean(true) }, run: (g, runner, i) => runner.start(i["taskId"] as string, ({ signal, onLaunched }) => sendCustoms(g, { ...(i as { taskId: string; provider?: string; override?: boolean }), signal, onLaunched })) },
+  "cargo.dock": { fields: { taskId: s() }, run: (g, _r, i) => dockCargo(g, i as Parameters<typeof dockCargo>[1]) },
   "voyage.cancel": { fields: { voyageId: s() }, run: (_g, runner, i) => { runner.cancel(i["voyageId"] as string); return { cancelled: true }; } },
   "moon.reply": { fields: { taskId: s(), note: s() }, run: (g, _r, i) => replyMoon(g, i as Parameters<typeof replyMoon>[1]) },
-  "moon.drop": { fields: { taskId: s() }, run: (g, _r, i) => dropMoon(g, i as Parameters<typeof dropMoon>[1]) },
+  "delivery.cancel": { fields: { taskId: s() }, run: (g, _r, i) => cancelDelivery(g, i as Parameters<typeof cancelDelivery>[1]) },
   "moon.park": { fields: { taskId: s(), reason: s() }, run: (g, runner, i) => {
     const moon = loadMoon(g, i["taskId"] as string);
     for (const v of g.db.all("voyages.byAssignment", { assignment_id: moon.assignment_id })) {
@@ -86,7 +86,7 @@ export async function runCommand(g: Galaxy, runner: VoyageRunner, name: string, 
   if (!Object.hasOwn(COMMANDS, name)) throw new UnknownCommand(`unknown command '${name}'`);
   const command = COMMANDS[name]!;
   const result = await command.run(g, runner, validate(body, command.fields));
-  if (name === "moon.launch" || name === "voyage.inspect") {
+  if (name === "delivery.send" || name === "customs.send") {
     const answer = result as { launched: boolean; voyageId?: string; result?: unknown };
     if (answer.launched) return { status: 202, body: { voyageId: answer.voyageId! } };
     return { status: 200, body: { result: answer.result } };

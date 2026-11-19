@@ -19,9 +19,9 @@ nexus init
 nexus system create <slug> --title <t> --brief-text <text>
 nexus planet assign <system-id> --stream <id> --territory <glob>
 nexus moon assign <planet-id> <spec-path>
-nexus moon launch <task-id> --provider fake
-nexus voyage inspect <task-id> --provider fake
-nexus voyage dock <task-id>
+nexus delivery send <task-id> --provider fake
+nexus customs send <task-id> --provider fake
+nexus cargo dock <task-id>
 ```
 
 Spec gate, scope audit, transition table, event log, projections,

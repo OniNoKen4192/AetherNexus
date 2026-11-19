@@ -92,9 +92,9 @@ export function chooseProvider(g: Galaxy, p: { role: Role; tier: string | null; 
   return { kind: "fly", provider: refuel.provider, shipId: ship.id, model, refuelFor: { provider: held.provider, reason: held.verdict.reason } };
 }
 
-export function fuelHold(g: Galaxy, taskId: string, action: "launch" | "inspect"): (Choice & { kind: "held" }) | null {
+export function fuelHold(g: Galaxy, taskId: string, action: "send" | "inspect"): (Choice & { kind: "held" }) | null {
   let tier: string | null;
   try { tier = loadMoon(g, taskId).tier; } catch { return null; }
-  const choice = chooseProvider(g, { role: action === "launch" ? "implement" : "review", tier, mayRefuel: false });
+  const choice = chooseProvider(g, { role: action === "send" ? "implement" : "review", tier, mayRefuel: false });
   return choice.kind === "held" ? choice : null;
 }

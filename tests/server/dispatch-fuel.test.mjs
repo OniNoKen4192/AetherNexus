@@ -2,7 +2,7 @@ import { test } from "node:test"; import assert from "node:assert/strict";
 import { worldWithMoon } from "../fixtures/world.mjs";
 import { append, rowToEvent } from "../../dist/db/events.js";
 import { rebuild, dumpProjections } from "../../dist/db/rebuild.js";
-import { launchMoon } from "../../dist/server/commands/launch.js";
+import { sendDelivery } from "../../dist/server/commands/delivery.js";
 import { loadMoon, moonScope, parkVoyage, runVoyage } from "../../dist/server/dispatch.js";
 
 const now = () => new Date().toISOString();
@@ -31,7 +31,7 @@ function finish(w) {
 
 test("a fuel event is stored once as fuel.reading with the voyage's provider", async () => {
   const w = await worldWithMoon("fuel-ok");
-  const r = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  const r = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(r.moonStatus, "audited");
   const readings = moonEvents(w, "fuel.reading");
   assert.equal(readings.length, 1);
@@ -97,7 +97,7 @@ test("refuelFor is recorded on voyage.launched", async () => {
 
 test("a rate_limited ending leaves cargo awaiting pickup, not a park", async () => {
   const w = await worldWithMoon("wall");
-  const r = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  const r = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(r.moonStatus, "awaiting_pickup"); assert.equal(r.audit, null);
   const moon = loadMoon(w.g, "T1"); assert.equal(moon.status, "awaiting_pickup"); assert.equal(moon.park_reason, null);
   const voyage = w.g.db.get("voyages.byId", { id: r.voyageId }); assert.equal(voyage.status, "out_of_fuel");
@@ -181,7 +181,7 @@ test("a voyage someone else parked is left alone", async () => {
 
 test("other failures still park: a backend failure is not a wall hit", async () => {
   const w = await worldWithMoon("crash-midrun");
-  const r = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  const r = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(r.moonStatus, "adrift"); assert.equal(loadMoon(w.g, "T1").park_reason, "backend_failure");
   assert.equal(moonEvents(w, "fuel.exhausted").length, 0);
   finish(w);

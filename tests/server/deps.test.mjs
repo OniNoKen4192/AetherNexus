@@ -4,9 +4,9 @@ import { makeGalaxy, read, writeSpec } from "../helpers.mjs";
 import { createSystem } from "../../dist/server/commands/system.js";
 import { assignMoon, assignPlanet } from "../../dist/server/commands/assign.js";
 import { dependencyState } from "../../dist/server/commands/deps.js";
-import { launchMoon } from "../../dist/server/commands/launch.js";
-import { inspectMoon } from "../../dist/server/commands/review.js";
-import { dockMoon } from "../../dist/server/commands/dock.js";
+import { sendDelivery } from "../../dist/server/commands/delivery.js";
+import { sendCustoms } from "../../dist/server/commands/customs.js";
+import { dockCargo } from "../../dist/server/commands/dock.js";
 import { moonDetail, snapshot } from "../../dist/server/commands/query.js";
 
 const ctx = { ownPid: process.pid, failures: [] };
@@ -50,9 +50,9 @@ function snapshotMoon(g, taskId) {
 }
 
 async function settle(g, taskId) {
-  await launchMoon(g, { taskId, provider: "fake" });
-  await inspectMoon(g, { taskId, provider: "fake" });
-  assert.equal(dockMoon(g, { taskId }).moonStatus, "merged");
+  await sendDelivery(g, { taskId, provider: "fake" });
+  await sendCustoms(g, { taskId, provider: "fake" });
+  assert.equal(dockCargo(g, { taskId }).moonStatus, "merged");
 }
 
 test("a moon with no dependencies is not waiting", async () => {
@@ -100,7 +100,7 @@ test("a dependency settled on another planet is still waiting", async () => {
 test("a first freighter is not sent while a dependency is unsettled", async () => {
   const w = await world([{ streamId: "P1", moons: [{ taskId: "A" }, { taskId: "B", dependsOn: "A" }] }]);
   try {
-    await assert.rejects(launchMoon(w.g, { taskId: "B" }), /is waiting on A/);
+    await assert.rejects(sendDelivery(w.g, { taskId: "B" }), /is waiting on A/);
     const moon = w.g.db.get("moons.byTask", { task_id: "B" });
     assert.equal(moon.status, "emitted");
     assert.equal(w.g.db.all("events.byAssignment", { assignment_id: moon.assignment_id }).some((e) => e.kind === "voyage.launched"), false);
@@ -110,11 +110,11 @@ test("a first freighter is not sent while a dependency is unsettled", async () =
 test("a visited moon is not re-checked before its next freighter is sent", async () => {
   const w = await world([{ streamId: "P1", moons: [{ taskId: "T1", script: "fix-round" }] }]);
   try {
-    await launchMoon(w.g, { taskId: "T1", provider: "fake" });
-    await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
+    await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
+    await sendCustoms(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
     w.g.db.raw.prepare("UPDATE moons SET depends_on = ? WHERE task_id = ?").run('["NOPE"]', "T1");
     assert.deepEqual(dependencyState(w.g, "T1"), { visited: true, waitingOn: ["NOPE"], waitingOnPlanets: [] });
-    await assert.doesNotReject(launchMoon(w.g, { taskId: "T1", provider: "fake" }));
+    await assert.doesNotReject(sendDelivery(w.g, { taskId: "T1", provider: "fake" }));
     assert.deepEqual(snapshotMoon(w.g, "T1").waiting_on, []);
   } finally { w.cleanup(); }
 });
@@ -124,6 +124,6 @@ test("planet dependencies are reported but do not block a freighter", async () =
   try {
     assert.deepEqual(dependencyState(w.g, "T1").waitingOnPlanets, ["P0"]);
     assert.deepEqual(snapshotMoon(w.g, "T1").waiting_on_planets, ["P0"]);
-    await assert.doesNotReject(launchMoon(w.g, { taskId: "T1", provider: "fake" }));
+    await assert.doesNotReject(sendDelivery(w.g, { taskId: "T1", provider: "fake" }));
   } finally { w.cleanup(); }
 });

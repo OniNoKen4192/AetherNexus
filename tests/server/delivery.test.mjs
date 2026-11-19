@@ -1,12 +1,12 @@
 import { test } from "node:test"; import assert from "node:assert/strict"; import fs from "node:fs"; import os from "node:os"; import path from "node:path";
 import { writeSpec, read } from "../helpers.mjs"; import { worldWithMoon } from "../fixtures/world.mjs";
 import { assignMoon } from "../../dist/server/commands/assign.js";
-import { launchMoon } from "../../dist/server/commands/launch.js";
+import { sendDelivery } from "../../dist/server/commands/delivery.js";
 import { renderPrompt } from "../../dist/server/dispatch.js";
 
 test("happy launch: gate → voyage events logged → audit clean → moon audited, freighter holding", async () => {
   const w = await worldWithMoon("happy"); const seen = [];
-  const r = await launchMoon(w.g, { taskId: "T1", provider: "fake", onEvent: (e) => seen.push(e.kind) });
+  const r = await sendDelivery(w.g, { taskId: "T1", provider: "fake", onEvent: (e) => seen.push(e.kind) });
   assert.equal(r.moonStatus, "audited"); assert.equal(r.audit.verdict, "clean"); assert.deepEqual(r.audit.in_scope.sort(), ["src/lib/thing.js", "src/lib/thing.test.js"]);
   assert.deepEqual(seen, ["text", "tool_use", "file_changed", "file_changed", "usage", "done"]);
   const v = w.g.db.get("voyages.byId", { id: r.voyageId }); assert.equal(v.status, "holding"); assert.equal(v.role, "implement");
@@ -18,7 +18,7 @@ test("happy launch: gate → voyage events logged → audit clean → moon audit
 });
 
 test("Review Focus #5: scope violation with IMPLEMENTED report → audit decides → adrift with out_of_scope", async () => {
-  const w = await worldWithMoon("scope-violation"); const r = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  const w = await worldWithMoon("scope-violation"); const r = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(r.moonStatus, "adrift"); assert.deepEqual(r.audit.out_of_scope, ["README.md"]);
   const m = w.g.db.get("moons.byTask", { task_id: "T1" }); assert.equal(m.park_reason, "audit_violations");
   assert.equal(w.g.db.all("decisions.pending").length, 1); assert.equal(w.g.db.get("voyages.byId", { id: r.voyageId }).status, "adrift");
@@ -26,10 +26,10 @@ test("Review Focus #5: scope violation with IMPLEMENTED report → audit decides
 });
 
 test("a crash parks the voyage with the reason; a rate limit leaves the cargo awaiting pickup; nothing half-written", async () => {
-  const w = await worldWithMoon("crash-midrun"); const r = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  const w = await worldWithMoon("crash-midrun"); const r = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(r.moonStatus, "adrift"); assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).park_reason, "backend_failure");
   assert.equal(w.g.db.get("voyages.byId", { id: r.voyageId }).status, "adrift"); w.cleanup();
-  const w2 = await worldWithMoon("rate-limited"); const r2 = await launchMoon(w2.g, { taskId: "T1", provider: "fake" });
+  const w2 = await worldWithMoon("rate-limited"); const r2 = await sendDelivery(w2.g, { taskId: "T1", provider: "fake" });
   assert.equal(r2.moonStatus, "awaiting_pickup"); assert.equal(w2.g.db.get("moons.byTask", { task_id: "T1" }).park_reason, null);
   assert.equal(w2.g.db.get("voyages.byId", { id: r2.voyageId }).status, "out_of_fuel"); assert.equal(w2.g.db.all("decisions.pending").length, 0);
   assert.ok(w2.g.db.all("ships.all").every((s) => s.status === "idle")); w2.cleanup();
@@ -37,25 +37,25 @@ test("a crash parks the voyage with the reason; a rate limit leaves the cargo aw
 
 test("launch refuses when no freighter is idle, and when moon is in the wrong state", async () => {
   const w = await worldWithMoon("happy", (c) => { c.roles = { implement: ["fake"], review: ["fake"] }; c.fleet = { freighters: 1, customs: 1, carriers: 1, surveyors: 1, name_theme: "classic" }; });
-  await launchMoon(w.g, { taskId: "T1", provider: "fake" });               // freighter now holding (assigned)
+  await sendDelivery(w.g, { taskId: "T1", provider: "fake" });               // freighter now holding (assigned)
   const spec2 = writeSpec(w.dir, "T2", read("tests/fixtures/specs/good-basic.md").replace("src/lib/thing.js", "src/lib/two.js")); w.git("add", "-A"); w.git("commit", "-qm", "s2");
   assignMoon(w.g, { planetId: w.planetId, specPath: spec2 });
-  await assert.rejects(launchMoon(w.g, { taskId: "T2", provider: "fake" }), /all freighters in fleet 'fake' are assigned/);
-  await assert.rejects(launchMoon(w.g, { taskId: "T1", provider: "fake" }), /is 'audited'/);
+  await assert.rejects(sendDelivery(w.g, { taskId: "T2", provider: "fake" }), /all freighters in fleet 'fake' are assigned/);
+  await assert.rejects(sendDelivery(w.g, { taskId: "T1", provider: "fake" }), /is 'audited'/);
   w.cleanup();
 });
 
 test("launch refuses a moon whose spec body changed since assign, before any side effect", async () => {
   const w = await worldWithMoon("happy"); const p = path.join(w.dir, ".nexus", "specs", "T1.md");
   fs.writeFileSync(p, fs.readFileSync(p, "utf8").replace("Add X to thing.", "Add Y to thing."));
-  await assert.rejects(launchMoon(w.g, { taskId: "T1", provider: "fake" }), /spec body changed since assign/);
+  await assert.rejects(sendDelivery(w.g, { taskId: "T1", provider: "fake" }), /spec body changed since assign/);
   assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).status, "emitted"); assert.ok(!fs.existsSync(path.join(w.dir, ".nexus", "worktrees", "T1")));
   w.cleanup();
 });
 
 test("launch refuses an adrift moon and points at reply/drop", async () => {
-  const w = await worldWithMoon("crash-midrun"); await launchMoon(w.g, { taskId: "T1", provider: "fake" });
-  await assert.rejects(launchMoon(w.g, { taskId: "T1", provider: "fake" }), /adrift.*reply/);
+  const w = await worldWithMoon("crash-midrun"); await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
+  await assert.rejects(sendDelivery(w.g, { taskId: "T1", provider: "fake" }), /adrift.*reply/);
   w.cleanup();
 });
 
@@ -69,7 +69,7 @@ test("renderPrompt substitutes in one pass and throws on an unknown variable", (
 
 test("an audit that throws parks the voyage as audit_error instead of stranding the moon", async () => {
   const w = await worldWithMoon("happy");
-  const r = await launchMoon(w.g, { taskId: "T1", provider: "fake" }, { audit: () => { throw new Error("boom"); } });
+  const r = await sendDelivery(w.g, { taskId: "T1", provider: "fake" }, { audit: () => { throw new Error("boom"); } });
   assert.equal(r.audit, null); assert.equal(r.moonStatus, "adrift");
   assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).park_reason, "audit_error");
   assert.equal(w.g.db.get("voyages.byId", { id: r.voyageId }).status, "adrift");
@@ -81,7 +81,7 @@ test("the moon's Touch list reaches the adapter's DispatchCtx", async () => {
   let touch;
   w.g.adapters.probe = { id: "probe", roles: ["implement", "review"], classify: () => "unknown", fuel: async () => ({ source: "unknown" }),
     async *dispatch(_job, ctx) { touch = ctx.touch; yield { kind: "done", ts: new Date().toISOString(), data: { report: { status: "IMPLEMENTED", raw: "STATUS: IMPLEMENTED" } } }; } };
-  await launchMoon(w.g, { taskId: "T1", provider: "probe" });
+  await sendDelivery(w.g, { taskId: "T1", provider: "probe" });
   assert.deepEqual(touch, ["src/lib/thing.js", "src/lib/thing.test.js"]);
   w.cleanup();
 });
@@ -93,8 +93,8 @@ test("moonTouch fails closed on an empty or invalid Touch list", async () => {
 });
 
 // ---- final-review fix wave ----
-const { dropMoon } = await import("../../dist/server/commands/park.js");
-const { inspectMoon } = await import("../../dist/server/commands/review.js");
+const { cancelDelivery } = await import("../../dist/server/commands/park.js");
+const { sendCustoms } = await import("../../dist/server/commands/customs.js");
 const { openGalaxy } = await import("../../dist/server/galaxy.js");
 const { runVoyage, loadMoon, moonScope } = await import("../../dist/server/dispatch.js");
 const { append } = await import("../../dist/db/events.js");
@@ -122,12 +122,12 @@ function assertShipsConsistent(g, taskId = "T1") {
 
 test("I1: parked → drop → re-assign the same spec → launch succeeds with a #2 voyage id; no ship stranded", async () => {
   const w = await worldWithMoon("crash-midrun");
-  const a = await launchMoon(w.g, { taskId: "T1", provider: "fake" }); assert.equal(a.moonStatus, "adrift");
-  dropMoon(w.g, { taskId: "T1" });
+  const a = await sendDelivery(w.g, { taskId: "T1", provider: "fake" }); assert.equal(a.moonStatus, "adrift");
+  cancelDelivery(w.g, { taskId: "T1" });
   const p = path.join(w.dir, ".nexus", "specs", "T1.md");
   fs.writeFileSync(p, fs.readFileSync(p, "utf8").replace("FAKE-SCRIPT: crash-midrun", "FAKE-SCRIPT: happy")); w.git("add", "-A"); w.git("commit", "-qm", "retry");
   assignMoon(w.g, { planetId: w.planetId, specPath: ".nexus/specs/T1.md" });
-  const b = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  const b = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(b.moonStatus, "audited"); assert.equal(b.voyageId, `${a.voyageId}#2`, "same ship, same round: suffixed, not a UNIQUE failure");
   assertShipsConsistent(w.g);
   const busy = w.g.db.all("ships.all").filter((s) => s.status !== "idle").map((s) => [s.id, s.status]);
@@ -140,7 +140,7 @@ test("I1 / Review Focus #3: two launches of one gated moon through two galaxy ha
   append(w.g.db, { kind: "moon.gated", ...moonScope(w.g, loadMoon(w.g, "T1")), payload: { base_sha: w.g.git.headSha(), state_path: "x", round: 1 } });
   const g2 = openGalaxy(w.dir, { scriptsDir: path.join(repoRoot, "tests", "fixtures", "scripts") });
   try {
-    const results = await Promise.allSettled([launchMoon(w.g, { taskId: "T1", provider: "fake" }), launchMoon(g2, { taskId: "T1", provider: "fake" })]);
+    const results = await Promise.allSettled([sendDelivery(w.g, { taskId: "T1", provider: "fake" }), sendDelivery(g2, { taskId: "T1", provider: "fake" })]);
     const ok = results.filter((r) => r.status === "fulfilled"), refused = results.filter((r) => r.status === "rejected");
     assert.equal(ok.length, 1); assert.equal(ok[0].value.moonStatus, "audited");
     assert.equal(refused.length, 1); assert.ok(refused[0].reason instanceof Refusal || refused[0].reason instanceof TransitionRefused, String(refused[0].reason));
@@ -153,9 +153,9 @@ test("I5: resume only the same task's session on the same provider", async () =>
   const w = await worldWithMoon("fix-round", (c) => { c.roles = { implement: ["fake", "probe"], review: ["fake"] }; c.providers.probe = { adapter: "fake" }; c.automation = { level: "manual", max_fix_rounds: 5 }; });
   const jobs = [];
   for (const id of ["fake", "probe"]) { const real = w.g.adapters[id]; w.g.adapters[id] = { ...real, dispatch: (job, ctx) => { jobs.push({ id, job }); return real.dispatch(job, ctx); } }; }
-  await launchMoon(w.g, { taskId: "T1", provider: "fake" }); await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
-  await launchMoon(w.g, { taskId: "T1", provider: "probe" }); await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
-  await launchMoon(w.g, { taskId: "T1", provider: "probe" });
+  await sendDelivery(w.g, { taskId: "T1", provider: "fake" }); await sendCustoms(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
+  await sendDelivery(w.g, { taskId: "T1", provider: "probe" }); await sendCustoms(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
+  await sendDelivery(w.g, { taskId: "T1", provider: "probe" });
   const impl = jobs.filter((j) => j.job.role === "implement");
   assert.deepEqual(impl.map((j) => j.id), ["fake", "probe", "probe"]);
   assert.equal(impl[0].job.previousSessionId, undefined, "round 1 has nothing to resume");
@@ -167,7 +167,7 @@ test("I5: resume only the same task's session on the same provider", async () =>
 test("I4a: a voyage that writes into the human's tree raises a main_tree_changed question and carries on", async () => {
   const w = await worldWithMoon("happy");
   w.g.adapters.fake = stub(() => { fs.writeFileSync(path.join(w.dir, "stray.txt"), "written via Bash\n"); });
-  const r = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  const r = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(r.moonStatus, "audited"); assert.equal(r.audit.verdict, "clean");
   const d = w.g.db.all("decisions.pending"); assert.equal(d.length, 1); assert.equal(d[0].kind, "main_tree_changed"); assert.match(d[0].reasoning, /stray\.txt/);
   assert.equal(w.g.db.get("voyages.byId", { id: r.voyageId }).status, "holding");
@@ -181,7 +181,7 @@ test("I4b: a state file tampered between gate and audit parks as baseline_tamper
     const f = path.join(w.g.paths.stateDir, "T1.json"); const s = JSON.parse(fs.readFileSync(f, "utf8"));
     s.touch.push("README.md"); fs.writeFileSync(f, JSON.stringify(s, null, 2) + "\n");
   });
-  const r = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  const r = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(r.moonStatus, "adrift"); assert.equal(r.audit, null); assert.equal(loadMoon(w.g, "T1").park_reason, "baseline_tampered");
   const gated = w.g.db.all("events.byTask", { task_id: "T1" }).filter((e) => e.kind === "moon.gated").map((e) => JSON.parse(e.payload));
   assert.match(gated.at(-1).baseline_sha, /^[0-9a-f]{64}$/);
@@ -191,7 +191,7 @@ test("I4b: a state file tampered between gate and audit parks as baseline_tamper
 test("I2: an externally aborted launch parks the voyage as interrupted; ship and moon parked consistently", async () => {
   const w = await worldWithMoon("happy");
   w.g.adapters.fake = stub(async (_job, ctx) => { await untilAborted(ctx.signal); return false; });
-  const ac = new AbortController(); const p = launchMoon(w.g, { taskId: "T1", provider: "fake", signal: ac.signal });
+  const ac = new AbortController(); const p = sendDelivery(w.g, { taskId: "T1", provider: "fake", signal: ac.signal });
   setTimeout(() => ac.abort(), 20);
   const r = await p;
   assert.equal(r.moonStatus, "adrift"); assert.equal(loadMoon(w.g, "T1").park_reason, "interrupted");

@@ -9,7 +9,7 @@ import { Refusal } from "../errors.js";
 import { pidAlive } from "../lock.js";
 import { pendingTreeDecision } from "./decision.js";
 import { dependencyState } from "./deps.js";
-import { repliedSincePark } from "./launch.js";
+import { repliedSincePark } from "./delivery.js";
 import { showSystem } from "./system.js";
 import { fuelHold } from "../limiter/limiter.js";
 import { poolReadings, poolState } from "../limiter/pool.js";
@@ -17,7 +17,7 @@ import { poolReadings, poolState } from "../limiter/pool.js";
 export type Owner = "server" | "other" | "stale";
 export type SpecEntry = { path: string; taskId: string | null; touch: string[]; error: string | null };
 export type Failure = { ts: string; taskId: string; voyageId: string | null; message: string };
-export type Action = "launch" | "inspect" | "dock" | "reply" | "drop" | "park_stale" | "cancel" | "answer";
+export type Action = "send" | "inspect" | "dock" | "reply" | "cancel_delivery" | "park_stale" | "cancel" | "answer";
 export type PoolView = {
   provider: string; kind: string; state: "dry" | "free" | "low" | "ok" | "unknown";
   remaining?: number; resets_at?: string; until?: string; reading_ts?: string;
@@ -71,7 +71,7 @@ function voyageRows(voyages: Row[], assignmentEvents: EventRow[], ctx: OwnerCtx)
 
 function fuelFields(g: Galaxy, taskId: string, ctx: OwnerCtx): FuelFields {
   const actions = availableActions(g, taskId, ctx);
-  const action = actions.includes("launch") ? "launch" : actions.includes("inspect") ? "inspect" : null;
+  const action = actions.includes("send") ? "send" : actions.includes("inspect") ? "inspect" : null;
   if (action === null) return { waiting_on_fuel: null, can_refuel: null };
   const hold = fuelHold(g, taskId, action);
   if (hold === null) return { waiting_on_fuel: null, can_refuel: null };
@@ -151,8 +151,8 @@ export function snapshot(g: Galaxy, ctx: OwnerCtx & { failures: Failure[]; ready
 
 export function availableActions(g: Galaxy, taskId: string, ctx: OwnerCtx): Action[] {
   const moon = loadMoon(g, taskId);
-  if (pendingTreeDecision(g, taskId)) return ["answer", ...((moon.status === "adrift" || moon.status === "quarantined" || moon.status === "awaiting_pickup") ? ["drop" as const] : [])];
-  if (moon.status === "emitted" || moon.status === "gated") return ["launch"];
+  if (pendingTreeDecision(g, taskId)) return ["answer", ...((moon.status === "adrift" || moon.status === "quarantined" || moon.status === "awaiting_pickup") ? ["cancel_delivery" as const] : [])];
+  if (moon.status === "emitted" || moon.status === "gated") return ["send"];
   const voyages = g.db.all("voyages.byAssignment", { assignment_id: moon.assignment_id });
   if (moon.status === "implementing" || moon.status === "reviewing") {
     const flying = voyages.filter((v) => v["status"] === "launched" || v["status"] === "working").pop();
@@ -166,16 +166,16 @@ export function availableActions(g: Galaxy, taskId: string, ctx: OwnerCtx): Acti
   if (moon.status === "audited") {
     const implement = g.db.get<Row>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
     if (implement?.["status"] === "holding") return ["inspect"];
-    return verdict === "FIX" ? ["launch"] : [];
+    return verdict === "FIX" ? ["send"] : [];
   }
   if (moon.status === "reviewing" && verdict === "APPROVE") {
     const implement = g.db.get<Row>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
     if (implement?.["status"] === "cleared" || implement?.["status"] === "en_route" || implement?.["status"] === "docked") return ["dock"];
   }
   if (moon.status === "adrift" || moon.status === "quarantined") {
-    return ["reply", "drop", ...(repliedSincePark(g, moon.assignment_id) ? ["launch" as const] : [])];
+    return ["reply", "cancel_delivery", ...(repliedSincePark(g, moon.assignment_id) ? ["send" as const] : [])];
   }
-  if (moon.status === "awaiting_pickup") return ["launch", "drop"];
+  if (moon.status === "awaiting_pickup") return ["send", "cancel_delivery"];
   return [];
 }
 

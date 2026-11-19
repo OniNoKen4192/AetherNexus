@@ -2,10 +2,10 @@ import { GitRefusal } from "../../core/git.js";
 import { TransitionRefused } from "../../core/transitions.js";
 import { append, rowToEvent, type EventRow } from "../../db/events.js";
 import { reloadConfig } from "../commands/config.js";
-import { dockMoon } from "../commands/dock.js";
-import { launchMoon } from "../commands/launch.js";
+import { dockCargo } from "../commands/dock.js";
+import { sendDelivery } from "../commands/delivery.js";
 import { parkMoonOnly, parkStaleMoon } from "../commands/park.js";
-import { inspectMoon } from "../commands/review.js";
+import { sendCustoms } from "../commands/customs.js";
 import { loadMoon, moonScope } from "../dispatch.js";
 import { Refusal } from "../errors.js";
 import { followEvents } from "../follow.js";
@@ -61,12 +61,12 @@ export function createScheduler(g: Galaxy, opts: { runner: VoyageRunner; pollMs:
   };
 
   async function execute(a: PlannedAction): Promise<void> {
-    if (a.action === "dock") { dockMoon(g, { taskId: a.taskId }); return; }
+    if (a.action === "dock") { dockCargo(g, { taskId: a.taskId }); return; }
     if (a.action === "park_stale") { parkStaleMoon(g, { taskId: a.taskId, reason: "the voyage's process is gone", details: "parked by the scheduler: the voyage's process is gone" }); return; }
     // No provider is passed: the command asks the limiter again and records a reroute or a refuel itself. The plan's
     // provider and model are a forecast; only its permission to refuel is handed on.
     const send: (input: { taskId: string; signal: AbortSignal; onLaunched: (voyageId: string) => void }) => Promise<unknown> =
-      a.action === "launch" ? (input) => launchMoon(g, { ...input, ...(a.refuel ? { refuel: true } : {}) }) : (input) => inspectMoon(g, input);
+      a.action === "send" ? (input) => sendDelivery(g, { ...input, ...(a.refuel ? { refuel: true } : {}) }) : (input) => sendCustoms(g, input);
     busy.add(a.taskId);
     try {
       // Resolves once the voyage is launched (or the command returned without one); rejects when it is refused before launch.
@@ -139,7 +139,7 @@ export function createScheduler(g: Galaxy, opts: { runner: VoyageRunner; pollMs:
         } catch (parkError) {
           // Every attempt writes an event, and every event wakes the loop: leave this moon alone until its status changes.
           failed.set(key(action), { taskId: action.taskId, status: statusOf(action.taskId), gaveUp: true });
-          runner.report({ taskId: action.taskId, message: `the scheduler could not ${action.action === "park_stale" ? "park" : action.action} and could not park the moon: ${messageOf(parkError)} (after: ${messageOf(error)})` });
+          runner.report({ taskId: action.taskId, message: `the scheduler could not ${action.action === "park_stale" ? "park" : action.action === "send" ? "send the delivery" : action.action} and could not park the moon: ${messageOf(parkError)} (after: ${messageOf(error)})` });
         }
       }
     }

@@ -26,7 +26,7 @@ export function answerDecision(g: Galaxy, input: { decisionId: number; answer: "
   const d = g.db.get<DecisionRow>("decisions.byId", { id: input.decisionId });
   if (!d) throw new Refusal(`no decision ${input.decisionId}`);
   if (d.status !== "pending") throw new Refusal(`decision ${d.id} is '${d.status}' — only a pending decision can be answered`);
-  if (d.kind !== MAIN_TREE_CHANGED) throw new Refusal(`decision ${d.id} is a '${d.kind}' decision — use reply or drop`);
+  if (d.kind !== MAIN_TREE_CHANGED) throw new Refusal(`decision ${d.id} is a '${d.kind}' decision — reply, or cancel the delivery`);
   const moon = loadMoon(g, d.target_id);
   const scope = moonScope(g, moon);
   const status = (): MoonStatus => loadMoon(g, d.target_id).status as MoonStatus;
@@ -40,7 +40,7 @@ export function answerDecision(g: Galaxy, input: { decisionId: number; answer: "
   if (freighter && (freighter.status === "holding" || freighter.status === "cleared")) {
     parkVoyage(g, { taskId: moon.task_id, voyageId: freighter.id, shipId: freighter.ship_id, reason: "main_tree_modified", details: reasoning });
   } else {
-    // The freighter is already superseded (FIX): park the moon itself, as the carry-over park in launch.ts does.
+    // The freighter is already superseded (FIX): park the moon itself, as the carry-over park in delivery.ts does.
     append(g.db, { kind: "moon.adrift", ...scope, payload: { reason: "main_tree_modified" } });
     append(g.db, { kind: "decision.opened", ...scope, payload: { kind: "adrift", target_kind: "moon", target_id: moon.task_id, reasoning: `the main tree changed during a voyage and the change is not the owner's: ${reasoning}` } });
   }

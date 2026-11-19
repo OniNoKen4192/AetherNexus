@@ -193,6 +193,6 @@ This file documents the Lanes config. AetherNexus keeps its own config in `.nexu
 ```
 
 - A provider with no `pool` block is `free`: never held for a low reading, but still held until the reset after one of its ships hits the wall.
-- A refuel happens by itself at `verdicts` and `roundabout`; at `manual` the Bridge offers a `Refuel` button (CLI: `nexus moon launch <task> --refuel`).
+- A refuel happens by itself at `verdicts` and `roundabout`; at `manual` the Bridge offers a `Refuel` button (CLI: `nexus delivery send <task> --refuel`).
 - The refuel provider's own pool must not be low or dry for that model, and it must have an idle freighter; otherwise the moon waits.
 - `Send anyway` on the Bridge (CLI: `--override`) sends one ship past a hold. The pool's state follows what that ship finds: if it returns, a dry pool is cleared; if it hits the wall, the pool is dry until the new reset.

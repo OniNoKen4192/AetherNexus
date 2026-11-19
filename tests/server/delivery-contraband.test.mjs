@@ -5,9 +5,9 @@ import path from "node:path";
 import { worldWithMoon } from "../fixtures/world.mjs";
 import { rowToEvent } from "../../dist/db/events.js";
 import { rebuild, dumpProjections } from "../../dist/db/rebuild.js";
-import { launchMoon } from "../../dist/server/commands/launch.js";
-import { inspectMoon } from "../../dist/server/commands/review.js";
-import { replyMoon, dropMoon } from "../../dist/server/commands/park.js";
+import { sendDelivery } from "../../dist/server/commands/delivery.js";
+import { sendCustoms } from "../../dist/server/commands/customs.js";
+import { replyMoon, cancelDelivery } from "../../dist/server/commands/park.js";
 import { loadMoon } from "../../dist/server/dispatch.js";
 
 const worktree = (w) => path.join(w.g.paths.worktrees, "T1");
@@ -21,7 +21,7 @@ function finish(w) {
 }
 async function awaitingPickup() {
   const w = await worldWithMoon("wall");
-  const first = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  const first = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(first.moonStatus, "awaiting_pickup");
   return w;
 }
@@ -29,7 +29,7 @@ async function parkContraband() {
   const w = await awaitingPickup();
   const file = path.join(worktree(w), "README-extra.md");
   fs.writeFileSync(file, "contraband\n");
-  const result = await launchMoon(w.g, { taskId: "T1", provider: "fake", override: true });
+  const result = await sendDelivery(w.g, { taskId: "T1", provider: "fake", override: true });
   return { w, file, result };
 }
 
@@ -64,7 +64,7 @@ test("2. Nothing flew", async () => {
     round: loadMoon(w.g, "T1").round,
     head: w.git("rev-parse", "nexus/T1"),
   };
-  const result = await launchMoon(w.g, { taskId: "T1", provider: "fake", override: true });
+  const result = await sendDelivery(w.g, { taskId: "T1", provider: "fake", override: true });
   assert.equal(result.moonStatus, "adrift");
   assert.equal(count(w, ["voyage.launched"]), before.launched);
   assert.equal(count(w, ["moon.gated"]), before.gated);
@@ -82,7 +82,7 @@ test("3. A raid parks the moon", async () => {
   const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
   state.touch.push("README.md");
   fs.writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
-  const result = await launchMoon(w.g, { taskId: "T1", provider: "fake", override: true });
+  const result = await sendDelivery(w.g, { taskId: "T1", provider: "fake", override: true });
   assert.equal(result.voyageId, "");
   assert.equal(result.moonStatus, "adrift");
   assert.equal(result.audit, null);
@@ -95,11 +95,11 @@ test("3. A raid parks the moon", async () => {
 
 test("4. Now it needs a reply", async () => {
   const { w } = await parkContraband();
-  await assert.rejects(launchMoon(w.g, { taskId: "T1", provider: "fake", override: true }), /adrift.*reply/);
+  await assert.rejects(sendDelivery(w.g, { taskId: "T1", provider: "fake", override: true }), /adrift.*reply/);
   replyMoon(w.g, { taskId: "T1", note: "inspect the cargo" });
   const before = count(w, ["moon.adrift"]);
   await assert.rejects(
-    launchMoon(w.g, { taskId: "T1", provider: "fake", override: true }),
+    sendDelivery(w.g, { taskId: "T1", provider: "fake", override: true }),
     /carry-over audit refused the parked worktree \(carryover_violations\)/,
   );
   assert.equal(loadMoon(w.g, "T1").status, "adrift");
@@ -112,7 +112,7 @@ test("5. Cleared by hand, it flies", async () => {
   fs.rmSync(file);
   replyMoon(w.g, { taskId: "T1", note: "cargo cleared" });
   const before = loadMoon(w.g, "T1").round;
-  const result = await launchMoon(w.g, { taskId: "T1", provider: "fake", override: true });
+  const result = await sendDelivery(w.g, { taskId: "T1", provider: "fake", override: true });
   assert.equal(result.moonStatus, "audited");
   assert.equal(loadMoon(w.g, "T1").round, before + 1);
   finish(w);
@@ -120,7 +120,7 @@ test("5. Cleared by hand, it flies", async () => {
 
 test("6. It can be dropped", async () => {
   const { w } = await parkContraband();
-  const result = dropMoon(w.g, { taskId: "T1" });
+  const result = cancelDelivery(w.g, { taskId: "T1" });
   assert.equal(w.g.db.get("moons.byId", { id: result.moonId }).body_status, "barren");
   assert.equal(w.g.db.all("events.byMoon", { moon_id: w.moonId }).filter((e) => e.kind === "moon.dropped").length, 1);
   assert.ok(w.g.db.all("ships.all").every((ship) => ship.status === "idle"));
@@ -130,10 +130,10 @@ test("6. It can be dropped", async () => {
 
 test("7. A FIX round keeps its wording", async () => {
   const w = await worldWithMoon("fix-round");
-  await launchMoon(w.g, { taskId: "T1", provider: "fake" });
-  await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
+  await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
+  await sendCustoms(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
   fs.writeFileSync(path.join(worktree(w), "README.md"), "changed after audit\n");
-  const result = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  const result = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(result.moonStatus, "adrift");
   assert.equal(loadMoon(w.g, "T1").park_reason, "carryover_violations");
   const decisions = w.g.db.all("decisions.pending");

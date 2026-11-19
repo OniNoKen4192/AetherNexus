@@ -22,7 +22,7 @@ function amendmentFor(text: string, round: number, reasoning: string, delta: str
   return out;
 }
 
-export async function inspectMoon(
+export async function sendCustoms(
   g: Galaxy, input: { taskId: string; provider?: string; override?: boolean; onEvent?: (e: AgentEvent) => void; reviewScript?: string; signal?: AbortSignal; onLaunched?: (voyageId: string) => void },
 ): Promise<{ voyageId: string; verdict: ReviewReport | null; moonStatus: MoonStatus }> {
   const { taskId } = input;

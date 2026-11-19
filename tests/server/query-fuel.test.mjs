@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { worldWithMoon } from "../fixtures/world.mjs";
 import { append, rowToEvent } from "../../dist/db/events.js";
 import { snapshot, moonDetail } from "../../dist/server/commands/query.js";
-import { launchMoon } from "../../dist/server/commands/launch.js";
-import { inspectMoon } from "../../dist/server/commands/review.js";
-import { dockMoon } from "../../dist/server/commands/dock.js";
+import { sendDelivery } from "../../dist/server/commands/delivery.js";
+import { sendCustoms } from "../../dist/server/commands/customs.js";
+import { dockCargo } from "../../dist/server/commands/dock.js";
 
 const iso = (ms = 0) => new Date(Date.now() + ms).toISOString();
 const ctx = { ownPid: process.pid, failures: [] };
@@ -100,26 +100,26 @@ test("8. a manual emitted moon reports an available refuel", async () => {
 
 test("9. customs ignores low fuel but waits when its provider is dry", async () => {
   const low = await worldWithMoon("happy", (c) => config(c));
-  try { await launchMoon(low.g, { taskId: "T1" }); reading(low, 0.95); const { moon, detail } = views(low); assert.equal(moon.waiting_on_fuel, null); assert.equal(moon.can_refuel, null); assert.equal(detail.moon.waiting_on_fuel, null); assert.equal(detail.moon.can_refuel, null); } finally { low.cleanup(); }
+  try { await sendDelivery(low.g, { taskId: "T1" }); reading(low, 0.95); const { moon, detail } = views(low); assert.equal(moon.waiting_on_fuel, null); assert.equal(moon.can_refuel, null); assert.equal(detail.moon.waiting_on_fuel, null); assert.equal(detail.moon.can_refuel, null); } finally { low.cleanup(); }
   const dry = await worldWithMoon("happy", (c) => config(c));
-  try { await launchMoon(dry.g, { taskId: "T1" }); const until = exhausted(dry), wait = { provider: "fake", reason: "dry", until }, { moon, detail } = views(dry); assert.deepEqual(moon.waiting_on_fuel, wait); assert.equal(moon.can_refuel, null); assert.deepEqual(detail.moon.waiting_on_fuel, wait); assert.equal(detail.moon.can_refuel, null); } finally { dry.cleanup(); }
+  try { await sendDelivery(dry.g, { taskId: "T1" }); const until = exhausted(dry), wait = { provider: "fake", reason: "dry", until }, { moon, detail } = views(dry); assert.deepEqual(moon.waiting_on_fuel, wait); assert.equal(moon.can_refuel, null); assert.deepEqual(detail.moon.waiting_on_fuel, wait); assert.equal(detail.moon.can_refuel, null); } finally { dry.cleanup(); }
 });
 
 test("10. moons with nothing to send have null fuel fields while barren moons have neither key", async () => {
   const merged = await worldWithMoon("happy", (c) => config(c));
-  try { await launchMoon(merged.g, { taskId: "T1" }); await inspectMoon(merged.g, { taskId: "T1", reviewScript: "review-approve" }); dockMoon(merged.g, { taskId: "T1" }); exhausted(merged); const { snap, moon, detail } = views(merged); assert.equal(moon.waiting_on_fuel, null); assert.equal(moon.can_refuel, null); assert.equal(detail.moon.waiting_on_fuel, null); assert.equal(detail.moon.can_refuel, null); const barren = snap.systems.flatMap((s) => s.planets).flatMap((p) => p.moons).find((m) => m.body_status === "barren"); assert.equal(Object.hasOwn(barren, "waiting_on_fuel"), false); assert.equal(Object.hasOwn(barren, "can_refuel"), false); } finally { merged.cleanup(); }
+  try { await sendDelivery(merged.g, { taskId: "T1" }); await sendCustoms(merged.g, { taskId: "T1", reviewScript: "review-approve" }); dockCargo(merged.g, { taskId: "T1" }); exhausted(merged); const { snap, moon, detail } = views(merged); assert.equal(moon.waiting_on_fuel, null); assert.equal(moon.can_refuel, null); assert.equal(detail.moon.waiting_on_fuel, null); assert.equal(detail.moon.can_refuel, null); const barren = snap.systems.flatMap((s) => s.planets).flatMap((p) => p.moons).find((m) => m.body_status === "barren"); assert.equal(Object.hasOwn(barren, "waiting_on_fuel"), false); assert.equal(Object.hasOwn(barren, "can_refuel"), false); } finally { merged.cleanup(); }
   const adrift = await worldWithMoon("crash-midrun", (c) => config(c));
-  try { await launchMoon(adrift.g, { taskId: "T1" }); exhausted(adrift); const { moon, detail } = views(adrift); assert.equal(moon.waiting_on_fuel, null); assert.equal(moon.can_refuel, null); assert.equal(detail.moon.waiting_on_fuel, null); assert.equal(detail.moon.can_refuel, null); } finally { adrift.cleanup(); }
+  try { await sendDelivery(adrift.g, { taskId: "T1" }); exhausted(adrift); const { moon, detail } = views(adrift); assert.equal(moon.waiting_on_fuel, null); assert.equal(moon.can_refuel, null); assert.equal(detail.moon.waiting_on_fuel, null); assert.equal(detail.moon.can_refuel, null); } finally { adrift.cleanup(); }
 });
 
 test("11. cargo awaiting pickup reports that it waits on dry fuel", async () => {
   const w = await worldWithMoon("wall", (c) => config(c));
-  try { await launchMoon(w.g, { taskId: "T1" }); const event = w.g.db.all("events.latestByKindProvider", { kind: "fuel.exhausted", provider: "fake", limit: 1 }).map(rowToEvent)[0], { moon, detail } = views(w); assert.equal(moon.waiting_on_fuel.reason, "dry"); assert.equal(moon.waiting_on_fuel.until, event.payload.until); assert.deepEqual(detail.moon.waiting_on_fuel, moon.waiting_on_fuel); } finally { w.cleanup(); }
+  try { await sendDelivery(w.g, { taskId: "T1" }); const event = w.g.db.all("events.latestByKindProvider", { kind: "fuel.exhausted", provider: "fake", limit: 1 }).map(rowToEvent)[0], { moon, detail } = views(w); assert.equal(moon.waiting_on_fuel.reason, "dry"); assert.equal(moon.waiting_on_fuel.until, event.payload.until); assert.deepEqual(detail.moon.waiting_on_fuel, moon.waiting_on_fuel); } finally { w.cleanup(); }
 });
 
 test("12. refuelled and plain voyages expose their refuel mark without changing owner", async () => {
   const refuel = await worldWithMoon("happy", (c) => config(c, { refuel: true }));
-  try { reading(refuel, 0.95); const launched = await launchMoon(refuel.g, { taskId: "T1", refuel: true }), { snap, detail } = views(refuel); const a = snap.voyages.find((v) => v.id === launched.voyageId), b = detail.voyages.find((v) => v.id === launched.voyageId); assert.equal(a.refuel_for, "fake"); assert.equal(b.refuel_for, "fake"); assert.equal(a.owner, null); assert.equal(b.owner, null); } finally { refuel.cleanup(); }
+  try { reading(refuel, 0.95); const launched = await sendDelivery(refuel.g, { taskId: "T1", refuel: true }), { snap, detail } = views(refuel); const a = snap.voyages.find((v) => v.id === launched.voyageId), b = detail.voyages.find((v) => v.id === launched.voyageId); assert.equal(a.refuel_for, "fake"); assert.equal(b.refuel_for, "fake"); assert.equal(a.owner, null); assert.equal(b.owner, null); } finally { refuel.cleanup(); }
   const plain = await worldWithMoon("happy", (c) => config(c));
-  try { const launched = await launchMoon(plain.g, { taskId: "T1" }), { snap, detail } = views(plain); const a = snap.voyages.find((v) => v.id === launched.voyageId), b = detail.voyages.find((v) => v.id === launched.voyageId); assert.equal(a.refuel_for, null); assert.equal(b.refuel_for, null); assert.equal(a.owner, null); assert.equal(b.owner, null); } finally { plain.cleanup(); }
+  try { const launched = await sendDelivery(plain.g, { taskId: "T1" }), { snap, detail } = views(plain); const a = snap.voyages.find((v) => v.id === launched.voyageId), b = detail.voyages.find((v) => v.id === launched.voyageId); assert.equal(a.refuel_for, null); assert.equal(b.refuel_for, null); assert.equal(a.owner, null); assert.equal(b.owner, null); } finally { plain.cleanup(); }
 });

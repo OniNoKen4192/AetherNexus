@@ -13,8 +13,8 @@ export function parkReasonText(reason: string): string {
 }
 
 export function parkReasonHint(reason: string): string | null {
-  if (reason === "carryover_violations") return "clear the files outside the task's paths from its worktree, then reply — or cancel the delivery (Drop)";
-  if (reason === "baseline_tampered") return "put the gate's state file back exactly as it was, then reply — or cancel the delivery (Drop)";
+  if (reason === "carryover_violations") return "clear the files outside the task's paths from its worktree, then reply — or cancel the delivery";
+  if (reason === "baseline_tampered") return "put the gate's state file back exactly as it was, then reply — or cancel the delivery";
   return null;
 }
 
@@ -42,14 +42,14 @@ export function refuelledText(voyage: Record<string, unknown>): string | null {
   return `refuelled: ${provider}${model === null ? "" : `/${model}`}`;
 }
 
-export function overrideCommand(actions: string[], taskId: string): { name: "moon.launch" | "voyage.inspect"; body: { taskId: string; override: true } } | null {
-  if (actions.includes("launch")) return { name: "moon.launch", body: { taskId, override: true } };
-  if (actions.includes("inspect")) return { name: "voyage.inspect", body: { taskId, override: true } };
+export function overrideCommand(actions: string[], taskId: string): { name: "delivery.send" | "customs.send"; body: { taskId: string; override: true } } | null {
+  if (actions.includes("send")) return { name: "delivery.send", body: { taskId, override: true } };
+  if (actions.includes("inspect")) return { name: "customs.send", body: { taskId, override: true } };
   return null;
 }
 
-export function refuelCommand(actions: string[], taskId: string): { name: "moon.launch"; body: { taskId: string; refuel: true } } | null {
-  return actions.includes("launch") ? { name: "moon.launch", body: { taskId, refuel: true } } : null;
+export function refuelCommand(actions: string[], taskId: string): { name: "delivery.send"; body: { taskId: string; refuel: true } } | null {
+  return actions.includes("send") ? { name: "delivery.send", body: { taskId, refuel: true } } : null;
 }
 
 export function asFuelWait(value: unknown): FuelWait | null {

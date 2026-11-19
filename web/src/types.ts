@@ -6,7 +6,7 @@ export type Row = Record<string, unknown>;
 export type Owner = "server" | "other" | "stale";
 export type SpecEntry = { path: string; taskId: string | null; touch: string[]; error: string | null };
 export type Failure = { ts: string; taskId: string; voyageId: string | null; message: string };
-export type Action = "launch" | "inspect" | "dock" | "reply" | "drop" | "park_stale" | "cancel" | "answer";
+export type Action = "send" | "inspect" | "dock" | "reply" | "cancel_delivery" | "park_stale" | "cancel" | "answer";
 
 export type PoolView = {
   provider: string; kind: string; state: "dry" | "free" | "low" | "ok" | "unknown";

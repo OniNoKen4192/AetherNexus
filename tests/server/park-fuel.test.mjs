@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { worldWithMoon, worldWithTwoMoons } from "../fixtures/world.mjs";
 import { append, rowToEvent } from "../../dist/db/events.js";
 import { rebuild, dumpProjections } from "../../dist/db/rebuild.js";
-import { launchMoon } from "../../dist/server/commands/launch.js";
-import { inspectMoon } from "../../dist/server/commands/review.js";
-import { dropMoon, replyMoon } from "../../dist/server/commands/park.js";
+import { sendDelivery } from "../../dist/server/commands/delivery.js";
+import { sendCustoms } from "../../dist/server/commands/customs.js";
+import { cancelDelivery, replyMoon } from "../../dist/server/commands/park.js";
 import { availableActions } from "../../dist/server/commands/query.js";
 import { loadMoon, moonScope } from "../../dist/server/dispatch.js";
 
@@ -38,16 +38,16 @@ function stable(w) {
 test("21. dropping cargo awaiting pickup does not release its rerouted freighter", async () => {
   const w = await worldWithTwoMoons("wall", "happy", (c) => config(c, { freighters: 1 }));
   try {
-    const first = await launchMoon(w.g, { taskId: "T1" });
+    const first = await sendDelivery(w.g, { taskId: "T1" });
     assert.equal(first.moonStatus, "awaiting_pickup");
-    const second = await launchMoon(w.g, { taskId: "T2", override: true });
+    const second = await sendDelivery(w.g, { taskId: "T2", override: true });
     assert.equal(second.moonStatus, "audited");
     const voyage1 = w.g.db.get("voyages.byId", { id: first.voyageId });
     const voyage2 = w.g.db.get("voyages.byId", { id: second.voyageId });
     assert.equal(voyage2.status, "holding");
     assert.equal(voyage2.ship_id, voyage1.ship_id);
     assert.equal(w.g.db.get("ships.byId", { id: voyage1.ship_id }).status, "assigned");
-    dropMoon(w.g, { taskId: "T1" });
+    cancelDelivery(w.g, { taskId: "T1" });
     assert.equal(w.g.db.get("voyages.byId", { id: first.voyageId }).status, "superseded");
     assert.equal(w.g.db.get("voyages.byId", { id: second.voyageId }).status, "holding");
     assert.equal(w.g.db.get("ships.byId", { id: voyage1.ship_id }).status, "assigned");
@@ -58,14 +58,14 @@ test("21. dropping cargo awaiting pickup does not release its rerouted freighter
 test("22. replying after a second wall hit releases only the voyage still holding a ship", async () => {
   const w = await worldWithTwoMoons("wall-twice", "happy", (c) => config(c, { freighters: 2 }));
   try {
-    const first = await launchMoon(w.g, { taskId: "T1" });
+    const first = await sendDelivery(w.g, { taskId: "T1" });
     assert.equal(first.moonStatus, "awaiting_pickup");
-    const second = await launchMoon(w.g, { taskId: "T2", override: true });
+    const second = await sendDelivery(w.g, { taskId: "T2", override: true });
     const held = w.g.db.get("voyages.byId", { id: second.voyageId });
     const spent = w.g.db.get("voyages.byId", { id: first.voyageId });
     assert.equal(held.status, "holding");
     assert.equal(held.ship_id, spent.ship_id);
-    const third = await launchMoon(w.g, { taskId: "T1", override: true });
+    const third = await sendDelivery(w.g, { taskId: "T1", override: true });
     assert.equal(third.moonStatus, "adrift");
     const adrift = w.g.db.get("voyages.byId", { id: third.voyageId });
     assert.notEqual(adrift.ship_id, spent.ship_id);
@@ -81,11 +81,11 @@ test("22. replying after a second wall hit releases only the voyage still holdin
 test("23. dropping cargo awaiting pickup supersedes its voyage without releasing a ship", async () => {
   const w = await worldWithMoon("wall", (c) => config(c));
   try {
-    const launched = await launchMoon(w.g, { taskId: "T1" });
+    const launched = await sendDelivery(w.g, { taskId: "T1" });
     assert.equal(launched.moonStatus, "awaiting_pickup");
     const assignmentId = loadMoon(w.g, "T1").assignment_id;
     const before = events(w, "T1").filter((e) => e.kind === "ship.released").length;
-    dropMoon(w.g, { taskId: "T1" });
+    cancelDelivery(w.g, { taskId: "T1" });
     assert.equal(w.g.db.get("voyages.byId", { id: launched.voyageId }).status, "superseded");
     assert.ok(w.g.db.all("ships.all").every((ship) => ship.status === "idle"));
     const after = w.g.db.all("events.byAssignment", { assignment_id: assignmentId }).map(rowToEvent).filter((e) => e.kind === "ship.released").length;
@@ -98,7 +98,7 @@ test("24. a rerouted freighter carries no model", async () => {
   const w = await worldWithMoon("happy", (c) => config(c, { probe: true }));
   try {
     low(w);
-    const launched = await launchMoon(w.g, { taskId: "T1" });
+    const launched = await sendDelivery(w.g, { taskId: "T1" });
     const voyage = w.g.db.get("voyages.byId", { id: launched.voyageId });
     assert.equal(voyage.model, null);
     const all = events(w, "T1");
@@ -118,21 +118,21 @@ test("24. a rerouted freighter carries no model", async () => {
 test("25. actions under a main-tree question are answer and drop", async () => {
   const w = await worldWithMoon("wall", (c) => config(c));
   try {
-    assert.equal((await launchMoon(w.g, { taskId: "T1" })).moonStatus, "awaiting_pickup");
+    assert.equal((await sendDelivery(w.g, { taskId: "T1" })).moonStatus, "awaiting_pickup");
     const moon = loadMoon(w.g, "T1");
     append(w.g.db, { kind: "decision.opened", ...moonScope(w.g, moon), payload: { kind: "main_tree_changed", target_kind: "moon", target_id: "T1", reasoning: "{}" } });
-    assert.deepEqual(availableActions(w.g, "T1", { ownPid: process.pid }), ["answer", "drop"]);
+    assert.deepEqual(availableActions(w.g, "T1", { ownPid: process.pid }), ["answer", "cancel_delivery"]);
   } finally { w.cleanup(); }
 });
 
 test("26. refusal wording says cargo awaits pickup and adrift means a reply is needed", async () => {
   const emitted = await worldWithMoon("happy", (c) => config(c));
   try {
-    assert.throws(() => dropMoon(emitted.g, { taskId: "T1" }), /only an adrift or quarantined moon, or one whose cargo awaits pickup, can be dropped$/);
+    assert.throws(() => cancelDelivery(emitted.g, { taskId: "T1" }), /only an adrift or quarantined moon, or one whose cargo awaits pickup, can be dropped$/);
   } finally { emitted.cleanup(); }
   const awaiting = await worldWithMoon("wall", (c) => config(c));
   try {
-    assert.equal((await launchMoon(awaiting.g, { taskId: "T1" })).moonStatus, "awaiting_pickup");
+    assert.equal((await sendDelivery(awaiting.g, { taskId: "T1" })).moonStatus, "awaiting_pickup");
     assert.throws(() => replyMoon(awaiting.g, { taskId: "T1", note: "try again" }), /only an adrift or quarantined moon can be replied to$/);
   } finally { awaiting.cleanup(); }
 });
@@ -140,9 +140,9 @@ test("26. refusal wording says cargo awaits pickup and adrift means a reply is n
 test("27. held customs says until when fuel is dry", async () => {
   const w = await worldWithMoon("happy", (c) => config(c));
   try {
-    assert.equal((await launchMoon(w.g, { taskId: "T1" })).moonStatus, "audited");
+    assert.equal((await sendDelivery(w.g, { taskId: "T1" })).moonStatus, "audited");
     const until = dry(w);
-    await assert.rejects(inspectMoon(w.g, { taskId: "T1" }), (e) => {
+    await assert.rejects(sendCustoms(w.g, { taskId: "T1" }), (e) => {
       assert.match(e.message, /^moon T1 is waiting on fake fuel \(dry\), resets /);
       assert.ok(e.message.endsWith(until));
       assert.deepEqual(e.details, { provider: "fake", reason: "dry", until, can_refuel: null });
@@ -154,9 +154,9 @@ test("27. held customs says until when fuel is dry", async () => {
 test("28. a quarantined moon still needs a reply", async () => {
   const w = await worldWithMoon("happy", (c) => config(c));
   try {
-    await launchMoon(w.g, { taskId: "T1" });
-    assert.equal((await inspectMoon(w.g, { taskId: "T1", reviewScript: "review-reject" })).moonStatus, "quarantined");
-    await assert.rejects(launchMoon(w.g, { taskId: "T1" }), /quarantined.*reply/);
-    await assert.rejects(launchMoon(w.g, { taskId: "T1", override: true }), /quarantined.*reply/);
+    await sendDelivery(w.g, { taskId: "T1" });
+    assert.equal((await sendCustoms(w.g, { taskId: "T1", reviewScript: "review-reject" })).moonStatus, "quarantined");
+    await assert.rejects(sendDelivery(w.g, { taskId: "T1" }), /quarantined.*reply/);
+    await assert.rejects(sendDelivery(w.g, { taskId: "T1", override: true }), /quarantined.*reply/);
   } finally { w.cleanup(); }
 });

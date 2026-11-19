@@ -73,9 +73,9 @@ test("REJECT handled entirely over HTTP while a second moon is in flight", async
     const bridgePlanet = bridgeSystem.planets.find((planet) => planet.id === planetId);
     assert.deepEqual(bridgePlanet.moons.filter((moon) => moon.task_id === "E1" || moon.task_id === "E2").map((moon) => moon.task_id), ["E1", "E2"]);
 
-    const e2Launch = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "E2" } });
+    const e2Launch = await x.api("/api/commands/delivery.send", { method: "POST", body: { taskId: "E2" } });
     assert.equal(e2Launch.status, 202);
-    const e1Launch = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "E1" } });
+    const e1Launch = await x.api("/api/commands/delivery.send", { method: "POST", body: { taskId: "E1" } });
     assert.equal(e1Launch.status, 202);
     const e2InFlight = await x.api("/api/moons/E2");
     assert.equal(e2InFlight.status, 200);
@@ -84,14 +84,14 @@ test("REJECT handled entirely over HTTP while a second moon is in flight", async
     await feed.waitFor((events) => events.some((event) => event.kind === "voyage.audited" && event.task_id === "E1"));
     let e1 = await x.api("/api/moons/E1");
     assert.deepEqual(e1.json.actions, ["inspect"]);
-    const firstInspect = await x.api("/api/commands/voyage.inspect", { method: "POST", body: { taskId: "E1" } });
+    const firstInspect = await x.api("/api/commands/customs.send", { method: "POST", body: { taskId: "E1" } });
     assert.equal(firstInspect.status, 202);
 
     await feed.waitFor((events) => events.some((event) => event.kind === "verdict.issued" && event.task_id === "E1"));
     const rejectedSnapshot = await x.api("/api/snapshot");
     assert.deepEqual(rejectedSnapshot.json.decisions.map(({ kind, target_id }) => ({ kind, target_id })), [{ kind: "reject", target_id: "E1" }]);
     e1 = await x.api("/api/moons/E1");
-    assert.deepEqual(e1.json.actions, ["reply", "drop"]);
+    assert.deepEqual(e1.json.actions, ["reply", "cancel_delivery"]);
     assert.deepEqual(e1.json.verdicts.map((verdict) => verdict.verdict), ["REJECT"]);
 
     const e2BeforeReply = await x.api("/api/moons/E2");
@@ -102,7 +102,7 @@ test("REJECT handled entirely over HTTP while a second moon is in flight", async
     });
     assert.equal(reply.status, 200);
     e1 = await x.api("/api/moons/E1");
-    assert.deepEqual(e1.json.actions, ["reply", "drop", "launch"]);
+    assert.deepEqual(e1.json.actions, ["reply", "cancel_delivery", "send"]);
 
     const repliedSnapshot = await x.api("/api/snapshot");
     assert.equal(repliedSnapshot.json.decisions.some((decision) => decision.kind === "main_tree_changed" && (decision.target_id === "E2" || decision.target_id === "T1")), false);
@@ -115,19 +115,19 @@ test("REJECT handled entirely over HTTP while a second moon is in flight", async
     const releasedSnapshot = await x.api("/api/snapshot");
     assert.equal(releasedSnapshot.json.decisions.some((decision) => decision.kind === "main_tree_changed" && (decision.target_id === "E2" || decision.target_id === "T1")), false);
 
-    const secondLaunch = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "E1" } });
+    const secondLaunch = await x.api("/api/commands/delivery.send", { method: "POST", body: { taskId: "E1" } });
     assert.equal(secondLaunch.status, 202);
     await feed.waitFor((events) => events.filter((event) => event.kind === "voyage.audited" && event.task_id === "E1").length === 2);
-    const secondInspect = await x.api("/api/commands/voyage.inspect", { method: "POST", body: { taskId: "E1" } });
+    const secondInspect = await x.api("/api/commands/customs.send", { method: "POST", body: { taskId: "E1" } });
     assert.equal(secondInspect.status, 202);
     await feed.waitFor((events) => events.filter((event) => event.kind === "verdict.issued" && event.task_id === "E1").length === 2);
     e1 = await x.api("/api/moons/E1");
     assert.deepEqual(e1.json.actions, ["dock"]);
 
-    const dock = await x.api("/api/commands/voyage.dock", { method: "POST", body: { taskId: "E1" } });
+    const dock = await x.api("/api/commands/cargo.dock", { method: "POST", body: { taskId: "E1" } });
     assert.equal(dock.status, 200);
     assert.equal(dock.json.result.moonStatus, "merged");
-    const duplicateDock = await x.api("/api/commands/voyage.dock", { method: "POST", body: { taskId: "E1" } });
+    const duplicateDock = await x.api("/api/commands/cargo.dock", { method: "POST", body: { taskId: "E1" } });
     assert.equal(duplicateDock.status, 409);
 
     await feed.waitFor((events) => events.some((event) => event.kind === "voyage.audited" && event.task_id === "E2"));

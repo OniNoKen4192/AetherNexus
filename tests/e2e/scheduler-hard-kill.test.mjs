@@ -45,7 +45,7 @@ test("after a hard kill the next server parks the moon whose voyage's process is
     await delay(300);
 
     const acted = log().filter((e) => e.id > mark && e.kind === "scheduler.acted").map((e) => `${e.payload.action} ${e.payload.task_id}`);
-    assert.deepEqual(acted, ["park_stale T1", "launch C", "inspect C", "dock C"]);
+    assert.deepEqual(acted, ["park_stale T1", "send C", "inspect C", "dock C"]);
     assert.equal(moon("T1").status, "adrift");
     assert.match(moon("T1").park_reason, /^stale:/);
     const decisions = g.db.all("decisions.pendingByTarget", { target_id: "T1" });

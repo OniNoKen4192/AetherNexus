@@ -128,7 +128,7 @@ test("verdicts sends no first freighter", async () => {
     await delay(300);
     assert.equal(feed.events.some((event) => event.kind === "voyage.launched"), false);
     assert.deepEqual((await moonDetail(x, "T1")).voyages, []);
-    await post(x, "moon.launch", { taskId: "T1" });
+    await post(x, "delivery.send", { taskId: "T1" });
     await until(async () => findMoon(await snapshot(x), "T1")?.status === "merged");
     await finish(x);
   } finally { feed.close(); await x.close(); }
@@ -208,7 +208,7 @@ test("a planet with dependencies gets no first freighter", async () => {
     assert.deepEqual((await moonDetail(x, "D")).voyages, []);
     assert.equal(feed.events.some((event) => event.kind === "voyage.launched" && event.task_id === "D"), false);
     assert.deepEqual(findMoon(await snapshot(x), "D").waiting_on_planets, ["P1"]);
-    await post(x, "moon.launch", { taskId: "D" });
+    await post(x, "delivery.send", { taskId: "D" });
     await until(async () => findMoon(await snapshot(x), "D")?.status === "merged");
     await finish(x);
   } finally { feed.close(); await x.close(); }

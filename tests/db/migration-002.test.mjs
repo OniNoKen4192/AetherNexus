@@ -3,7 +3,7 @@ import assert from "node:assert/strict"; import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { openDb } from "../../dist/db/open.js";
 import { dumpProjections, PROJECTION_TABLES } from "../../dist/db/rebuild.js";
-import { launchMoon } from "../../dist/server/commands/launch.js"; import { inspectMoon } from "../../dist/server/commands/review.js"; import { dockMoon } from "../../dist/server/commands/dock.js";
+import { sendDelivery } from "../../dist/server/commands/delivery.js"; import { sendCustoms } from "../../dist/server/commands/customs.js"; import { dockCargo } from "../../dist/server/commands/dock.js";
 import { worldWithMoon } from "../fixtures/world.mjs";
 import { read, tmpDb } from "../helpers.mjs";
 
@@ -35,8 +35,8 @@ const tableSql = (raw, name) => raw.prepare("SELECT sql FROM sqlite_master WHERE
 test("002 keeps every projection row of a schema-1 database", async () => {
   // a real lifecycle (a FIX round, then settled) so every projection table has rows, with voyages and verdicts pointing at the moon
   const w = await worldWithMoon("fix-round");
-  await launchMoon(w.g, { taskId: "T1" }); await inspectMoon(w.g, { taskId: "T1", reviewScript: "review-fix" });
-  await launchMoon(w.g, { taskId: "T1" }); await inspectMoon(w.g, { taskId: "T1" }); dockMoon(w.g, { taskId: "T1" });
+  await sendDelivery(w.g, { taskId: "T1" }); await sendCustoms(w.g, { taskId: "T1", reviewScript: "review-fix" });
+  await sendDelivery(w.g, { taskId: "T1" }); await sendCustoms(w.g, { taskId: "T1" }); dockCargo(w.g, { taskId: "T1" });
   const before = dumpProjections(w.g.db);
   for (const t of ["moons", "voyages", "verdicts", "ships", "planets", "systems"]) assert.ok(JSON.parse(before)[t].length > 0, `${t} has rows`);
   const events = w.g.db.raw.prepare("SELECT * FROM events ORDER BY id").all();
@@ -63,7 +63,7 @@ test("002 changes only the two status lists", () => {
 });
 
 test("after 002 a moon may be awaiting_pickup and a voyage out_of_fuel", async () => {
-  const w = await worldWithMoon("happy"); await launchMoon(w.g, { taskId: "T1" });
+  const w = await worldWithMoon("happy"); await sendDelivery(w.g, { taskId: "T1" });
   const db = openDb(schema1File((raw) => copyRows(w.g.db.raw, raw)));
   assert.equal(db.raw.prepare("UPDATE moons SET status='awaiting_pickup' WHERE task_id='T1'").run().changes, 1);
   assert.equal(db.raw.prepare("UPDATE voyages SET status='out_of_fuel' WHERE task_id='T1'").run().changes, 1);
@@ -73,7 +73,7 @@ test("after 002 a moon may be awaiting_pickup and a voyage out_of_fuel", async (
 });
 
 test("002 leaves foreign keys intact", async () => {
-  const w = await worldWithMoon("happy"); await launchMoon(w.g, { taskId: "T1" }); await inspectMoon(w.g, { taskId: "T1" });
+  const w = await worldWithMoon("happy"); await sendDelivery(w.g, { taskId: "T1" }); await sendCustoms(w.g, { taskId: "T1" });
   const db = openDb(schema1File((raw) => copyRows(w.g.db.raw, raw)));
   assert.deepEqual(db.raw.prepare("PRAGMA foreign_key_check").all(), []);
   assert.equal(db.raw.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);

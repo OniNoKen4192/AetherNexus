@@ -42,8 +42,8 @@ test("Park reasons", () => {
   assert.equal(parkReasonText("baseline_tampered"), "raided by pirates");
   assert.equal(parkReasonText("rate_limited"), "rate_limited");
   assert.deepEqual(["carryover_violations", "baseline_tampered", "rate_limited", null, undefined, 7].map(needsAttention), [true, true, false, false, false, false]);
-  assert.equal(parkReasonHint("carryover_violations"), "clear the files outside the task's paths from its worktree, then reply — or cancel the delivery (Drop)");
-  assert.equal(parkReasonHint("baseline_tampered"), "put the gate's state file back exactly as it was, then reply — or cancel the delivery (Drop)");
+  assert.equal(parkReasonHint("carryover_violations"), "clear the files outside the task's paths from its worktree, then reply — or cancel the delivery");
+  assert.equal(parkReasonHint("baseline_tampered"), "put the gate's state file back exactly as it was, then reply — or cancel the delivery");
   assert.equal(parkReasonHint("rate_limited"), null);
 });
 
@@ -68,11 +68,11 @@ test("refuelledText", () => {
 });
 
 test("Commands", () => {
-  assert.deepEqual(overrideCommand(["launch", "drop"], "T1"), { name: "moon.launch", body: { taskId: "T1", override: true } });
-  assert.deepEqual(overrideCommand(["inspect"], "T1"), { name: "voyage.inspect", body: { taskId: "T1", override: true } });
-  assert.deepEqual(overrideCommand(["launch", "inspect"], "T1"), { name: "moon.launch", body: { taskId: "T1", override: true } });
-  assert.equal(overrideCommand(["reply", "drop"], "T1"), null);
-  assert.deepEqual(refuelCommand(["launch"], "T1"), { name: "moon.launch", body: { taskId: "T1", refuel: true } });
+  assert.deepEqual(overrideCommand(["send", "cancel_delivery"], "T1"), { name: "delivery.send", body: { taskId: "T1", override: true } });
+  assert.deepEqual(overrideCommand(["inspect"], "T1"), { name: "customs.send", body: { taskId: "T1", override: true } });
+  assert.deepEqual(overrideCommand(["send", "inspect"], "T1"), { name: "delivery.send", body: { taskId: "T1", override: true } });
+  assert.equal(overrideCommand(["reply", "cancel_delivery"], "T1"), null);
+  assert.deepEqual(refuelCommand(["send"], "T1"), { name: "delivery.send", body: { taskId: "T1", refuel: true } });
   assert.equal(refuelCommand(["inspect"], "T1"), null);
 });
 
