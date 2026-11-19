@@ -1,0 +1,4 @@
+{ "name": "wall-then-spare", "role": "implement", "steps": [
+  { "text": "Starting work." },
+  { "error": { "classification": "rate_limited", "message": "usage limit reached", "resets_in_ms": 3600000 } }
+], "providers": { "spare": "happy" }, "rounds": { "3": "happy" } }
