@@ -1,10 +1,10 @@
 import { test } from "node:test"; import assert from "node:assert/strict"; import fs from "node:fs"; import path from "node:path";
 import { worldWithMoon } from "../fixtures/world.mjs";
-import { launchMoon } from "../../dist/server/commands/launch.js"; import { inspectMoon } from "../../dist/server/commands/review.js";
+import { sendDelivery } from "../../dist/server/commands/delivery.js"; import { sendCustoms } from "../../dist/server/commands/customs.js";
 
 test("APPROVE: verdict recorded, freighter cleared, moon stays reviewing until dock", async () => {
-  const w = await worldWithMoon("happy"); const l = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
-  const r = await inspectMoon(w.g, { taskId: "T1", provider: "fake" });
+  const w = await worldWithMoon("happy"); const l = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
+  const r = await sendCustoms(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(r.verdict.verdict, "APPROVE"); assert.equal(r.moonStatus, "reviewing");
   assert.equal(w.g.db.get("voyages.byId", { id: l.voyageId }).status, "cleared");
   assert.equal(w.g.db.get("voyages.byId", { id: r.voyageId }).status, "docked");     // customs returned
@@ -12,9 +12,9 @@ test("APPROVE: verdict recorded, freighter cleared, moon stays reviewing until d
 });
 
 test("FIX: freighter superseded + released, spec amended, body edit refused; round 2 passes", async () => {
-  const w = await worldWithMoon("fix-round"); const l1 = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  const w = await worldWithMoon("fix-round"); const l1 = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   const specPath = path.join(w.dir, ".nexus", "specs", "T1.md");
-  const r1 = await inspectMoon(w.g, { taskId: "T1", provider: "fake", onEvent: () => {}, reviewScript: "review-fix" });
+  const r1 = await sendCustoms(w.g, { taskId: "T1", provider: "fake", onEvent: () => {}, reviewScript: "review-fix" });
   assert.equal(r1.verdict.verdict, "FIX"); assert.equal(r1.moonStatus, "audited");
   assert.equal(w.g.db.get("voyages.byId", { id: l1.voyageId }).status, "superseded");
   assert.equal(w.g.db.get("ships.byId", { id: w.g.db.get("voyages.byId", { id: l1.voyageId }).ship_id }).status, "idle");
@@ -25,13 +25,13 @@ test("FIX: freighter superseded + released, spec amended, body edit refused; rou
 
   // editing the BODY (not the appendix) must be refused
   fs.writeFileSync(specPath, amended.replace("FAKE-SCRIPT: fix-round", "FAKE-SCRIPT: happy"));
-  await assert.rejects(launchMoon(w.g, { taskId: "T1", provider: "fake" }), /spec body changed since assign/);
+  await assert.rejects(sendDelivery(w.g, { taskId: "T1", provider: "fake" }), /spec body changed since assign/);
   fs.writeFileSync(specPath, amended);
 
   // the amendment alone is fine: round 2 runs the fake's round rule (fix-round → happy)
-  const l2 = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  const l2 = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(l2.moonStatus, "audited"); assert.equal(l2.audit.verdict, "clean"); assert.match(l2.voyageId, /\/T1\/implement\/2$/);
-  const r2 = await inspectMoon(w.g, { taskId: "T1", provider: "fake" });
+  const r2 = await sendCustoms(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(r2.verdict.verdict, "APPROVE");
   const gatedEvents = w.g.db.all("events.byMoon", { moon_id: w.moonId }).filter((e) => e.kind === "moon.gated").map((e) => JSON.parse(e.payload));
   assert.equal(gatedEvents.length, 2); assert.equal(gatedEvents[0].carried_sha, undefined); assert.match(gatedEvents[1].carried_sha, /^[0-9a-f]{40}$/);
@@ -40,8 +40,8 @@ test("FIX: freighter superseded + released, spec amended, body edit refused; rou
 });
 
 test("REJECT: freighter quarantined, moon quarantined, decision opened", async () => {
-  const w = await worldWithMoon("happy"); const l = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
-  const r = await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-reject" });
+  const w = await worldWithMoon("happy"); const l = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
+  const r = await sendCustoms(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-reject" });
   assert.equal(r.moonStatus, "quarantined"); assert.equal(w.g.db.get("voyages.byId", { id: l.voyageId }).status, "quarantined");
   assert.equal(w.g.db.get("ships.byId", { id: w.g.db.get("voyages.byId", { id: l.voyageId }).ship_id }).status, "quarantined");
   assert.equal(w.g.db.all("decisions.pending")[0].kind, "reject"); w.cleanup();
@@ -49,22 +49,22 @@ test("REJECT: freighter quarantined, moon quarantined, decision opened", async (
 
 test("max_fix_rounds exhausted → adrift", async () => {
   const w = await worldWithMoon("fix-round", (c) => { c.roles = { implement: ["fake"], review: ["fake"] }; c.automation = { level: "manual", max_fix_rounds: 1 }; });
-  await launchMoon(w.g, { taskId: "T1", provider: "fake" });
-  const r = await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
+  await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
+  const r = await sendCustoms(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
   assert.equal(r.moonStatus, "adrift"); assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).park_reason, "max_fix_rounds"); w.cleanup();
 });
 
 test("inspect refuses a moon that is not audited", async () => {
   const w = await worldWithMoon("happy");
-  await assert.rejects(inspectMoon(w.g, { taskId: "T1", provider: "fake" }), /only an 'audited' moon/); w.cleanup();
+  await assert.rejects(sendCustoms(w.g, { taskId: "T1", provider: "fake" }), /only an 'audited' moon/); w.cleanup();
 });
 
 test("FIX carry-over: work that changed after the audit is not committed; the moon parks as carryover_violations", async () => {
-  const w = await worldWithMoon("fix-round"); await launchMoon(w.g, { taskId: "T1", provider: "fake" });
-  await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
+  const w = await worldWithMoon("fix-round"); await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
+  await sendCustoms(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
   fs.writeFileSync(path.join(w.dir, ".nexus", "worktrees", "T1", "README.md"), "changed after the audit\n");
   const before = w.git("log", "--format=%H", "nexus/T1");
-  const r = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  const r = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(r.moonStatus, "adrift"); assert.deepEqual(r.audit.out_of_scope, ["README.md"]);
   assert.equal(w.g.db.get("moons.byTask", { task_id: "T1" }).park_reason, "carryover_violations");
   assert.equal(w.git("log", "--format=%H", "nexus/T1"), before, "no new commit on nexus/T1");
@@ -73,15 +73,15 @@ test("FIX carry-over: work that changed after the audit is not committed; the mo
 });
 
 test("a review voyage that parks reports verdict null, moon adrift, and writes no verdict", async () => {
-  const w = await worldWithMoon("happy"); await launchMoon(w.g, { taskId: "T1", provider: "fake" });
-  const r = await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-crash" });
+  const w = await worldWithMoon("happy"); await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
+  const r = await sendCustoms(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-crash" });
   assert.equal(r.verdict, null); assert.equal(r.moonStatus, "adrift");
   assert.equal(w.g.db.all("verdicts.byTask", { task_id: "T1" }).length, 0); w.cleanup();
 });
 
 test("customs that hits the wall leaves the moon audited for another inspection: verdict null, no verdict, no decision", async () => {
-  const w = await worldWithMoon("happy"); const l = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
-  const r = await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-rate-limited" });
+  const w = await worldWithMoon("happy"); const l = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
+  const r = await sendCustoms(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-rate-limited" });
   assert.equal(r.verdict, null); assert.equal(r.moonStatus, "audited");
   const moon = w.g.db.get("moons.byTask", { task_id: "T1" }); assert.equal(moon.park_reason, null); assert.equal(moon.round, 1);
   assert.equal(w.g.db.all("verdicts.byTask", { task_id: "T1" }).length, 0); assert.equal(w.g.db.all("decisions.pending").length, 0);
@@ -93,22 +93,22 @@ test("customs that hits the wall leaves the moon audited for another inspection:
 });
 
 test("launch refuses an audited moon whose FIX round is not reviewed yet; inspect and dock still work", async () => {
-  const { dockMoon } = await import("../../dist/server/commands/dock.js"); const { rebuild, dumpProjections } = await import("../../dist/db/rebuild.js");
-  const w = await worldWithMoon("fix-round"); await launchMoon(w.g, { taskId: "T1", provider: "fake" });
-  await inspectMoon(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
+  const { dockCargo } = await import("../../dist/server/commands/dock.js"); const { rebuild, dumpProjections } = await import("../../dist/db/rebuild.js");
+  const w = await worldWithMoon("fix-round"); await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
+  await sendCustoms(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
   // right after the FIX verdict the moon is reopened for another launch
-  const l2 = await launchMoon(w.g, { taskId: "T1", provider: "fake" });
+  const l2 = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(l2.moonStatus, "audited"); assert.match(l2.voyageId, /\/T1\/implement\/2$/);
   const assigned = () => w.g.db.all("ships.all").filter((s) => s.status === "assigned").map((s) => s.id).sort();
   const maxEvent = () => Math.max(...w.g.db.all("events.byMoon", { moon_id: w.moonId }).map((e) => e.id));
   const implVoyages = () => w.g.db.all("voyages.byTask", { task_id: "T1" }).filter((v) => v.role === "implement");
   const ships = assigned(), last = maxEvent();
-  await assert.rejects(launchMoon(w.g, { taskId: "T1", provider: "fake" }), /round 2 has not been reviewed yet/);
+  await assert.rejects(sendDelivery(w.g, { taskId: "T1", provider: "fake" }), /round 2 has not been reviewed yet/);
   assert.equal(implVoyages().length, 2); assert.deepEqual(assigned(), ships); assert.equal(maxEvent(), last);
   const before = dumpProjections(w.g.db); rebuild(w.g.db); assert.equal(dumpProjections(w.g.db), before, "rebuild is byte-equal");
   // the legitimate path is untouched
-  const r2 = await inspectMoon(w.g, { taskId: "T1", provider: "fake" });
+  const r2 = await sendCustoms(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(r2.verdict.verdict, "APPROVE");
-  assert.equal(dockMoon(w.g, { taskId: "T1" }).moonStatus, "merged");
+  assert.equal(dockCargo(w.g, { taskId: "T1" }).moonStatus, "merged");
   w.cleanup();
 });

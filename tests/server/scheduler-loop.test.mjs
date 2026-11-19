@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { append, rowToEvent } from "../../dist/db/events.js";
 import { assignMoon } from "../../dist/server/commands/assign.js";
 import { setAutomationLevel } from "../../dist/server/commands/config.js";
-import { repliedSincePark } from "../../dist/server/commands/launch.js";
+import { repliedSincePark } from "../../dist/server/commands/delivery.js";
 import { replyMoon } from "../../dist/server/commands/park.js";
 import { read, writeSpec } from "../helpers.mjs";
 import { startWorld } from "../http/helpers.mjs";
@@ -45,7 +45,7 @@ test("verdicts: after a human sends a freighter the moon is settled unattended",
     setAutomationLevel(x.w.g, { level: "verdicts" });
     await sleep(300);
     assert.deepEqual(acted(x), [], "no first freighter is sent at verdicts");
-    assert.equal((await post(x, "moon.launch", { taskId: "T1" })).status, 202);
+    assert.equal((await post(x, "delivery.send", { taskId: "T1" })).status, 202);
     await until(() => moon(x).status === "merged");
     assert.deepEqual(acted(x), ["inspect", "dock"]);
     for (const e of log(x).filter((e) => e.kind === "scheduler.acted")) assert.equal(e.payload.rung, "verdicts");
@@ -57,7 +57,7 @@ test("roundabout: a freighter is sent to a ready moon", async () => {
   try {
     assert.equal((await post(x, "config.automation", { level: "roundabout" })).status, 200);
     await until(() => moon(x).status === "merged");
-    assert.deepEqual(acted(x), ["launch", "inspect", "dock"]);
+    assert.deepEqual(acted(x), ["send", "inspect", "dock"]);
     assert.deepEqual(pending(x), []);
   } finally { await x.close(); }
 });
@@ -98,13 +98,13 @@ test("a refusal twice in a row parks the moon and stops", async () => {
   const x = await refusedWorld();
   try {
     assert.equal(moon(x).park_reason, "scheduler_refused");
-    assert.deepEqual(acted(x), ["launch", "launch"]);
+    assert.deepEqual(acted(x), ["send", "send"]);
     const decisions = pending(x);
     assert.equal(decisions.length, 1);
     assert.equal(decisions[0].kind, "adrift");
     assert.match(decisions[0].reasoning, /spec body changed/);
     await sleep(300);
-    assert.deepEqual(acted(x), ["launch", "launch"]);
+    assert.deepEqual(acted(x), ["send", "send"]);
     assert.equal(pending(x).length, 1);
     assert.deepEqual(log(x).filter((e) => e.kind === "voyage.launched"), []);
   } finally { await x.close(); }
@@ -145,10 +145,10 @@ test("a click racing the scheduler is not a failure", async () => {
       },
     };
     setAutomationLevel(x.w.g, { level: "verdicts" });
-    assert.equal((await post(x, "moon.launch", { taskId: "T1" })).status, 202);
+    assert.equal((await post(x, "delivery.send", { taskId: "T1" })).status, 202);
     await until(() => moon(x).status === "reviewing");
     release();
-    await until(async () => { await post(x, "voyage.dock", { taskId: "T1" }); return moon(x).status === "merged"; });
+    await until(async () => { await post(x, "cargo.dock", { taskId: "T1" }); return moon(x).status === "merged"; });
     await sleep(300);
     assert.equal(moon(x).status, "merged");
     assert.equal(log(x).filter((e) => e.kind === "voyage.docked").length, 1);
@@ -166,7 +166,7 @@ test("a rung change from another process is picked up", async () => {
     fs.writeFileSync(configPath(x), JSON.stringify(file, null, 2) + "\n");
     append(x.w.g.db, { kind: "config.changed", payload: { key: "automation.level", from: "verdicts", to: "manual", pid: 0 } });
     await until(() => x.w.g.config.automation.level === "manual");
-    assert.equal((await post(x, "moon.launch", { taskId: "T1" })).status, 202);
+    assert.equal((await post(x, "delivery.send", { taskId: "T1" })).status, 202);
     await until(() => moon(x).status === "audited");
     await sleep(300);
     assert.deepEqual(log(x).filter((e) => e.kind === "scheduler.acted"), []);
@@ -188,7 +188,7 @@ test("an unreadable config after a foreign change keeps the old one and shows a 
     assert.equal(notice.taskId, "config");
     assert.equal(notice.voyageId, null);
     assert.equal(snap.rung, "verdicts");
-    assert.equal((await post(x, "moon.launch", { taskId: "T1" })).status, 202);
+    assert.equal((await post(x, "delivery.send", { taskId: "T1" })).status, 202);
     await until(() => moon(x).status === "merged");
   } finally { await x.close(); }
 });
@@ -200,7 +200,7 @@ test("snapshot reports ready_to_send", async () => {
     assert.equal(before.json.rung, "manual");
     assert.equal(before.json.ready_to_send, 1);
     setAutomationLevel(x.w.g, { level: "verdicts" });
-    assert.equal((await post(x, "moon.launch", { taskId: "T1" })).status, 202);
+    assert.equal((await post(x, "delivery.send", { taskId: "T1" })).status, 202);
     await until(() => moon(x).status === "merged");
     assert.equal((await x.api("/api/snapshot")).json.ready_to_send, 0);
   } finally { await x.close(); }
@@ -215,7 +215,7 @@ test("stop waits for the pass and leaves voyages alone", async () => {
     const events = log(x);
     assert.deepEqual(events.filter((e) => e.kind === "voyage.adrift").map((e) => e.payload.reason), ["interrupted"]);
     assert.deepEqual(events.filter((e) => e.kind === "moon.adrift" && String(e.payload.reason).startsWith("scheduler_")), []);
-    assert.deepEqual(acted(x), ["launch"]);
+    assert.deepEqual(acted(x), ["send"]);
     const count = events.length;
     await sleep(300);
     assert.equal(log(x).length, count, "a stopped scheduler writes nothing");
@@ -278,7 +278,7 @@ test("a hold is written again after the moon was visited in between", async () =
     const events = held(x);
     assert.equal(events.length, 2);
     assert.deepEqual(events[1].payload, events[0].payload, "the same hold, written again because a freighter flew in between");
-    assert.deepEqual(acted(x), ["launch"]);
+    assert.deepEqual(acted(x), ["send"]);
   } finally { await x.close(); }
 });
 
@@ -290,7 +290,7 @@ test("a pool that refills is acted on by the tick with no event", async () => {
     await until(() => held(x).length === 1);
     assert.deepEqual(acted(x), [], "held while the pool is dry");
     await until(() => moon(x).status === "merged");
-    assert.deepEqual(acted(x), ["launch", "inspect", "dock"]);
+    assert.deepEqual(acted(x), ["send", "inspect", "dock"]);
     assert.equal(held(x).length, 1);
   } finally { await x.close(); }
 });

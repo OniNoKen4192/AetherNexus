@@ -41,7 +41,7 @@ const API_ROUTES: Record<string, ApiHandler> = {
     // What raising the rung to roundabout would start right now, whatever the rung is.
     // If planning fails the scheduler's own pass shows the notice; the page must still load.
     let readyToSend = 0;
-    try { readyToSend = plan(g, { ...owner, rung: "roundabout" }).filter((a) => a.action === "launch" && a.first).length; } catch { /* reported by the scheduler */ }
+    try { readyToSend = plan(g, { ...owner, rung: "roundabout" }).filter((a) => a.action === "send" && a.first).length; } catch { /* reported by the scheduler */ }
     sendJson(res, 200, snapshot(g, { ...owner, failures: runner.failures(), readyToSend }));
   },
   "GET /api/events": ({ req, res, query, feed }) => feed.handle(req, res, query),

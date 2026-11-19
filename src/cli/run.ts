@@ -9,10 +9,10 @@ import { GitRefusal } from "../core/git.js";
 import { initGalaxy } from "../server/commands/init.js";
 import { createSystem, showSystem } from "../server/commands/system.js";
 import { assignPlanet, assignMoon } from "../server/commands/assign.js";
-import { launchMoon } from "../server/commands/launch.js";
-import { inspectMoon } from "../server/commands/review.js";
-import { dockMoon } from "../server/commands/dock.js";
-import { replyMoon, dropMoon, retireShip, parkStaleMoon } from "../server/commands/park.js";
+import { sendDelivery } from "../server/commands/delivery.js";
+import { sendCustoms } from "../server/commands/customs.js";
+import { dockCargo } from "../server/commands/dock.js";
+import { replyMoon, cancelDelivery, retireShip, parkStaleMoon } from "../server/commands/park.js";
 import { answerDecision } from "../server/commands/decision.js";
 import { setAutomationLevel } from "../server/commands/config.js";
 import { status, events, fleet } from "../server/commands/query.js";
@@ -34,17 +34,16 @@ const USAGE = `usage: nexus [--json] <command>
   system show <system-id>
   planet assign <system-id> --stream <id> [--mission <m>] [--territory <glob>]... [--planet <name>]
   moon assign <planet-id> <spec-path> [--moon <name>]
-  moon launch <task-id> [--provider <p>] [--override] [--refuel] [--quiet]
-  moon inspect <task-id> [--provider <p>] [--override] [--quiet]
+  delivery send <task-id> [--provider <p>] [--override] [--refuel] [--quiet]
+  customs send <task-id> [--provider <p>] [--override] [--quiet]
   moon reply <task-id> --note <text>
-  moon drop <task-id>
+  delivery cancel <task-id>
   moon park <task-id> --reason <text>      for a voyage whose process died (crash, kill, reboot):
-                                           parks it as 'stale:<text>' so reply/drop can proceed
+                                           parks it as 'stale:<text>' so a reply or a cancel can proceed
   decision answer <decision-id> --mine | --not-mine
                                            answer a main-tree question (was that change yours?)
   config set trust <manual|verdicts|roundabout>
-  voyage inspect <task-id> [--provider <p>] [--override] [--quiet]
-  voyage dock <task-id>
+  cargo dock <task-id>
   status [<system-id>]
   events [--follow] [--since <id>] [--moon <id>]
   fleet [retire <ship-id> --reason <r>]
@@ -53,7 +52,7 @@ const USAGE = `usage: nexus [--json] <command>
   serve [--port <n>]                       run the local bridge server (127.0.0.1 only) until Ctrl-C
 
 --json prints the result object as JSON. --quiet suppresses the event stream on stderr.
-Ctrl-C (SIGINT/SIGTERM) during launch/inspect parks the voyage as 'interrupted' and exits 2.
+Ctrl-C (SIGINT/SIGTERM) during a delivery or an inspection parks the voyage as 'interrupted' and exits 2.
 Env: NEXUS_FAKE_SCRIPTS overrides the fake adapter's scripts directory.
 Exit codes: 0 ok, 2 refused (message only), 1 error or unknown command.`;
 
@@ -138,7 +137,7 @@ async function run(argv: string[]): Promise<void> {
     out(r, () => `initialized ${r.configPath} (${r.ships} ships); commit .nexus/config.json and .nexus/.gitignore`);
     return;
   }
-  if (!["system", "planet", "moon", "voyage", "status", "events", "fleet", "db", "validate", "decision", "config", "serve"].includes(c0)) throw new Usage();
+  if (!["system", "planet", "moon", "delivery", "customs", "cargo", "status", "events", "fleet", "db", "validate", "decision", "config", "serve"].includes(c0)) throw new Usage();
 
   const g = openGalaxy(process.cwd(), process.env["NEXUS_FAKE_SCRIPTS"] ? { scriptsDir: process.env["NEXUS_FAKE_SCRIPTS"] } : {});
   try {
@@ -149,8 +148,8 @@ async function run(argv: string[]): Promise<void> {
 async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: () => string) => void): Promise<void> {
   const [c0, c1] = pos;
   const onEvent = o.quiet ? undefined : streamEvent;
-  const launchIn = (taskId: string) => ({ taskId, ...(o.provider ? { provider: o.provider } : {}), ...(o.override ? { override: true } : {}), ...(o.refuel ? { refuel: true } : {}), ...(onEvent ? { onEvent } : {}) });
-  const inspectIn = (taskId: string) => ({ taskId, ...(o.provider ? { provider: o.provider } : {}), ...(o.override ? { override: true } : {}), ...(onEvent ? { onEvent } : {}) });
+  const deliveryIn = (taskId: string) => ({ taskId, ...(o.provider ? { provider: o.provider } : {}), ...(o.override ? { override: true } : {}), ...(o.refuel ? { refuel: true } : {}), ...(onEvent ? { onEvent } : {}) });
+  const customsIn = (taskId: string) => ({ taskId, ...(o.provider ? { provider: o.provider } : {}), ...(o.override ? { override: true } : {}), ...(onEvent ? { onEvent } : {}) });
 
   if (c0 === "serve") {
     let port: number | undefined;
@@ -233,15 +232,15 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
       const r = assignMoon(g, { planetId: need(rest[0], "<planet-id>"), specPath: need(rest[1], "<spec-path>"), ...(o.moon ? { moonName: o.moon } : {}) });
       return out(r, () => `assigned moon ${r.moonId} (task ${r.taskId})`);
     }
-    case "moon launch": {
+    case "delivery send": {
       const taskId = need(rest[0], "<task-id>");
-      const r = await interruptible((signal) => launchMoon(g, { ...launchIn(taskId), signal }));
+      const r = await interruptible((signal) => sendDelivery(g, { ...deliveryIn(taskId), signal }));
       if (r.interrupted && interruptedPark(g, taskId)) return interruptedExit();
       return out(r.value, () => `voyage ${r.value.voyageId}: moon ${r.value.moonStatus}`);
     }
-    case "moon inspect": case "voyage inspect": {
+    case "customs send": {
       const taskId = need(rest[0], "<task-id>");
-      const r = await interruptible((signal) => inspectMoon(g, { ...inspectIn(taskId), signal }));
+      const r = await interruptible((signal) => sendCustoms(g, { ...customsIn(taskId), signal }));
       if (r.interrupted && interruptedPark(g, taskId)) return interruptedExit();
       return out(r.value, () => `voyage ${r.value.voyageId}: verdict ${r.value.verdict?.verdict ?? "none"}, moon ${r.value.moonStatus}`);
     }
@@ -249,17 +248,17 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
       const r = parkStaleMoon(g, { taskId: need(rest[0], "<task-id>"), reason: need(o.reason, "--reason") });
       return out(r, () => `parked voyage ${r.voyageId} (${r.reason})`);
     }
-    case "moon dock": case "voyage dock": {
-      const r = dockMoon(g, { taskId: need(rest[0], "<task-id>") });
+    case "cargo dock": {
+      const r = dockCargo(g, { taskId: need(rest[0], "<task-id>") });
       return out(r, () => `moon ${r.moonStatus}${r.mergeSha ? ` at ${r.mergeSha.slice(0, 8)}` : ""} into ${r.planetBranch}`);
     }
     case "moon reply": {
       const r = replyMoon(g, { taskId: need(rest[0], "<task-id>"), note: need(o.note, "--note") });
-      return out(r, () => `recorded reply; next launch is round ${r.round}`);
+      return out(r, () => `recorded reply; the next delivery is round ${r.round}`);
     }
-    case "moon drop": {
-      const r = dropMoon(g, { taskId: need(rest[0], "<task-id>") });
-      return out(r, () => `dropped ${r.moonId}`);
+    case "delivery cancel": {
+      const r = cancelDelivery(g, { taskId: need(rest[0], "<task-id>") });
+      return out(r, () => `cancelled the delivery to ${r.moonId}`);
     }
     case "decision answer": {
       if (o.mine === o["not-mine"]) throw new Refusal("give exactly one of --mine or --not-mine");

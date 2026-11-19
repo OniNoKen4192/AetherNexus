@@ -15,7 +15,7 @@ export function effectiveRung(level: string): Rung {
 }
 
 export type PlannedAction = {
-  action: "dock" | "park_stale" | "inspect" | "launch";
+  action: "dock" | "park_stale" | "inspect" | "send";
   taskId: string;
   /** true when this would be the first freighter sent to the moon under its current assignment */
   first: boolean;
@@ -65,20 +65,20 @@ export function planWithHolds(g: Galaxy, ctx: PlanCtx): { actions: PlannedAction
         if (actions.includes("dock") && moon.status === "reviewing") action = "dock";
         else if (actions.includes("park_stale") && (moon.status === "implementing" || moon.status === "reviewing")) action = "park_stale";
         else if (actions.includes("inspect") && moon.status === "audited") action = "inspect";
-        else if (actions.includes("launch")) {
-          if (moon.status === "awaiting_pickup") action = "launch";
+        else if (actions.includes("send")) {
+          if (moon.status === "awaiting_pickup") action = "send";
           else {
             const dependencies = dependencyState(g, taskId);
             first = !dependencies.visited;
-            if (moon.status === "audited") action = "launch";
+            if (moon.status === "audited") action = "send";
             else if (moon.status === "adrift" || moon.status === "quarantined") {
-              if (dependencies.visited || (rung === "roundabout" && dependencies.waitingOn.length === 0 && dependencies.waitingOnPlanets.length === 0)) action = "launch";
+              if (dependencies.visited || (rung === "roundabout" && dependencies.waitingOn.length === 0 && dependencies.waitingOnPlanets.length === 0)) action = "send";
             } else if ((moon.status === "emitted" || moon.status === "gated") && rung === "roundabout"
-              && dependencies.waitingOn.length === 0 && dependencies.waitingOnPlanets.length === 0) action = "launch";
+              && dependencies.waitingOn.length === 0 && dependencies.waitingOnPlanets.length === 0) action = "send";
           }
         }
 
-        if (action) candidates.push({ action, taskId, first: action === "launch" && first, assignmentId: moon.assignment_id, tier: moon.tier });
+        if (action) candidates.push({ action, taskId, first: action === "send" && first, assignmentId: moon.assignment_id, tier: moon.tier });
       }
     }
   }
@@ -97,11 +97,11 @@ export function planWithHolds(g: Galaxy, ctx: PlanCtx): { actions: PlannedAction
   const holds: Hold[] = [];
 
   for (const candidate of candidates) {
-    if (candidate.action !== "launch" && candidate.action !== "inspect") {
+    if (candidate.action !== "send" && candidate.action !== "inspect") {
       actions.push({ action: candidate.action, taskId: candidate.taskId, first: candidate.first });
       continue;
     }
-    const role: Role = candidate.action === "launch" ? "implement" : "review";
+    const role: Role = candidate.action === "send" ? "implement" : "review";
     const choice = chooseProvider(g, { role, tier: candidate.tier, mayRefuel: true, capacity });
     if (choice.kind === "held") {
       holds.push({ taskId: candidate.taskId, role, provider: choice.provider, reason: choice.reason,

@@ -5,7 +5,7 @@ import path from "node:path";
 import { makeGalaxy } from "../helpers.mjs";
 import { worldWithMoon } from "../fixtures/world.mjs";
 import { setRoleOrder } from "../../dist/server/commands/config.js";
-import { launchMoon } from "../../dist/server/commands/launch.js";
+import { sendDelivery } from "../../dist/server/commands/delivery.js";
 import { Refusal } from "../../dist/server/errors.js";
 
 const withTwoProviders = (c) => {
@@ -27,7 +27,7 @@ test("reorders providers on disk and the next launch uses the new first provider
     assert.deepEqual(JSON.parse(configText(w)).roles.implement, ["fake2", "fake"]);
     assert.deepEqual(nexusEntries(w), beforeEntries, "successful call left a temp file");
 
-    const launched = await launchMoon(w.g, { taskId: "T1" });
+    const launched = await sendDelivery(w.g, { taskId: "T1" });
     assert.equal(w.g.db.get("voyages.byId", { id: launched.voyageId }).provider, "fake2");
   } finally { w.cleanup(); }
 });
@@ -96,7 +96,7 @@ test("a config write in the middle of a voyage does not open a main-tree decisio
         return real.dispatch(job, ctx);
       },
     };
-    await launchMoon(w.g, { taskId: "T1" });
+    await sendDelivery(w.g, { taskId: "T1" });
     assert.equal(w.g.db.all("decisions.pending").filter((d) => d.kind === "main_tree_changed").length, 0);
   } finally { w.cleanup(); }
 });

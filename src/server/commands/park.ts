@@ -72,7 +72,7 @@ export function replyMoon(g: Galaxy, input: { taskId: string; note: string }): {
   return { round };
 }
 
-export function dropMoon(g: Galaxy, input: { taskId: string }): { moonId: string } {
+export function cancelDelivery(g: Galaxy, input: { taskId: string }): { moonId: string } {
   const moon = loadMoon(g, input.taskId);
   requireDroppable(moon);
   const scope = moonScope(g, moon);

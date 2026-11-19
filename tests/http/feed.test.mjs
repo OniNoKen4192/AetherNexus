@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { append } from "../../dist/db/events.js";
 import { createFeed } from "../../dist/server/http/feed.js";
-import { launchMoon } from "../../dist/server/commands/launch.js";
+import { sendDelivery } from "../../dist/server/commands/delivery.js";
 import { makeGalaxy } from "../helpers.mjs";
 import { rawRequest, readFeed, startWorld } from "./helpers.mjs";
 
@@ -188,7 +188,7 @@ test("voyage activity arrives while launch is still in flight", async () => {
   try {
     await feed.status;
     let settled = false;
-    launch = launchMoon(x.w.g, { taskId: "T1" }).finally(() => { settled = true; });
+    launch = sendDelivery(x.w.g, { taskId: "T1" }).finally(() => { settled = true; });
     await feed.waitFor((events) => events.some((e) => e.kind === "voyage.launched"));
     assert.equal(settled, false);
     await launch;

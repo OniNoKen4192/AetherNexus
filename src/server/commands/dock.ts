@@ -7,7 +7,7 @@ import type { Galaxy } from "../galaxy.js";
 import { loadMoon, loadPlanet, moonScope, parkVoyage } from "../dispatch.js";
 import type { AuditReport } from "../../validate/audit.js";
 import { requireTreeAnswered } from "./decision.js";
-import { auditTask, BaselineTampered } from "./launch.js";
+import { auditTask, BaselineTampered } from "./delivery.js";
 
 type VoyageRow = { id: string; ship_id: string; status: string; provider: string };
 type VerdictRow = { verdict: string };
@@ -18,7 +18,7 @@ function specTitle(text: string, taskId: string): string {
   return m ? m[1]!.trim() : taskId;
 }
 
-export function dockMoon(g: Galaxy, input: { taskId: string }): { mergeSha: string | null; planetBranch: string; moonStatus: "merged" | "adrift" } {
+export function dockCargo(g: Galaxy, input: { taskId: string }): { mergeSha: string | null; planetBranch: string; moonStatus: "merged" | "adrift" } {
   const { taskId } = input;
   requireTreeAnswered(g, taskId);
   const moon = loadMoon(g, taskId);

@@ -14,11 +14,11 @@ test("built Bridge bundle contains every moon action command and its copy", asyn
   assert.ok(scripts.length > 0, "dist/web/assets contains no JavaScript bundle");
   const bundle = (await Promise.all(scripts.map((name) => readFile(new URL(name, assets), "utf8")))).join("\n");
   for (const command of [
-    "moon.launch", "voyage.inspect", "voyage.dock", "voyage.cancel",
-    "moon.reply", "moon.drop", "moon.park", "decision.answer",
+    "delivery.send", "customs.send", "cargo.dock", "voyage.cancel",
+    "moon.reply", "delivery.cancel", "moon.park", "decision.answer",
   ]) assert.ok(bundle.includes(command), `built bundle is missing command ${JSON.stringify(command)}`);
   for (const copy of [
-    "default order", "Confirm drop", "This deletes its worktree and branch.",
+    "default order", "Send delivery", "Cancel delivery", "Confirm cancel", "This deletes its worktree and branch.",
     "Park stale", "Cancel voyage", "The main tree changed during this voyage.",
     "That was me", "Not me", "not_mine",
   ]) assert.ok(bundle.includes(copy), `built bundle is missing copy ${JSON.stringify(copy)}`);

@@ -5,8 +5,8 @@ import test from "node:test";
 import { createVoyageRunner } from "../../dist/server/http/runner.js";
 import { errorResponse } from "../../dist/server/http/commands.js";
 import { Refusal } from "../../dist/server/errors.js";
-import { launchMoon } from "../../dist/server/commands/launch.js";
-import { inspectMoon } from "../../dist/server/commands/review.js";
+import { sendDelivery } from "../../dist/server/commands/delivery.js";
+import { sendCustoms } from "../../dist/server/commands/customs.js";
 import { rebuild, dumpProjections } from "../../dist/db/rebuild.js";
 import { append } from "../../dist/db/events.js";
 import { loadMoon, moonScope } from "../../dist/server/dispatch.js";
@@ -23,12 +23,12 @@ const waitFor = async (fn, ms = 5000) => {
   }
 };
 
-test("moon.launch answers 202 while owned by the server and completes on the feed", async () => {
+test("delivery.send answers 202 while owned by the server and completes on the feed", async () => {
   const x = await startWorld("slow");
   const feed = readFeed(x.srv);
   try {
     assert.equal(await feed.status, 200);
-    const launched = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } });
+    const launched = await x.api("/api/commands/delivery.send", { method: "POST", body: { taskId: "T1" } });
     assert.equal(launched.status, 202);
     assert.equal(typeof launched.json.voyageId, "string");
     const row = x.w.g.db.get("voyages.byId", { id: launched.json.voyageId });
@@ -46,8 +46,8 @@ test("launch refusal has no flight and simultaneous launches make one voyage", a
   const x = await startWorld("slow");
   try {
     const [a, b] = await Promise.all([
-      x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } }),
-      x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } }),
+      x.api("/api/commands/delivery.send", { method: "POST", body: { taskId: "T1" } }),
+      x.api("/api/commands/delivery.send", { method: "POST", body: { taskId: "T1" } }),
     ]);
     assert.deepEqual([a.status, b.status].sort(), [202, 409]);
     const assignmentId = x.w.g.db.get("moons.byId", { id: x.w.moonId }).assignment_id;
@@ -55,7 +55,7 @@ test("launch refusal has no flight and simultaneous launches make one voyage", a
     const launch = a.status === 202 ? a : b;
     await x.api("/api/commands/voyage.cancel", { method: "POST", body: { voyageId: launch.json.voyageId } });
     await waitFor(() => x.w.g.db.get("voyages.byId", { id: launch.json.voyageId }).status === "adrift");
-    const again = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } });
+    const again = await x.api("/api/commands/delivery.send", { method: "POST", body: { taskId: "T1" } });
     assert.equal(again.status, 409);
   } finally { await x.close(); }
 });
@@ -63,7 +63,7 @@ test("launch refusal has no flight and simultaneous launches make one voyage", a
 test("voyage.cancel parks as interrupted and unknown cancellation is refused", async () => {
   const x = await startWorld("slow");
   try {
-    const launch = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } });
+    const launch = await x.api("/api/commands/delivery.send", { method: "POST", body: { taskId: "T1" } });
     const cancel = await x.api("/api/commands/voyage.cancel", { method: "POST", body: { voyageId: launch.json.voyageId } });
     assert.equal(cancel.status, 200);
     assert.deepEqual(cancel.json.result, { cancelled: true });
@@ -79,14 +79,14 @@ test("malformed command requests are rejected without events and server stays he
     const before = x.w.g.db.get("events.maxId")?.id ?? 0;
     const auth = { cookie: `nexus_token=${x.srv.token}`, origin: x.origin };
     const cases = [
-      ["/api/commands/moon.launch", "{", 400],
-      ["/api/commands/moon.launch", "[]", 400],
-      ["/api/commands/moon.launch", '"x"', 400],
+      ["/api/commands/delivery.send", "{", 400],
+      ["/api/commands/delivery.send", "[]", 400],
+      ["/api/commands/delivery.send", '"x"', 400],
       ["/api/commands/nope", "{}", 404],
-      ["/api/commands/moon.launch", "{}", 400],
-      ["/api/commands/moon.launch", '{"taskId":5}', 400],
-      ["/api/commands/moon.launch", '{"taskId":""}', 400],
-      ["/api/commands/moon.launch", '{"taskId":"T1","extra":1}', 400],
+      ["/api/commands/delivery.send", "{}", 400],
+      ["/api/commands/delivery.send", '{"taskId":5}', 400],
+      ["/api/commands/delivery.send", '{"taskId":""}', 400],
+      ["/api/commands/delivery.send", '{"taskId":"T1","extra":1}', 400],
       ["/api/commands/config.roles", '{"role":"bogus","order":[]}', 400],
       ["/api/commands/decision.answer", '{"decisionId":"1","answer":"mine"}', 400],
     ];
@@ -94,8 +94,8 @@ test("malformed command requests are rejected without events and server stays he
       const response = await rawRequest(x.srv.port, { method: "POST", path: p, headers: { ...auth, "content-type": "application/json" }, body });
       assert.equal(response.status, status, `${p}: ${body}`);
     }
-    assert.equal((await rawRequest(x.srv.port, { method: "POST", path: "/api/commands/moon.launch", headers: { ...auth, "content-type": "text/plain" }, body: "{}" })).status, 415);
-    assert.equal((await rawRequest(x.srv.port, { method: "POST", path: "/api/commands/moon.launch", headers: { ...auth, "content-type": "application/json" }, body: `{"taskId":"${"x".repeat(2 * 1024 * 1024)}"}` })).status, 413);
+    assert.equal((await rawRequest(x.srv.port, { method: "POST", path: "/api/commands/delivery.send", headers: { ...auth, "content-type": "text/plain" }, body: "{}" })).status, 415);
+    assert.equal((await rawRequest(x.srv.port, { method: "POST", path: "/api/commands/delivery.send", headers: { ...auth, "content-type": "application/json" }, body: `{"taskId":"${"x".repeat(2 * 1024 * 1024)}"}` })).status, 413);
     assert.equal((await x.api("/api/ping")).status, 200);
     assert.notEqual((await rawRequest(x.srv.port, { path: "//[x", headers: auth })).status, 500);
     assert.equal(x.w.g.db.get("events.maxId")?.id ?? 0, before);
@@ -117,13 +117,13 @@ test("unknown command names inherited from Object.prototype answer 404", async (
   } finally { await x.close(); }
 });
 
-test("moon.launch on an audited moon answers 409 with the refusal and leaves nothing in flight", async () => {
+test("delivery.send on an audited moon answers 409 with the refusal and leaves nothing in flight", async () => {
   const x = await startWorld("happy");
   try {
-    const first = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } });
+    const first = await x.api("/api/commands/delivery.send", { method: "POST", body: { taskId: "T1" } });
     assert.equal(first.status, 202);
     await waitFor(() => x.w.g.db.get("moons.byTask", { task_id: "T1" }).status === "audited");
-    const second = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } });
+    const second = await x.api("/api/commands/delivery.send", { method: "POST", body: { taskId: "T1" } });
     assert.equal(second.status, 409);
     assert.match(second.json.error, /is 'audited'/);
     assert.deepEqual(x.w.g.db.all("voyages.inFlight"), []);
@@ -182,7 +182,7 @@ test("each synchronous command maps success to 200 and a refusal to 409", async 
         check(result) { assert.deepEqual(result, { round: 1 }); },
       },
       {
-        name: "moon.drop", success: () => ({ taskId: "T1" }), refusal: () => ({ taskId: "T1" }),
+        name: "delivery.cancel", success: () => ({ taskId: "T1" }), refusal: () => ({ taskId: "T1" }),
         check(result) { assert.deepEqual(result, { moonId: x.w.moonId }); },
       },
       {
@@ -274,13 +274,13 @@ test("unexpected errors are hidden and Refusal details map to 409", () => {
   assert.deepEqual(errorResponse(new Refusal("no", { state: "bad" })), { status: 409, body: { error: "no", details: { state: "bad" } } });
 });
 
-test("voyage.dock twice merges exactly once and refuses the duplicate", async () => {
+test("cargo.dock twice merges exactly once and refuses the duplicate", async () => {
   const x = await startWorld("happy");
   try {
-    await launchMoon(x.w.g, { taskId: "T1", provider: "fake" });
-    await inspectMoon(x.w.g, { taskId: "T1", provider: "fake" });
-    const first = await x.api("/api/commands/voyage.dock", { method: "POST", body: { taskId: "T1" } });
-    const second = await x.api("/api/commands/voyage.dock", { method: "POST", body: { taskId: "T1" } });
+    await sendDelivery(x.w.g, { taskId: "T1", provider: "fake" });
+    await sendCustoms(x.w.g, { taskId: "T1", provider: "fake" });
+    const first = await x.api("/api/commands/cargo.dock", { method: "POST", body: { taskId: "T1" } });
+    const second = await x.api("/api/commands/cargo.dock", { method: "POST", body: { taskId: "T1" } });
     assert.equal(first.status, 200);
     assert.equal(second.status, 409);
     const branch = x.w.g.db.get("planets.byId", { id: x.w.planetId }).branch;
@@ -293,7 +293,7 @@ test("decision.answer twice resolves once and then refuses", async () => {
   const real = x.w.g.adapters.fake;
   x.w.g.adapters.fake = { ...real, dispatch(job, ctx) { fs.writeFileSync(path.join(x.w.dir, "stray.txt"), "x\n"); return real.dispatch(job, ctx); } };
   try {
-    await launchMoon(x.w.g, { taskId: "T1" });
+    await sendDelivery(x.w.g, { taskId: "T1" });
     const decision = x.w.g.db.all("decisions.pending").find((d) => d.kind === "main_tree_changed");
     assert.ok(decision);
     const body = { decisionId: decision.id, answer: "mine" };
@@ -313,7 +313,7 @@ test("a post-launch HTTP failure appears in snapshot and notifies the feed", asy
   };
   try {
     assert.equal(await feed.status, 200);
-    const launch = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } });
+    const launch = await x.api("/api/commands/delivery.send", { method: "POST", body: { taskId: "T1" } });
     assert.equal(launch.status, 202);
     const snap = await waitFor(async () => {
       const response = await x.api("/api/snapshot");
@@ -338,7 +338,7 @@ test("a post-launch HTTP failure appears in snapshot and notifies the feed", asy
 test("closing a server parks its voyage, leaves every ship consistent, and projections rebuild exactly", async () => {
   const x = await startWorld("slow");
   try {
-    const launch = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } });
+    const launch = await x.api("/api/commands/delivery.send", { method: "POST", body: { taskId: "T1" } });
     assert.equal(launch.status, 202);
     await x.srv.close();
     const voyage = x.w.g.db.get("voyages.byId", { id: launch.json.voyageId });
@@ -355,7 +355,7 @@ test("closing a server parks its voyage, leaves every ship consistent, and proje
 test("moon.park refuses while this server runs the voyage, and the voyage keeps running", async () => {
   const x = await startWorld("slow");
   try {
-    const launch = await x.api("/api/commands/moon.launch", { method: "POST", body: { taskId: "T1" } });
+    const launch = await x.api("/api/commands/delivery.send", { method: "POST", body: { taskId: "T1" } });
     assert.equal(launch.status, 202);
     const park = await x.api("/api/commands/moon.park", { method: "POST", body: { taskId: "T1", reason: "nope" } });
     assert.equal(park.status, 409);
@@ -379,7 +379,7 @@ test("an oversized body is answered only after it has been read to the end", asy
     socket.on("error", () => { /* the assertions below report what was received */ });
     await new Promise((resolve) => socket.once("connect", resolve));
     const total = 2 * 1024 * 1024;
-    socket.write(`POST /api/commands/moon.launch HTTP/1.1\r\nhost: 127.0.0.1:${x.srv.port}\r\ncookie: nexus_token=${x.srv.token}\r\norigin: ${x.origin}\r\ncontent-type: application/json\r\ncontent-length: ${total}\r\nconnection: close\r\n\r\n`);
+    socket.write(`POST /api/commands/delivery.send HTTP/1.1\r\nhost: 127.0.0.1:${x.srv.port}\r\ncookie: nexus_token=${x.srv.token}\r\norigin: ${x.origin}\r\ncontent-type: application/json\r\ncontent-length: ${total}\r\nconnection: close\r\n\r\n`);
     socket.write("x".repeat(total - 1024));
     await new Promise((resolve) => setTimeout(resolve, 300));
     assert.equal(received, "", "nothing is answered while the body is still arriving");

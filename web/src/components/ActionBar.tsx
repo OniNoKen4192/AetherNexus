@@ -72,12 +72,12 @@ function ErrorMessage({ error }: { error: string | null }) {
   return error === null ? null : <div className="msg-error">{error}</div>;
 }
 
-function ProviderAction({ b, action }: { b: Bridge; action: "launch" | "inspect" }) {
+function ProviderAction({ b, action }: { b: Bridge; action: "send" | "inspect" }) {
   const [provider, setProvider] = useState("");
   const command = useCommand(b);
-  const providers = action === "launch" ? b.snapshot?.roles.implement ?? [] : b.snapshot?.roles.review ?? [];
-  const label = action === "launch" ? "Launch" : "Inspect";
-  const name = action === "launch" ? "moon.launch" : "voyage.inspect";
+  const providers = action === "send" ? b.snapshot?.roles.implement ?? [] : b.snapshot?.roles.review ?? [];
+  const label = action === "send" ? "Send delivery" : "Inspect";
+  const name = action === "send" ? "delivery.send" : "customs.send";
   return <div className="action-group">
     <select className="field" aria-label="Provider" value={provider} disabled={command.busy} onChange={(event) => setProvider(event.currentTarget.value)}>
       <option value="">default order</option>
@@ -94,7 +94,7 @@ function ProviderAction({ b, action }: { b: Bridge; action: "launch" | "inspect"
 function DockAction({ b }: { b: Bridge }) {
   const command = useCommand(b);
   return <div className="action-group">
-    <button className="btn" type="button" disabled={command.busy} onClick={() => void command.send("voyage.dock", { taskId: b.taskId })}>Dock</button>
+    <button className="btn" type="button" disabled={command.busy} onClick={() => void command.send("cargo.dock", { taskId: b.taskId })}>Dock</button>
     <ErrorMessage error={command.error} />
   </div>;
 }
@@ -113,13 +113,13 @@ function ReplyAction({ b }: { b: Bridge }) {
   </div>;
 }
 
-function DropAction({ b }: { b: Bridge }) {
+function CancelDeliveryAction({ b }: { b: Bridge }) {
   const [open, setOpen] = useState(false);
   const command = useCommand(b);
   return <div className="action-group">
-    {!open ? <button className="btn danger" type="button" disabled={command.busy} onClick={() => setOpen(true)}>Drop</button> : <>
-      <span>Drop {b.taskId}? This deletes its worktree and branch.</span>
-      <button className="btn danger" type="button" disabled={command.busy} onClick={() => void command.send("moon.drop", { taskId: b.taskId })}>Confirm drop</button>
+    {!open ? <button className="btn danger" type="button" disabled={command.busy} onClick={() => setOpen(true)}>Cancel delivery</button> : <>
+      <span>Cancel the delivery to {b.taskId}? This deletes its worktree and branch.</span>
+      <button className="btn danger" type="button" disabled={command.busy} onClick={() => void command.send("delivery.cancel", { taskId: b.taskId })}>Confirm cancel</button>
       <button className="btn" type="button" disabled={command.busy} onClick={() => setOpen(false)}>Keep</button>
     </>}
     <ErrorMessage error={command.error} />
@@ -186,11 +186,11 @@ function PendingDecision({ decision, answerShown }: { decision: Row; answerShown
 
 function ActionControl({ action, b }: { action: Action; b: Bridge }) {
   switch (action) {
-    case "launch": return <ProviderAction b={b} action="launch" />;
+    case "send": return <ProviderAction b={b} action="send" />;
     case "inspect": return <ProviderAction b={b} action="inspect" />;
     case "dock": return <DockAction b={b} />;
     case "reply": return <ReplyAction b={b} />;
-    case "drop": return <DropAction b={b} />;
+    case "cancel_delivery": return <CancelDeliveryAction b={b} />;
     case "park_stale": return <ParkAction b={b} />;
     case "cancel": return <CancelAction b={b} />;
     case "answer": return <AnswerAction b={b} />;

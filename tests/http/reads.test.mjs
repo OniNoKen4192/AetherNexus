@@ -6,10 +6,10 @@ import { startWorld } from "./helpers.mjs";
 import { read } from "../helpers.mjs";
 import { append } from "../../dist/db/events.js";
 import { assignMoon } from "../../dist/server/commands/assign.js";
-import { launchMoon, repliedSincePark } from "../../dist/server/commands/launch.js";
-import { inspectMoon } from "../../dist/server/commands/review.js";
-import { dockMoon } from "../../dist/server/commands/dock.js";
-import { replyMoon, dropMoon, parkStaleMoon } from "../../dist/server/commands/park.js";
+import { sendDelivery, repliedSincePark } from "../../dist/server/commands/delivery.js";
+import { sendCustoms } from "../../dist/server/commands/customs.js";
+import { dockCargo } from "../../dist/server/commands/dock.js";
+import { replyMoon, cancelDelivery, parkStaleMoon } from "../../dist/server/commands/park.js";
 import { availableActions } from "../../dist/server/commands/query.js";
 import { loadMoon, moonScope } from "../../dist/server/dispatch.js";
 
@@ -59,10 +59,10 @@ test("available actions follow launch, approve, dock and command refusals", asyn
   const x = await startWorld();
   try {
     const actions = () => availableActions(x.w.g, "T1", { ownPid: process.pid });
-    assert.deepEqual(actions(), ["launch"]); await assert.rejects(inspectMoon(x.w.g, { taskId: "T1" })); assert.throws(() => dockMoon(x.w.g, { taskId: "T1" }));
-    await launchMoon(x.w.g, { taskId: "T1" }); assert.deepEqual(actions(), ["inspect"]); await assert.rejects(launchMoon(x.w.g, { taskId: "T1" })); assert.throws(() => dockMoon(x.w.g, { taskId: "T1" }));
-    await inspectMoon(x.w.g, { taskId: "T1", reviewScript: "review-approve" }); assert.deepEqual(actions(), ["dock"]); await assert.rejects(inspectMoon(x.w.g, { taskId: "T1" })); await assert.rejects(launchMoon(x.w.g, { taskId: "T1" }));
-    dockMoon(x.w.g, { taskId: "T1" }); assert.deepEqual(actions(), []); await assert.rejects(launchMoon(x.w.g, { taskId: "T1" })); await assert.rejects(inspectMoon(x.w.g, { taskId: "T1" })); assert.throws(() => dockMoon(x.w.g, { taskId: "T1" }));
+    assert.deepEqual(actions(), ["send"]); await assert.rejects(sendCustoms(x.w.g, { taskId: "T1" })); assert.throws(() => dockCargo(x.w.g, { taskId: "T1" }));
+    await sendDelivery(x.w.g, { taskId: "T1" }); assert.deepEqual(actions(), ["inspect"]); await assert.rejects(sendDelivery(x.w.g, { taskId: "T1" })); assert.throws(() => dockCargo(x.w.g, { taskId: "T1" }));
+    await sendCustoms(x.w.g, { taskId: "T1", reviewScript: "review-approve" }); assert.deepEqual(actions(), ["dock"]); await assert.rejects(sendCustoms(x.w.g, { taskId: "T1" })); await assert.rejects(sendDelivery(x.w.g, { taskId: "T1" }));
+    dockCargo(x.w.g, { taskId: "T1" }); assert.deepEqual(actions(), []); await assert.rejects(sendDelivery(x.w.g, { taskId: "T1" })); await assert.rejects(sendCustoms(x.w.g, { taskId: "T1" })); assert.throws(() => dockCargo(x.w.g, { taskId: "T1" }));
   } finally { await x.close(); }
 });
 
@@ -71,36 +71,36 @@ test("FIX round returns to inspect before approval and dock", async () => {
   try {
     const actions = () => availableActions(x.w.g, "T1", { ownPid: process.pid });
     const apiActions = async () => (await x.api("/api/moons/T1")).json.actions;
-    await launchMoon(x.w.g, { taskId: "T1" });
-    await inspectMoon(x.w.g, { taskId: "T1", reviewScript: "review-fix" });
-    assert.deepEqual(actions(), ["launch"]); assert.deepEqual(await apiActions(), ["launch"]);
-    await launchMoon(x.w.g, { taskId: "T1" });
+    await sendDelivery(x.w.g, { taskId: "T1" });
+    await sendCustoms(x.w.g, { taskId: "T1", reviewScript: "review-fix" });
+    assert.deepEqual(actions(), ["send"]); assert.deepEqual(await apiActions(), ["send"]);
+    await sendDelivery(x.w.g, { taskId: "T1" });
     assert.deepEqual(actions(), ["inspect"]); assert.deepEqual(await apiActions(), ["inspect"]);
-    await inspectMoon(x.w.g, { taskId: "T1" });
+    await sendCustoms(x.w.g, { taskId: "T1" });
     assert.deepEqual(actions(), ["dock"]); assert.deepEqual(await apiActions(), ["dock"]);
-    dockMoon(x.w.g, { taskId: "T1" });
+    dockCargo(x.w.g, { taskId: "T1" });
   } finally { await x.close(); }
 });
 
 test("REJECT reply and FIX expose exactly the accepted actions", async () => {
   const reject = await startWorld();
   try {
-    await launchMoon(reject.w.g, { taskId: "T1" }); await inspectMoon(reject.w.g, { taskId: "T1", reviewScript: "review-reject" });
-    assert.deepEqual(availableActions(reject.w.g, "T1", { ownPid: process.pid }), ["reply", "drop"]);
+    await sendDelivery(reject.w.g, { taskId: "T1" }); await sendCustoms(reject.w.g, { taskId: "T1", reviewScript: "review-reject" });
+    assert.deepEqual(availableActions(reject.w.g, "T1", { ownPid: process.pid }), ["reply", "cancel_delivery"]);
     replyMoon(reject.w.g, { taskId: "T1", note: "again" }); assert.equal(repliedSincePark(reject.w.g, loadMoon(reject.w.g, "T1").assignment_id), true);
-    assert.deepEqual(availableActions(reject.w.g, "T1", { ownPid: process.pid }), ["reply", "drop", "launch"]);
+    assert.deepEqual(availableActions(reject.w.g, "T1", { ownPid: process.pid }), ["reply", "cancel_delivery", "send"]);
   } finally { await reject.close(); }
   const fix = await startWorld();
   try {
-    await launchMoon(fix.w.g, { taskId: "T1" }); await inspectMoon(fix.w.g, { taskId: "T1", reviewScript: "review-fix" });
-    assert.deepEqual(availableActions(fix.w.g, "T1", { ownPid: process.pid }), ["launch"]);
+    await sendDelivery(fix.w.g, { taskId: "T1" }); await sendCustoms(fix.w.g, { taskId: "T1", reviewScript: "review-fix" });
+    assert.deepEqual(availableActions(fix.w.g, "T1", { ownPid: process.pid }), ["send"]);
   } finally { await fix.close(); }
 });
 
 test("a pending main_tree_changed decision takes priority on an audited moon", async () => {
   const x = await startWorld();
   try {
-    await launchMoon(x.w.g, { taskId: "T1" });
+    await sendDelivery(x.w.g, { taskId: "T1" });
     const moon = loadMoon(x.w.g, "T1"), scope = moonScope(x.w.g, moon);
     append(x.w.g.db, { kind: "decision.opened", ...scope, payload: { kind: "main_tree_changed", target_kind: "moon", target_id: "T1", reasoning: "changed" } });
     assert.deepEqual(availableActions(x.w.g, "T1", { ownPid: process.pid }), ["answer"]);
@@ -111,7 +111,7 @@ test("moon detail is assignment-scoped, validates suffixes, and both reads appen
   const x = await startWorld();
   try {
     const spec = fs.readFileSync(path.join(x.w.dir, ".nexus/specs/T1.md"), "utf8");
-    await launchMoon(x.w.g, { taskId: "T1" }); await inspectMoon(x.w.g, { taskId: "T1", reviewScript: "review-reject" }); dropMoon(x.w.g, { taskId: "T1" });
+    await sendDelivery(x.w.g, { taskId: "T1" }); await sendCustoms(x.w.g, { taskId: "T1", reviewScript: "review-reject" }); cancelDelivery(x.w.g, { taskId: "T1" });
     const old = maxId(x.w); assignMoon(x.w.g, { planetId: x.w.planetId, specPath: ".nexus/specs/T1.md" }); const assigned = maxId(x.w);
     const r = await x.api("/api/moons/T1"); assert.equal(r.status, 200); assert.equal(r.json.spec, spec);
     assert.deepEqual(r.json.voyages, []); assert.deepEqual(r.json.verdicts, []); assert.ok(r.json.events.every((e) => e.id > old));
@@ -124,8 +124,8 @@ test("moon detail is assignment-scoped, validates suffixes, and both reads appen
 test("a reviewing moon whose implement voyage is docked (a crashed dock) still offers dock", async () => {
   const x = await startWorld();
   try {
-    await launchMoon(x.w.g, { taskId: "T1" });
-    await inspectMoon(x.w.g, { taskId: "T1", reviewScript: "review-approve" });
+    await sendDelivery(x.w.g, { taskId: "T1" });
+    await sendCustoms(x.w.g, { taskId: "T1", reviewScript: "review-approve" });
     const moon = loadMoon(x.w.g, "T1"), scope = moonScope(x.w.g, moon);
     const voyage = x.w.g.db.get("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
     append(x.w.g.db, { kind: "voyage.departed", ...scope, voyage_id: voyage.id, ship_id: voyage.ship_id, payload: {} });

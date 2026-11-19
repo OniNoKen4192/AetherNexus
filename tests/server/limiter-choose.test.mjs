@@ -106,10 +106,10 @@ test("chooseProvider and fuelHold append nothing; fuelHold handles held, fly, an
   try {
     const before = w.g.db.get("events.maxId").id;
     read(w, "fake", 0.95); read(w, "probe", 0.95);
-    assert.equal(fuelHold(w.g, "T1", "launch").kind, "held");
-    assert.equal(fuelHold(w.g, "missing", "launch"), null);
+    assert.equal(fuelHold(w.g, "T1", "send").kind, "held");
+    assert.equal(fuelHold(w.g, "missing", "send"), null);
     assert.equal(w.g.db.get("events.maxId").id, before + 2);
-    read(w, "fake", 0.2); assert.equal(fuelHold(w.g, "T1", "launch"), null);
+    read(w, "fake", 0.2); assert.equal(fuelHold(w.g, "T1", "send"), null);
     const afterRead = w.g.db.get("events.maxId").id; pick(w.g); assert.equal(w.g.db.get("events.maxId").id, afterRead);
   } finally { w.cleanup(); }
 });
