@@ -120,6 +120,7 @@ textarea.field { font-family: inherit; resize: vertical; }
 .routing-list li > span:first-child { display: inline-block; min-width: 100px; }
 .routing-buttons { display: inline-flex; gap: 4px; margin-left: 8px; }
 .failure-badge { color: var(--danger); border-color: var(--danger); }
+.attention-label { max-width: 100%; color: var(--danger); background: var(--danger-bg); border: 1px solid var(--danger); overflow-wrap: anywhere; }
 
 /* An open moon's detail sits beside the system list and stays in view while the list scrolls. */
 @media (min-width: 1100px) {

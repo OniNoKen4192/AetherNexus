@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Bridge } from "../store";
 import type { Action, Row } from "../types";
+import { asFuelWait, asRefuelOffer, overrideCommand, refuelCommand, refuelLabel, sendAnywayLabel } from "../labels";
 
 export function useCommand(b: Bridge): {
   busy: boolean;
@@ -196,6 +197,30 @@ function ActionControl({ action, b }: { action: Action; b: Bridge }) {
   }
 }
 
+function RefuelAction({ b }: { b: Bridge }) {
+  const command = useCommand(b);
+  if (b.detail === null || b.taskId === null) return null;
+  const offer = asRefuelOffer(b.detail.moon["can_refuel"]);
+  const refuel = refuelCommand(b.detail.actions, b.taskId);
+  if (offer === null || refuel === null) return null;
+  return <div className="action-group">
+    <button className="btn" type="button" disabled={command.busy} onClick={() => void command.send(refuel.name, refuel.body)}>{refuelLabel(offer)}</button>
+    <ErrorMessage error={command.error} />
+  </div>;
+}
+
+function OverrideAction({ b }: { b: Bridge }) {
+  const command = useCommand(b);
+  if (b.detail === null || b.taskId === null) return null;
+  const wait = asFuelWait(b.detail.moon["waiting_on_fuel"]);
+  const override = overrideCommand(b.detail.actions, b.taskId);
+  if (wait === null || override === null) return null;
+  return <div className="action-group">
+    <button className="btn" type="button" disabled={command.busy} onClick={() => void command.send(override.name, override.body)}>{sendAnywayLabel(wait.reason)}</button>
+    <ErrorMessage error={command.error} />
+  </div>;
+}
+
 export function ActionBar({ b }: { b: Bridge }) {
   if (b.detail === null) return null;
   const answerShown = b.detail.actions.includes("answer");
@@ -203,6 +228,8 @@ export function ActionBar({ b }: { b: Bridge }) {
   return <div className="action-bar">
     {b.detail.decisions.map((decision, index) => <PendingDecision answerShown={answerShown} decision={decision} key={`${String(decision["id"])}-${index}`} />)}
     {b.detail.actions.map((action, index) => <ActionControl action={action} b={b} key={`${b.taskId}-${action}`} />)}
+    <RefuelAction b={b} />
+    <OverrideAction b={b} />
     {elsewhere && <div>This voyage is running in another process; stop it there (Ctrl-C) to act on this moon.</div>}
   </div>;
 }
