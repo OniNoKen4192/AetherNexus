@@ -11,7 +11,11 @@ type VoyageRow = { id: string; ship_id: string; status: string };
 type DecisionRow = { id: number };
 const SUPERSEDABLE = new Set(["holding", "cleared", "en_route", "adrift", "quarantined", "out_of_fuel"]);
 
-/** Supersede every parked voyage of the moon and free its ship. A moon parked with no voyage (carry-over park) has nothing to do. */
+/**
+ * Supersede every parked or out-of-fuel voyage of the moon and free the ships they still hold. A voyage that ended out of
+ * fuel gave its ship back at the wall, and that ship may be flying for another moon by now: it is never released here.
+ * A moon parked with no voyage (carry-over park) has nothing to do.
+ */
 export function releaseMoonVoyages(g: Galaxy, moon: MoonRow, outcome: "reply" | "drop"): void {
   const scope = moonScope(g, moon);
   for (const v of g.db.all<VoyageRow>("voyages.byAssignment", { assignment_id: moon.assignment_id })) {
@@ -40,7 +44,7 @@ function requireDroppable(moon: MoonRow): void {
   }
 }
 
-/** Park a moon that has no live voyage: moon.adrift + an 'adrift' decision. Legal from emitted, gated, audited, reviewing, adrift, quarantined. */
+/** Park a moon that has no live voyage: moon.adrift + an 'adrift' decision. Legal from emitted, gated, audited, reviewing, adrift, quarantined, awaiting_pickup. */
 export function parkMoonOnly(g: Galaxy, p: { taskId: string; reason: string; details: string }): void {
   const moon = loadMoon(g, p.taskId);
   const scope = moonScope(g, moon);

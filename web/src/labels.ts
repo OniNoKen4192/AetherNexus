@@ -13,8 +13,8 @@ export function parkReasonText(reason: string): string {
 }
 
 export function parkReasonHint(reason: string): string | null {
-  if (reason === "carryover_violations") return "clear the files outside the task's paths from its worktree, then reply — or drop the moon";
-  if (reason === "baseline_tampered") return "put the gate's state file back exactly as it was, then reply — or drop the moon";
+  if (reason === "carryover_violations") return "clear the files outside the task's paths from its worktree, then reply — or cancel the delivery (Drop)";
+  if (reason === "baseline_tampered") return "put the gate's state file back exactly as it was, then reply — or cancel the delivery (Drop)";
   return null;
 }
 

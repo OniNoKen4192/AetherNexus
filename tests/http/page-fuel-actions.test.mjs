@@ -42,8 +42,8 @@ test("Park reasons", () => {
   assert.equal(parkReasonText("baseline_tampered"), "raided by pirates");
   assert.equal(parkReasonText("rate_limited"), "rate_limited");
   assert.deepEqual(["carryover_violations", "baseline_tampered", "rate_limited", null, undefined, 7].map(needsAttention), [true, true, false, false, false, false]);
-  assert.equal(parkReasonHint("carryover_violations"), "clear the files outside the task's paths from its worktree, then reply — or drop the moon");
-  assert.equal(parkReasonHint("baseline_tampered"), "put the gate's state file back exactly as it was, then reply — or drop the moon");
+  assert.equal(parkReasonHint("carryover_violations"), "clear the files outside the task's paths from its worktree, then reply — or cancel the delivery (Drop)");
+  assert.equal(parkReasonHint("baseline_tampered"), "put the gate's state file back exactly as it was, then reply — or cancel the delivery (Drop)");
   assert.equal(parkReasonHint("rate_limited"), null);
 });
 

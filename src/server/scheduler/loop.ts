@@ -139,7 +139,7 @@ export function createScheduler(g: Galaxy, opts: { runner: VoyageRunner; pollMs:
         } catch (parkError) {
           // Every attempt writes an event, and every event wakes the loop: leave this moon alone until its status changes.
           failed.set(key(action), { taskId: action.taskId, status: statusOf(action.taskId), gaveUp: true });
-          runner.report({ taskId: action.taskId, message: `the scheduler could not ${action.action === "park_stale" ? "park" : action.action} and could not hold the moon: ${messageOf(parkError)} (after: ${messageOf(error)})` });
+          runner.report({ taskId: action.taskId, message: `the scheduler could not ${action.action === "park_stale" ? "park" : action.action} and could not park the moon: ${messageOf(parkError)} (after: ${messageOf(error)})` });
         }
       }
     }

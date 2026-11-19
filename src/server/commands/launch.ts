@@ -106,6 +106,7 @@ export async function launchMoon(
 
   // Precheck 1: state.
   // A parked moon relaunches only after a human reply newer than the park (reply appends moon.amended, then human.message).
+  // A moon whose cargo awaits pickup needs no reply: nobody was asked anything.
   const relaunch = status === "adrift" || status === "quarantined" || status === "awaiting_pickup";
   if ((status === "adrift" || status === "quarantined") && !repliedSincePark(g, moon.assignment_id)) throw new Refusal(`moon ${taskId} is ${status} — use 'nexus moon reply' or 'nexus moon drop'`);
   if (status === "audited") {
@@ -156,7 +157,7 @@ export async function launchMoon(
   // A FIX round starts from a clean baseline: the previous round's work becomes a nexus-authored commit
   // (the audit ignores nexus commits), so this round's audit shows only this round's changes.
   let carriedSha: string | undefined;
-  // A relaunch after a park is treated the same way (when its worktree survived): the parked work is carried over, audited first.
+  // A relaunch after a park, and a pickup, are treated the same way (when the worktree survived): the work left there is carried over, audited first.
   // Without a gate baseline (a gate_failed park never wrote one) there is nothing to audit against: gate afresh instead.
   // A state file is a baseline only if this assignment was gated: a stale file from a dropped assignment of the same id is not.
   const gatedHere = g.db.all("events.byAssignment", { assignment_id: moon.assignment_id }).some((e) => e["kind"] === "moon.gated");
@@ -168,7 +169,7 @@ export async function launchMoon(
     const parkMoon = (reason: string, details: Record<string, unknown>): { voyageId: string; audit: AuditReport | null; moonStatus: MoonStatus } => {
       // A moon that is already parked cannot go adrift again: refuse and leave it as it is (fix the worktree, then relaunch).
       if (status === "adrift" || status === "quarantined") throw new Refusal(`carry-over audit refused the parked worktree (${reason})`, details);
-      // The previous freighter voyage is already superseded (cannot go adrift), so park the moon itself.
+      // The previous freighter voyage is already superseded, or ended out of fuel (neither can go adrift), so park the moon itself.
       append(g.db, { kind: "moon.adrift", ...scope, payload: { reason } });
       const reasoning = status === "awaiting_pickup"
         ? `${reason === "baseline_tampered" ? "raided: the gate baseline changed while the cargo awaited pickup" : "contraband in the cargo awaiting pickup"}: ${JSON.stringify(details)}`

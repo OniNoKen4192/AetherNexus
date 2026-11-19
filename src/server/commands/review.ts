@@ -67,7 +67,7 @@ export async function inspectMoon(
   });
   const scope = moonScope(g, moon);
   if (!outcome.done) {
-    // runVoyage parked the review voyage and the moon: no verdict was issued, so none is reported.
+    // runVoyage ended the review voyage without a verdict (parked, or its ship ran out of fuel and the moon is back to audited): none is reported.
     return { voyageId: outcome.voyageId, verdict: null, moonStatus: loadMoon(g, taskId).status as MoonStatus };
   }
 

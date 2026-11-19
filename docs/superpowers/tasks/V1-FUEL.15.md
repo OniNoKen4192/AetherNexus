@@ -154,3 +154,12 @@ DEVIATIONS: <anything done differently than specified, and why — or "none".
   non-empty list>
 BLOCKED_REASON: <only if BLOCKED: what was needed that the spec didn't provide>
 ```
+
+## Amendments
+
+### A1 — 2026-11-19 — planner's wording change after the whole-branch review
+- **Verdict ref**: final whole-branch review of design/v1-fuel
+- **Change**: both `parkReasonHint` strings end `— or cancel the delivery (Drop)` instead of `— or drop the moon`.
+- **Reason**: the fuel design's intent says nothing in this slice describes a moon as dropped; the button is still labelled Drop, so the hint names it.
+- **Affected paths**: `web/src/labels.ts`, `tests/http/page-fuel-actions.test.mjs`
+- **Acceptance criteria**: criterion 2's two hint strings read `clear the files outside the task's paths from its worktree, then reply — or cancel the delivery (Drop)` and `put the gate's state file back exactly as it was, then reply — or cancel the delivery (Drop)`.
