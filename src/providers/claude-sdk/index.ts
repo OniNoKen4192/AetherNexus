@@ -47,6 +47,25 @@ type Block = { type?: string; text?: string; id?: string; name?: string; input?:
 const blocksOf = (m: unknown): Block[] => { const c = (m as { message?: { content?: unknown } }).message?.content; return Array.isArray(c) ? (c as Block[]) : []; };
 const flatten = (c: unknown): string => typeof c === "string" ? c : Array.isArray(c) ? c.map((b) => (b && typeof b === "object" && "text" in b ? String((b as { text: unknown }).text) : "")).join("") : c == null ? "" : JSON.stringify(c);
 
+const familyOf = (window: string | undefined): string | undefined => window === "seven_day_opus" ? "opus" : window === "seven_day_sonnet" ? "sonnet" : undefined;
+
+/** Epoch seconds or milliseconds to an ISO time; undefined for anything else. */
+function isoOf(value: unknown): string | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
+  const date = new Date(value < 1e12 ? value * 1000 : value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+/** One fuel reading for a rate-limit window. Utilization at most 1 is a fraction; above 1 it is read as a percentage. */
+function readingOf(window: string, utilization: unknown, resets: unknown): AgentEvent | undefined {
+  if (typeof utilization !== "number" || !Number.isFinite(utilization) || utilization < 0 || window === "overage") return undefined;
+  const resetsAt = isoOf(resets); const modelFamily = familyOf(window);
+  return { kind: "fuel", ts: ts(), data: {
+    window, used: utilization <= 1 ? utilization : Math.min(utilization / 100, 1),
+    ...(resetsAt ? { resets_at: resetsAt } : {}), ...(modelFamily ? { model_family: modelFamily } : {}),
+  } };
+}
+
 export function mapMessage(m: SDKMessage, role: Role): AgentEvent[] {
   const msg = m as unknown as Record<string, unknown> & { type: string; subtype?: string };
   switch (msg.type) {
@@ -80,24 +99,21 @@ export function mapMessage(m: SDKMessage, role: Role): AgentEvent[] {
       return [u, errEvent(msg.subtype === "error_max_budget_usd" ? "capacity" : "backend_failure", errors.join("; ") || String(msg.subtype))];
     }
     case "rate_limit_event": {
-      const info = msg["rate_limit_info"] as { status?: string; resetsAt?: unknown; rateLimitType?: string; utilization?: unknown } | undefined;
-      const modelFamily = info?.rateLimitType === "seven_day_opus" ? "opus" : info?.rateLimitType === "seven_day_sonnet" ? "sonnet" : undefined;
-      let resetsAt: string | undefined;
-      if (typeof info?.resetsAt === "number" && Number.isFinite(info.resetsAt) && info.resetsAt > 0) {
-        const date = new Date(info.resetsAt < 1e12 ? info.resetsAt * 1000 : info.resetsAt);
-        if (!Number.isNaN(date.getTime())) resetsAt = date.toISOString();
-      }
+      // As the SDK sends it (live check 2026-11-19): the readings sit under unifiedWindows, one per window, with
+      // utilization as a fraction and resetsAt in epoch seconds. A top-level utilization is read too, for the window
+      // the event names, when unifiedWindows has no reading for it.
+      const info = msg["rate_limit_info"] as { status?: string; resetsAt?: unknown; rateLimitType?: string; utilization?: unknown; unifiedWindows?: unknown } | undefined;
+      const modelFamily = familyOf(info?.rateLimitType);
+      const resetsAt = isoOf(info?.resetsAt);
       const out: AgentEvent[] = [];
-      if (typeof info?.utilization === "number" && Number.isFinite(info.utilization) && info.utilization >= 0 && info.rateLimitType !== "overage") {
-        out.push({
-          kind: "fuel", ts: ts(), data: {
-            window: info.rateLimitType ?? "unknown",
-            used: info.utilization <= 1 ? info.utilization : Math.min(info.utilization / 100, 1),
-            ...(resetsAt ? { resets_at: resetsAt } : {}),
-            ...(modelFamily ? { model_family: modelFamily } : {}),
-          },
-        });
+      const windows = info?.unifiedWindows !== null && typeof info?.unifiedWindows === "object" && !Array.isArray(info.unifiedWindows)
+        ? Object.entries(info.unifiedWindows as Record<string, { utilization?: unknown; resetsAt?: unknown } | null>) : [];
+      const fromWindows = windows.flatMap(([name, w]) => { const r = readingOf(name, w?.utilization, w?.resetsAt); return r ? [[name, r] as const] : []; });
+      if (!fromWindows.some(([name]) => name === info?.rateLimitType)) {
+        const top = readingOf(info?.rateLimitType ?? "unknown", info?.utilization, info?.resetsAt);
+        if (top) out.push(top);
       }
+      for (const [, r] of fromWindows) out.push(r);
       if (info?.status === "rejected") {
         out.push({ kind: "error", ts: ts(), data: { classification: "rate_limited", message: `rate limit rejected: ${JSON.stringify(info)}`, ...(resetsAt ? { resets_at: resetsAt } : {}), ...(modelFamily ? { model_family: modelFamily } : {}) } });
       } else {

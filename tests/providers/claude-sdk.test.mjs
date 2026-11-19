@@ -140,3 +140,48 @@ test("I4c: the Bash hook denies git state changes and passes inspection and othe
   for (const c of ["git status", "git log --oneline", "git diff HEAD", "git branch --list", "git show HEAD:src/a.js", "npm test", "echo committed"]) assert.deepEqual(await bash(c), {}, c);
   assert.deepEqual(await hook({ hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { command: "git commit" }, tool_use_id: "1", session_id: "s", cwd: "/wt" }, "1", sig), {});
 });
+
+// The shape the real SDK sent on an ordinary run (live check 2026-11-19): no top-level utilization, the readings sit
+// under unifiedWindows, utilization is a fraction and resetsAt is epoch seconds. Rate-limit numbers only.
+const REAL_RATE_LIMIT_INFO = {
+  status: "allowed", resetsAt: 1795586400, rateLimitType: "seven_day", overageStatus: "allowed", overageResetsAt: 1796083200,
+  isUsingOverage: false, unifiedWindows: { seven_day: { utilization: 0.11, resetsAt: 1795586400 } },
+};
+
+test("rate limit fuel is read from unifiedWindows, as the real SDK sends it", () => {
+  const events = rateLimit(REAL_RATE_LIMIT_INFO);
+  assert.deepEqual(events.map((e) => e.kind), ["fuel", "text"]);
+  assert.deepEqual(events[0].data, { window: "seven_day", used: 0.11, resets_at: new Date(1795586400 * 1000).toISOString() });
+});
+
+test("every unified window gives one reading, with its own reset and model family", () => {
+  const events = rateLimit({
+    status: "allowed", rateLimitType: "five_hour", resetsAt: 1795186480,
+    unifiedWindows: {
+      five_hour: { utilization: 0.5, resetsAt: 1795186480 }, seven_day: { utilization: 0.11, resetsAt: 1795586400 },
+      seven_day_opus: { utilization: 0.9 }, seven_day_sonnet: { utilization: 20, resetsAt: 1795586400000 },
+      overage: { utilization: 0.3 }, broken: { utilization: "0.4" }, empty: null,
+    },
+  }).filter((e) => e.kind === "fuel").map((e) => e.data);
+  assert.deepEqual(events, [
+    { window: "five_hour", used: 0.5, resets_at: new Date(1795186480 * 1000).toISOString() },
+    { window: "seven_day", used: 0.11, resets_at: new Date(1795586400 * 1000).toISOString() },
+    { window: "seven_day_opus", used: 0.9, model_family: "opus" },
+    { window: "seven_day_sonnet", used: 0.2, resets_at: new Date(1795586400 * 1000).toISOString(), model_family: "sonnet" },
+  ]);
+});
+
+test("a top-level utilization is still read, and not twice when unifiedWindows names the same window", () => {
+  assert.deepEqual(rateLimit({ status: "allowed", rateLimitType: "five_hour", utilization: 0.4 }).filter((e) => e.kind === "fuel").map((e) => e.data), [{ window: "five_hour", used: 0.4 }]);
+  const both = rateLimit({ status: "allowed", rateLimitType: "seven_day", utilization: 0.4, unifiedWindows: { seven_day: { utilization: 0.11 }, five_hour: { utilization: 0.5 } } }).filter((e) => e.kind === "fuel").map((e) => e.data);
+  assert.deepEqual(both, [{ window: "seven_day", used: 0.11 }, { window: "five_hour", used: 0.5 }]);
+  const other = rateLimit({ status: "allowed", rateLimitType: "five_hour", utilization: 0.4, unifiedWindows: { seven_day: { utilization: 0.11 } } }).filter((e) => e.kind === "fuel").map((e) => e.data);
+  assert.deepEqual(other, [{ window: "five_hour", used: 0.4 }, { window: "seven_day", used: 0.11 }]);
+});
+
+test("a rejection carries the reset of the window that rejected", () => {
+  const events = rateLimit({ ...REAL_RATE_LIMIT_INFO, status: "rejected" });
+  assert.deepEqual(events.map((e) => e.kind), ["fuel", "error"]);
+  assert.equal(events[1].data.classification, "rate_limited");
+  assert.equal(events[1].data.resets_at, new Date(1795586400 * 1000).toISOString());
+});
