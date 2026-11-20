@@ -33,6 +33,9 @@ export const STATEMENTS = {
   "ships.byId": "SELECT * FROM ships WHERE id = @id",
   "ships.all": "SELECT * FROM ships ORDER BY fleet, job, weight, name",
   "ships.pickIdle": "SELECT * FROM ships WHERE job = @job AND fleet = @fleet AND weight = @weight AND status = 'idle' ORDER BY voyage_count, name LIMIT 1",
+  // assigned, yet none of its voyages is still open or parked: the release that should have followed the voyage's end was never written
+  "ships.stranded": "SELECT s.* FROM ships s WHERE s.status = 'assigned' AND NOT EXISTS (SELECT 1 FROM voyages v WHERE v.ship_id = s.id AND v.status IN ('launched','working','holding','cleared','en_route','adrift','quarantined')) ORDER BY s.fleet, s.name",
+  "voyages.latestByShip": "SELECT * FROM voyages WHERE ship_id = @ship_id ORDER BY rowid DESC LIMIT 1",
   "ships.setStatus": "UPDATE ships SET status = @status, last_event_id = @last_event_id WHERE id = @id",
   "ships.release": "UPDATE ships SET status = 'idle', voyage_count = voyage_count + @inc, last_event_id = @last_event_id WHERE id = @id",
   "planets.assign": "UPDATE planets SET body_status = 'assigned', stream_id = @stream_id, mission = @mission, territory = @territory, depends_on = @depends_on, branch = @branch, worktree = @worktree, status = 'open', last_event_id = @last_event_id WHERE id = @id",

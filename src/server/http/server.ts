@@ -12,6 +12,7 @@ import { createFeed, type Feed } from "./feed.js";
 import { BadRequest, errorResponse, runCommand } from "./commands.js";
 import { createVoyageRunner, type VoyageRunner } from "./runner.js";
 import { createScheduler } from "../scheduler/loop.js";
+import { recoverStrandedShips } from "../commands/park.js";
 import { plan } from "../scheduler/plan.js";
 
 export { checkRequest } from "./auth.js";
@@ -137,6 +138,11 @@ export async function startServer(g: Galaxy, opts: { port?: number; token?: stri
   const token = opts.token ?? crypto.randomBytes(32).toString("hex");
   const webRoot = opts.webRoot ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "web");
   const lock = acquireServerLock(g, { port: wantPort });
+  // A ship left assigned by a crash would never be noticed (the next launch commissions another): free it now, in the log.
+  try {
+    const { released } = recoverStrandedShips(g);
+    if (released.length) process.stderr.write(`released ${released.length} stranded ${released.length === 1 ? "ship" : "ships"}: ${released.map((r) => r.name).join(", ")}\n`);
+  } catch (err) { process.stderr.write(`could not check for stranded ships: ${err instanceof Error ? err.message : String(err)}\n`); }
   const state = { port: wantPort, token };
   const feed = createFeed(g, { pollMs: opts.pollMs ?? 250 });
   const runner = createVoyageRunner({ onFailure: () => feed.notify() });

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { append } from "../../db/events.js";
+import { append, appendAll } from "../../db/events.js";
 import { appendAmendment, hashSpec } from "../../validate/spec.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
@@ -21,9 +21,12 @@ export function releaseMoonVoyages(g: Galaxy, moon: MoonRow, outcome: "reply" | 
   for (const v of g.db.all<VoyageRow>("voyages.byAssignment", { assignment_id: moon.assignment_id })) {
     if (!SUPERSEDABLE.has(v.status)) continue;
     const vscope = { ...scope, voyage_id: v.id, ship_id: v.ship_id };
-    append(g.db, { kind: "voyage.superseded", ...vscope, payload: {} });
-    const ship = g.db.get<{ status: string }>("ships.byId", { id: v.ship_id });
-    if (v.status !== "out_of_fuel" && ship && ship.status !== "idle" && ship.status !== "retired") append(g.db, { kind: "ship.released", ...vscope, payload: { voyage_id: v.id, outcome } });
+    // one transaction: a superseded voyage never keeps its ship
+    appendAll(g.db, () => {
+      const ship = g.db.get<{ status: string }>("ships.byId", { id: v.ship_id });
+      const free = v.status !== "out_of_fuel" && ship && ship.status !== "idle" && ship.status !== "retired";
+      return [{ kind: "voyage.superseded", ...vscope, payload: {} }, ...(free ? [{ kind: "ship.released", ...vscope, payload: { voyage_id: v.id, outcome } }] : [])];
+    });
   }
 }
 
@@ -116,4 +119,30 @@ export function retireShip(g: Galaxy, input: { shipId: string; reason: string })
   append(g.db, { kind: "ship.retired", ship_id: input.shipId, payload: { reason: input.reason } }, () => {
     if (g.db.get<{ status: string }>("ships.byId", { id: input.shipId })?.status !== "idle") throw new Refusal(`ship ${input.shipId} is not idle`);
   });
+}
+
+/**
+ * Release every ship that is still `assigned` although no voyage of its is open or parked. That state is left by a crash
+ * between the event that ended a voyage and the release that followed it (builds before the two were written together), and
+ * nothing else would ever notice it: the next launch simply commissions another ship. Each release is logged with outcome
+ * `recovered`, so it is visible and does not count as a flown voyage. Safe to run at any time: the check and the release
+ * are one transaction per ship.
+ */
+export function recoverStrandedShips(g: Galaxy): { released: { shipId: string; name: string; voyageId: string | null }[] } {
+  const released: { shipId: string; name: string; voyageId: string | null }[] = [];
+  for (const candidate of g.db.all<{ id: string }>("ships.stranded")) {
+    appendAll(g.db, () => {
+      const ship = g.db.all<{ id: string; name: string; fleet: string }>("ships.stranded").find((row) => row.id === candidate.id);
+      if (!ship) return [];   // released by someone else since we looked
+      const last = g.db.get<VoyageRow & { moon_id: string | null; planet_id: string | null; task_id: string; assignment_id: number }>("voyages.latestByShip", { ship_id: ship.id });
+      const voyageId = last?.id ?? null;
+      released.push({ shipId: ship.id, name: ship.name, voyageId });
+      return [{
+        kind: "ship.released", ship_id: ship.id, provider: ship.fleet,
+        ...(last ? { voyage_id: last.id, moon_id: last.moon_id, planet_id: last.planet_id, task_id: last.task_id, assignment_id: last.assignment_id } : {}),
+        payload: { voyage_id: voyageId, outcome: "recovered" },
+      }];
+    });
+  }
+  return { released };
 }

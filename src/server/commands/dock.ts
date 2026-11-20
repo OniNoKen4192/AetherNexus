@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { withGitLog, withoutGitLog, type GitLog } from "../../core/git.js";
-import { append } from "../../db/events.js";
+import { append, appendAll } from "../../db/events.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
 import { loadMoon, loadPlanet, moonScope, parkVoyage } from "../dispatch.js";
@@ -93,7 +93,13 @@ export function dockCargo(g: Galaxy, input: { taskId: string }): { mergeSha: str
       }
       mergeSha = merged.sha;
     }
-    append(g.db, { kind: "voyage.docked", ...fscope, payload: { merge_sha: mergeSha, planet_branch: planetBranch } });
+    // One transaction: the voyage docks, the moon is merged and the ship is free. `finish` then only removes the worktree;
+    // it still completes a dock that an older build left half-written.
+    appendAll(g.db, () => [
+      { kind: "voyage.docked", ...fscope, payload: { merge_sha: mergeSha, planet_branch: planetBranch } },
+      { kind: "moon.merged", ...scope, payload: { merge_sha: mergeSha } },
+      { kind: "ship.released", ...fscope, payload: { voyage_id: voyage.id, outcome: "docked" } },
+    ]);
     return finish(planetBranch, mergeSha);
   });
 }

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { append } from "../../db/events.js";
+import { append, appendAll } from "../../db/events.js";
 import { rowToEvent } from "../../db/events.js";
 import type { MoonStatus } from "../../core/transitions.js";
 import type { AgentEvent, ReviewReport } from "../../providers/adapter.js";
@@ -70,8 +70,7 @@ export async function sendCustoms(
   }
 
   const verdict = outcome.done.data.report as ReviewReport;
-  // The customs ship has finished its voyage whatever the verdict.
-  append(g.db, { kind: "ship.released", ...scope, voyage_id: outcome.voyageId, ship_id: outcome.shipId, payload: { voyage_id: outcome.voyageId, outcome: "docked" } });
+  // The customs ship was released with its return, in runVoyage.
   append(g.db, {
     kind: "verdict.issued", ...scope, voyage_id: outcome.voyageId, ship_id: outcome.shipId,
     payload: { verdict: verdict.verdict, reasoning: verdict.reasoning, ...(verdict.delta_spec ? { delta_spec: verdict.delta_spec } : {}), round: moon.round, voyage_id: delivery.id },
@@ -87,8 +86,11 @@ export async function sendCustoms(
   } else if (g.db.all<{ verdict: string }>("verdicts.byAssignment", { assignment_id: moon.assignment_id }).filter((row) => row.verdict === "FIX").length >= g.config.automation.max_fix_rounds) {
     parkVoyage(g, { taskId, voyageId: delivery.id, shipId: delivery.ship_id, reason: "max_fix_rounds", details: `FIX verdict after round ${moon.round} (max ${g.config.automation.max_fix_rounds}): ${verdict.reasoning}` });
   } else {
-    append(g.db, { kind: "voyage.superseded", ...fscope, payload: {} });
-    append(g.db, { kind: "ship.released", ...fscope, payload: { voyage_id: delivery.id, outcome: "superseded" } });
+    // one transaction: a superseded voyage never keeps its ship
+    appendAll(g.db, () => [
+      { kind: "voyage.superseded", ...fscope, payload: {} },
+      { kind: "ship.released", ...fscope, payload: { voyage_id: delivery.id, outcome: "superseded" } },
+    ]);
     const amended = amendmentFor(specText, moon.round, verdict.reasoning, verdict.delta_spec);
     recordTreeWrite(g, [moon.spec_path]);
     fs.writeFileSync(specAbs, amended);

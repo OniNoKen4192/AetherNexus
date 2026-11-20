@@ -12,7 +12,7 @@ import { assignPlanet, assignMoon } from "../server/commands/assign.js";
 import { sendDelivery } from "../server/commands/delivery.js";
 import { sendCustoms } from "../server/commands/customs.js";
 import { dockCargo } from "../server/commands/dock.js";
-import { replyMoon, cancelDelivery, retireShip, parkStaleMoon } from "../server/commands/park.js";
+import { replyMoon, cancelDelivery, retireShip, parkStaleMoon, recoverStrandedShips } from "../server/commands/park.js";
 import { answerDecision } from "../server/commands/decision.js";
 import { setAutomationLevel } from "../server/commands/config.js";
 import { status, events, fleet } from "../server/commands/query.js";
@@ -47,6 +47,7 @@ const USAGE = `usage: nexus [--json] <command>
   status [<system-id>]
   events [--follow] [--since <id>] [--moon <id>]
   fleet [retire <ship-id> --reason <r>]
+  fleet recover                                  release ships left assigned by a crash
   db rebuild | stats | explain <name> | analyze
   validate <spec-path> | --selftest
   serve [--port <n>]                       run the local bridge server (127.0.0.1 only) until Ctrl-C
@@ -271,6 +272,10 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
       if (rest[0] !== "trust" || rest[1] === undefined || rest.length !== 2) throw new Usage();
       const r = setAutomationLevel(g, { level: rest[1] });
       return out(r, () => r.changed ? `rung: ${r.from} -> ${r.level}` : `rung: ${r.level} (unchanged)`);
+    }
+    case "fleet recover": {
+      const r = recoverStrandedShips(g);
+      return out(r, () => r.released.length ? r.released.map((s) => `released ${s.name} (${s.shipId})${s.voyageId ? ` — its last voyage was ${s.voyageId}` : ""}`).join("\n") : "no stranded ships");
     }
     case "fleet retire": {
       const shipId = need(rest[0], "<ship-id>"); retireShip(g, { shipId, reason: need(o.reason, "--reason") });

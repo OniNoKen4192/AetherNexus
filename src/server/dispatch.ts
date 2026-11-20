@@ -224,10 +224,15 @@ export async function runVoyage(g: Galaxy, input: VoyageInput): Promise<Dispatch
 
   if (out.done) {
     const d = out.done.data;
-    append(g.db, {
+    const returned: NexusEvent = {
       kind: "voyage.returned", ...scope, voyage_id: voyageId, ship_id: ship.id,
       payload: { role: input.role, report: d.report, ...(d.session_id ? { session_id: d.session_id } : {}), ...(cost !== undefined ? { cost } : {}) },
-    });
+    };
+    // A customs ship has finished when it returns, whatever the verdict: its release is written with the return, so a
+    // crash cannot leave the ship assigned to a voyage that is over. A delivery ship holds its cargo until it docks.
+    appendAll(g.db, () => input.role === "review"
+      ? [returned, { kind: "ship.released", ...scope, voyage_id: voyageId, ship_id: ship.id, payload: { voyage_id: voyageId, outcome: "docked" } }]
+      : [returned]);
     delete out.parkReason;
     return out;
   }
