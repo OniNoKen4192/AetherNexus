@@ -17,9 +17,11 @@ const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "
 export function openDb(file: string, opts: { stats?: boolean } = {}): NexusDb {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const raw = new DatabaseSync(file);
+  // busy_timeout first: switching a brand-new file to WAL takes a lock, and a second process opening it at the same
+  // moment must wait for that lock instead of failing with "database is locked".
+  raw.exec("PRAGMA busy_timeout = 5000");
   raw.exec("PRAGMA journal_mode = WAL");
   raw.exec("PRAGMA foreign_keys = ON");
-  raw.exec("PRAGMA busy_timeout = 5000");
   migrate(raw);
 
   const cache = new Map<string, StatementSync>();

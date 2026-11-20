@@ -268,3 +268,20 @@ test("a running galaxy does not pick up a config whose weights the catalogue doe
     assert.deepEqual(reloadConfig(w.g), { ok: true }); assert.equal(w.g.config.providers.fake.weights.terra, "light");
   } finally { w.cleanup(); }
 });
+
+test("the limit inside the launch transaction refuses customs with no ship commissioned for it", async () => {
+  // sendCustoms has no advisory check up front, so this reaches the authoritative one, at the point where a customs ship would be commissioned
+  const w = await worldWithTwoMoons("happy", "slow", patch((c) => { c.scheduler.max_concurrent_ships = 1; }));
+  try {
+    await sendDelivery(w.g, { taskId: "T1" });                       // audited: nothing in flight
+    const flying = sendDelivery(w.g, { taskId: "T2" });              // slow: takes the only flight slot
+    await assert.rejects(sendCustoms(w.g, { taskId: "T1" }), /1 voyage in flight — the limit is 1 \(scheduler\.max_concurrent_ships\)/);
+    assert.equal(ships(w.g).filter((s) => s.job === "customs").length, 0, "no customs ship was commissioned for the refused voyage");
+    assert.equal(kinds(w.g, "ship.commissioned").length, 2);
+    assert.equal(loadMoon(w.g, "T1").status, "audited");
+    await flying;
+    await sendCustoms(w.g, { taskId: "T1" });
+    assert.equal(ships(w.g).filter((s) => s.job === "customs").length, 1);
+    stable(w.g);
+  } finally { w.cleanup(); }
+});

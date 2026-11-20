@@ -123,3 +123,8 @@ test("the fleet panel hands each ship row to its line unchanged", async () => {
   assert.match(source, /Array\.isArray\(\s*snapshot\.weights\s*\)/);
   assert.match(source, /<Ship b=\{b\} ship=\{entry\.ship\}/);
 });
+
+test("a hull id with hyphens reads as words", () => {
+  assert.equal(shipsModule.formationText({ name: "Customs cutter", vessels: [{ hull: "customs-cutter", count: 1, role: "lead" }] }), "Customs cutter (1 customs cutter)");
+  assert.equal(shipsModule.formationText({ name: "Patrol", vessels: [{ hull: "customs-cutter", count: 2, role: "lead" }] }), "Patrol (2 customs cutters)");
+});

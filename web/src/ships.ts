@@ -10,7 +10,8 @@ function record(value: unknown): Record<string, unknown> | null {
 
 export function formationText(f: { name: string; vessels: { hull: string; count: number; role: string }[] }): string {
   if (f.vessels.length === 0) return f.name;
-  const vessels = f.vessels.map((vessel) => `${vessel.count} ${vessel.hull}${vessel.count > 1 ? "s" : ""}`);
+  // a hull is a catalogue id ("customs-cutter"); people read it as words
+  const vessels = f.vessels.map((vessel) => `${vessel.count} ${vessel.hull.replaceAll("-", " ")}${vessel.count > 1 ? "s" : ""}`);
   return `${f.name} (${vessels.join(", ")})`;
 }
 
