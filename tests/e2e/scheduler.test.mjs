@@ -92,7 +92,7 @@ test("roundabout settles a three-moon planet unattended", async () => {
 
     const aDock = feed.events.find((event) => event.kind === "voyage.docked" && event.task_id === "T1");
     const bLaunch = feed.events.find((event) => event.kind === "voyage.launched" && event.task_id === "B" && event.payload.role === "implement");
-    assert.ok(bLaunch.id > aDock.id, "B's implement freighter is sent only after A's freighter docks");
+    assert.ok(bLaunch.id > aDock.id, "B's implement delivery is sent only after A's delivery docks");
     const a = await moonDetail(x, "T1");
     assert.deepEqual(a.voyages.filter((voyage) => voyage.role === "implement").map((voyage) => voyage.round), [1, 2]);
     await finish(x);
@@ -120,7 +120,7 @@ test("a REJECT holds only its own moon", async () => {
   } finally { await x.close(); }
 });
 
-test("verdicts sends no first freighter", async () => {
+test("verdicts sends no first delivery", async () => {
   const x = await startWorld("happy", undefined, FAST);
   const feed = readFeed(x.srv, { since: 0 });
   try {
@@ -189,7 +189,7 @@ test("a restart resumes from the log", async () => {
   } finally { if (restarted) await restarted.close(); await x.close(); }
 });
 
-test("a planet with dependencies gets no first freighter", async () => {
+test("a planet with dependencies gets no first delivery", async () => {
   const x = await startWorld("happy", undefined, FAST);
   const feed = readFeed(x.srv, { since: 0 });
   try {

@@ -12,7 +12,7 @@ const twoProviders = (c) => {
   c.routing.security_routed = ["src/auth.ts"]; c.routing.do_not_touch = [".env"]; c.scheduler.per_provider_max = { fake: 1 };
 };
 
-test("a dock during another voyage logs git on its own freighter only", async () => {
+test("a dock during another voyage logs git on its own delivery only", async () => {
   const w = await worldWithTwoMoons("slow", "happy");
   await sendDelivery(w.g, { taskId: "T2" }); await sendCustoms(w.g, { taskId: "T2" });
   let t1Voyage; const flying = sendDelivery(w.g, { taskId: "T1", onLaunched: (id) => { t1Voyage = id; } });
@@ -32,7 +32,7 @@ test("max_concurrent_ships refuses across two galaxy handles", async () => {
   const flying = sendDelivery(w.g, { taskId: "T1" });
   await assert.rejects(sendDelivery(g2, { taskId: "T2" }), /1 voyage in flight — the limit is 1 \(scheduler\.max_concurrent_ships\)/);
   await flying;
-  assert.equal(g2.db.all("ships.all").filter((s) => s.status === "assigned").length, 1, "only T1's freighter is assigned");
+  assert.equal(g2.db.all("ships.all").filter((s) => s.status === "assigned").length, 1, "only T1's delivery is assigned");
   assert.equal((await sendDelivery(g2, { taskId: "T2" })).moonStatus, "audited", "T2 is still launchable once T1 has landed");
   g2.close(); w.cleanup();
 });
@@ -77,10 +77,13 @@ test("an aborted slow voyage parks promptly as interrupted", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-stall-")); 
   fs.writeFileSync(path.join(dir, "stall.json"), JSON.stringify({ name: "stall", role: "implement", steps: [{ delay_ms: 30000, text: "never" }] }));
   w.g.adapters.fake = createFakeAdapter(dir);
-  const ac = new AbortController(); const t0 = Date.now();
-  const p = sendDelivery(w.g, { taskId: "T1", signal: ac.signal, onLaunched: () => setTimeout(() => ac.abort(), 50) });
+  // Promptness is measured from the abort, not from the send: the send first makes a git worktree, which alone can take
+  // seconds when the whole suite is running (this test used to fail now and then for that reason).
+  const ac = new AbortController(); let abortedAt = 0;
+  const p = sendDelivery(w.g, { taskId: "T1", signal: ac.signal, onLaunched: () => setTimeout(() => { abortedAt = Date.now(); ac.abort(); }, 50) });
   const r = await p;
-  assert.ok(Date.now() - t0 < 2000, "resolved promptly");
+  assert.ok(abortedAt > 0, "the voyage was launched and aborted");
+  assert.ok(Date.now() - abortedAt < 2000, "resolved promptly after the abort");
   assert.equal(r.moonStatus, "adrift"); assert.equal(loadMoon(w.g, "T1").park_reason, "interrupted");
   fs.rmSync(dir, { recursive: true, force: true }); w.cleanup();
 });
@@ -93,10 +96,13 @@ test("a throwing onLaunched cannot strand the voyage", async () => {
   w.cleanup();
 });
 
-test("per_provider_max: a named provider at its cap with no idle freighter reports the cap", async () => {
+test("per_provider_max: a named provider at its cap reports the cap and commissions no second delivery ship", async () => {
   const w = await worldWithTwoMoons("slow", "happy", (c) => { cap(2)(c); c.scheduler.per_provider_max = { fake: 1 }; c.fleet.freighters = 1; });
-  assert.equal(w.g.db.all("ships.all").filter((s) => s.class === "freighter" && s.fleet === "fake").length, 1, "one freighter for fake");
+  const deliveryShips = () => w.g.db.all("ships.all").filter((s) => s.job === "delivery" && s.fleet === "fake").length;
+  assert.equal(deliveryShips(), 0, "no ship exists before the first launch");
   const flying = sendDelivery(w.g, { taskId: "T1", provider: "fake" });
+  assert.equal(deliveryShips(), 1, "the first launch commissioned its ship");
   await assert.rejects(sendDelivery(w.g, { taskId: "T2", provider: "fake" }), /provider 'fake' is at its limit of 1 \(scheduler\.per_provider_max\)/);
+  assert.equal(deliveryShips(), 1, "a refused launch commissions nothing");
   await flying; w.cleanup();
 });

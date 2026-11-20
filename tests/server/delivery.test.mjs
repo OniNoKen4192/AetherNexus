@@ -4,7 +4,7 @@ import { assignMoon } from "../../dist/server/commands/assign.js";
 import { sendDelivery } from "../../dist/server/commands/delivery.js";
 import { renderPrompt } from "../../dist/server/dispatch.js";
 
-test("happy launch: gate → voyage events logged → audit clean → moon audited, freighter holding", async () => {
+test("happy launch: gate → voyage events logged → audit clean → moon audited, delivery holding", async () => {
   const w = await worldWithMoon("happy"); const seen = [];
   const r = await sendDelivery(w.g, { taskId: "T1", provider: "fake", onEvent: (e) => seen.push(e.kind) });
   assert.equal(r.moonStatus, "audited"); assert.equal(r.audit.verdict, "clean"); assert.deepEqual(r.audit.in_scope.sort(), ["src/lib/thing.js", "src/lib/thing.test.js"]);
@@ -35,12 +35,17 @@ test("a crash parks the voyage with the reason; a rate limit leaves the cargo aw
   assert.ok(w2.g.db.all("ships.all").every((s) => s.status === "idle")); w2.cleanup();
 });
 
-test("launch refuses when no freighter is idle, and when moon is in the wrong state", async () => {
+test("a second delivery flies a newly commissioned ship while the first ship holds; a moon in the wrong state refuses", async () => {
   const w = await worldWithMoon("happy", (c) => { c.roles = { implement: ["fake"], review: ["fake"] }; c.fleet = { freighters: 1, customs: 1, carriers: 1, surveyors: 1, name_theme: "classic" }; });
-  await sendDelivery(w.g, { taskId: "T1", provider: "fake" });               // freighter now holding (assigned)
+  const r1 = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });    // its ship is now holding (assigned)
   const spec2 = writeSpec(w.dir, "T2", read("tests/fixtures/specs/good-basic.md").replace("src/lib/thing.js", "src/lib/two.js")); w.git("add", "-A"); w.git("commit", "-qm", "s2");
   assignMoon(w.g, { planetId: w.planetId, specPath: spec2 });
-  await assert.rejects(sendDelivery(w.g, { taskId: "T2", provider: "fake" }), /all freighters in fleet 'fake' are assigned/);
+  const r2 = await sendDelivery(w.g, { taskId: "T2", provider: "fake" });    // fleet.freighters is ignored: no idle ship, so one is commissioned
+  const ship1 = w.g.db.get("voyages.byId", { id: r1.voyageId }).ship_id, ship2 = w.g.db.get("voyages.byId", { id: r2.voyageId }).ship_id;
+  assert.notEqual(ship2, ship1); assert.equal(w.g.db.get("ships.byId", { id: ship1 }).status, "assigned");
+  assert.deepEqual(w.g.db.all("ships.all").filter((s) => s.job === "delivery" && s.fleet === "fake").map((s) => s.id).sort(), [ship1, ship2].sort());
+  const kinds = w.g.db.all("events.all").map((e) => e.kind).filter((k) => k === "ship.commissioned" || k === "voyage.launched");
+  assert.deepEqual(kinds, ["ship.commissioned", "voyage.launched", "ship.commissioned", "voyage.launched"]);
   await assert.rejects(sendDelivery(w.g, { taskId: "T1", provider: "fake" }), /is 'audited'/);
   w.cleanup();
 });

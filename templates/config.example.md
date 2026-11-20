@@ -196,3 +196,17 @@ This file documents the Lanes config. AetherNexus keeps its own config in `.nexu
 - A refuel happens by itself at `verdicts` and `roundabout`; at `manual` the Bridge offers a `Refuel` button (CLI: `nexus delivery send <task> --refuel`).
 - The refuel provider's own pool must not be low or dry for that model, and it must have an idle freighter; otherwise the moon waits.
 - `Send anyway` on the Bridge (CLI: `--override`) sends one ship past a hold. The pool's state follows what that ship finds: if it returns, a dry pool is cleared; if it hits the wall, the pool is dry until the new reset.
+
+## AetherNexus: `providers.<id>.faction` and `weights`  (`.nexus/config.json`, schema v2)
+
+`faction` names the provider's design language; when omitted, it defaults to the provider id. `weights` maps a model id, a delivery tier, or `"default"` to a trip weight.
+
+Weight lookup uses the first match: an explicit model id; then a tier for a delivery with no model id; then `"default"`; finally `"standard"`. Reviews ignore the delivery tier. Every configured weight must appear in the catalogue's `weights` list.
+
+Defaults written by `nexus init`:
+
+- `codex`: `faction: "openai"`, `weights: { "sol": "heavy", "terra": "standard", "luna": "light" }`
+- `claude`: `faction: "anthropic"`, `weights: { "default": "heavy", "claude-haiku-5-5": "light" }` (Claude flies its frontier model unless told otherwise)
+- `fake`: no `faction` key (it reads as `fake`) and no `weights` map, so every trip is `standard`
+
+The optional `.nexus/catalogue.json` adds or replaces formations, cargo, name rules, and the weight list. It is read and validated when the galaxy is opened.

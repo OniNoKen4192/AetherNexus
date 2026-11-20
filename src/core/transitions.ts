@@ -26,7 +26,7 @@ export const MOON_TRANSITIONS: Record<string, Partial<Record<MoonStatus | "barre
 };
 
 export const VOYAGE_TRANSITIONS: Record<string, Partial<Record<VoyageStatus, VoyageStatus>>> = {
-  // holding/cleared/en_route: the dock's git commands are logged on the freighter voyage without changing its status
+  // holding/cleared/en_route: the dock's git commands are logged on the delivery voyage without changing its status
   "voyage.event": { launched: "working", working: "working", holding: "holding", cleared: "cleared", en_route: "en_route" },
   "voyage.returned:implement": { launched: "holding", working: "holding" },
   "voyage.returned:review": { launched: "docked", working: "docked" },

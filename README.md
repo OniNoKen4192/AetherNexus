@@ -36,14 +36,24 @@ nexus serve [--port <n>]          # 127.0.0.1 only, default port 7341, until Ctr
 
 `serve` prints a URL carrying an access token for that run; open it and
 the page sets its cookie. From the page you can create a system, assign
-streams and specs, launch, inspect, dock, reply to or drop a parked moon,
-cancel a voyage, answer a main-tree question, retire a ship and reorder
+streams and specs, send a delivery, inspect, dock, reply to a parked moon
+or cancel its delivery, cancel a voyage, answer a main-tree question, retire a ship and reorder
 which provider is tried first. The server runs voyages concurrently
 (`scheduler.max_concurrent_ships`), and the page follows the event log
 live, so CLI commands run in another terminal show up without a reload.
 Two CLI additions support it: `nexus events --follow` tails the log, and
 `nexus decision answer <id> --mine | --not-mine` answers the question the
 server asks when the main working tree changes during a voyage.
+
+**Ships.** A ship is commissioned the first time a job needs one and
+keeps its identity: the provider's *faction*, a *weight* (`light`,
+`standard`, `heavy`, from the model that flies), and a *formation* picked
+from a catalogue — a mining vessel for a small job, a carrier group with
+escorts for a hard one. A delivery also carries *cargo*, drawn per trip.
+`nexus fleet` and the Bridge show all of it in words. Add your own
+formations, cargo and name rules in `.nexus/catalogue.json`, and map
+models to weights with `providers.<id>.weights`
+(see [`templates/config.example.md`](templates/config.example.md)).
 
 Known limitations of v0.5:
 

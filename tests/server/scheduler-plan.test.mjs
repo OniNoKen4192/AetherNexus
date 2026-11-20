@@ -82,21 +82,21 @@ test("manual plans nothing in emitted, holding, and approved states", async () =
   });
 });
 
-test("the first freighter is sent only at roundabout", async () => {
+test("the first delivery is sent only at roundabout", async () => {
   await withWorld(() => worldWithMoon(), async (w) => {
     assert.deepEqual(plan(w.g, ctx("verdicts")), []);
     assert.deepEqual(plan(w.g, ctx("roundabout")), [action("send", "T1", true)]);
   });
 });
 
-test("customs inspects a holding freighter at verdicts and roundabout", async () => {
+test("customs inspects a holding delivery at verdicts and roundabout", async () => {
   await withWorld(() => worldWithMoon(), async (w) => {
     await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
     for (const rung of ["verdicts", "roundabout"]) assert.deepEqual(plan(w.g, ctx(rung)), [action("inspect")]);
   });
 });
 
-test("an approved freighter docks at verdicts and roundabout even when a voyage fills capacity", async () => {
+test("an approved delivery docks at verdicts and roundabout even when a voyage fills capacity", async () => {
   await withWorld(() => world([{ taskId: "T1" }, { taskId: "T2" }], { max: 1 }), async (w) => {
     await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
     await sendCustoms(w.g, { taskId: "T1", provider: "fake" });
@@ -113,7 +113,7 @@ test("an approved freighter docks at verdicts and roundabout even when a voyage 
   });
 });
 
-test("a FIX verdict plans the next freighter as a later visit", async () => {
+test("a FIX verdict plans the next delivery as a later visit", async () => {
   await withWorld(() => worldWithMoon("fix-round"), async (w) => {
     await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
     await sendCustoms(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
@@ -175,7 +175,7 @@ test("a pending main-tree question blocks every automatic action", async () => {
   });
 });
 
-test("moon dependencies block first freighters, including cycles", async () => {
+test("moon dependencies block first deliveries, including cycles", async () => {
   await withWorld(() => world([{ taskId: "A" }, { taskId: "B", dependsOn: "A" }]), async (w) => {
     assert.deepEqual(plan(w.g, ctx("roundabout")), [action("send", "A", true)]);
   });
@@ -184,7 +184,7 @@ test("moon dependencies block first freighters, including cycles", async () => {
   });
 });
 
-test("a planet dependency blocks only the first freighter", async () => {
+test("a planet dependency blocks only the first delivery", async () => {
   await withWorld(() => world([{ taskId: "T1" }], { planetDependsOn: ["P0"] }), async (w) => {
     assert.deepEqual(plan(w.g, ctx("roundabout")), []);
     await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
@@ -192,9 +192,9 @@ test("a planet dependency blocks only the first freighter", async () => {
   });
 });
 
-test("global, provider, and idle-freighter capacity limit first freighters", async () => {
+test("global and provider capacity limit first delivery ships; fleet size does not", async () => {
   const moons = [{ taskId: "T1" }, { taskId: "T2" }, { taskId: "T3" }];
-  for (const [options, expected] of [[{ max: 2 }, 2], [{ providerMax: 1 }, 1], [{ freighters: 2, max: 6 }, 2]]) {
+  for (const [options, expected] of [[{ max: 2 }, 2], [{ providerMax: 1 }, 1], [{ freighters: 2, max: 6 }, 3]]) {
     await withWorld(() => world(moons, options), async (w) => {
       const planned = plan(w.g, ctx("roundabout"));
       assert.equal(planned.length, expected);
@@ -241,7 +241,7 @@ test("plan is planWithHolds(...).actions", async () => {
   });
 });
 
-test("a low pool holds the first freighter at roundabout", async () => {
+test("a low pool holds the first delivery at roundabout", async () => {
   await withWorld(() => world([{ taskId: "T1" }], { pool: true }), async (w) => {
     w.g.now = () => T; low(w);
     assert.deepEqual(planWithHolds(w.g, ctx("roundabout")), { actions: [], holds: [
@@ -268,7 +268,7 @@ test("a dry pool holds customs too", async () => {
   });
 });
 
-test("a dry pool holds a later-visit freighter at verdicts", async () => {
+test("a dry pool holds a later-visit delivery at verdicts", async () => {
   await withWorld(() => world([{ taskId: "T1", script: "fix-round" }], { pool: true }), async (w) => {
     w.g.now = () => T;
     await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
@@ -280,7 +280,7 @@ test("a dry pool holds a later-visit freighter at verdicts", async () => {
   });
 });
 
-test("a low first provider reroutes a freighter", async () => {
+test("a low first provider reroutes a delivery", async () => {
   await withWorld(() => world([{ taskId: "T1" }], { pool: true, probe: true }), async (w) => {
     w.g.now = () => T; low(w);
     assert.deepEqual(planWithHolds(w.g, ctx("roundabout")), { actions: [
@@ -289,7 +289,7 @@ test("a low first provider reroutes a freighter", async () => {
   });
 });
 
-test("a low first provider refuels a freighter when the wait is worthwhile", async () => {
+test("a low first provider refuels a delivery when the wait is worthwhile", async () => {
   await withWorld(() => world([{ taskId: "T1" }], { pool: true, refuel: true }), async (w) => {
     w.g.now = () => T; low(w);
     assert.deepEqual(planWithHolds(w.g, ctx("roundabout")), { actions: [
@@ -321,13 +321,14 @@ test("capacity holds across reroutes", async () => {
   });
 });
 
-test("two freighters planned on one fleet in one call take different ships", async () => {
+test("two deliveries on one fleet are both planned in one call, whatever the fleet size", async () => {
   const moons = [{ taskId: "T1" }, { taskId: "T2" }];
   await withWorld(() => world(moons, { freighters: 2, max: 4 }), async (w) => {
     assert.deepEqual(planWithHolds(w.g, ctx("roundabout")).actions, [action("send", "T1", true), action("send", "T2", true)]);
   });
   await withWorld(() => world(moons, { freighters: 1, max: 4 }), async (w) => {
-    assert.deepEqual(planWithHolds(w.g, ctx("roundabout")), { actions: [action("send", "T1", true)], holds: [] });
+    assert.deepEqual(planWithHolds(w.g, ctx("roundabout")), { actions: [action("send", "T1", true), action("send", "T2", true)], holds: [] });
+    assert.equal(w.g.db.all("ships.all").length, 0, "planning commissions no ship");
   });
 });
 

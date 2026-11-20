@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startWorld } from "./helpers.mjs";
 import { read } from "../helpers.mjs";
+import { idleShip } from "../fixtures/world.mjs";
 import { append } from "../../dist/db/events.js";
 import { assignMoon } from "../../dist/server/commands/assign.js";
 import { sendDelivery, repliedSincePark } from "../../dist/server/commands/delivery.js";
@@ -40,7 +41,7 @@ test("stale voyage ownership drives park_stale and disappears after parking", as
   const x = await startWorld();
   try {
     const moon = loadMoon(x.w.g, "T1"), scope = moonScope(x.w.g, moon);
-    const ship = x.w.g.db.all("ships.all").find((s) => s.class === "freighter");
+    const ship = idleShip(x.w.g.db);
     append(x.w.g.db, { kind: "moon.gated", ...scope, payload: { baseline_sha: "x" } });
     append(x.w.g.db, { kind: "voyage.launched", ...scope, voyage_id: "stale-v", ship_id: ship.id, provider: "fake",
       payload: { role: "implement", round: 0, provider: "fake", ship_id: ship.id, worktree: "x", owner_pid: 2147483646 } });
