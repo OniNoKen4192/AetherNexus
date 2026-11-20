@@ -19,7 +19,13 @@ export function statusTable(st: { moons: Row[]; voyages: Row[] }, shipName: (id:
 }
 
 export function fleetTable(ships: Row[]): string {
-  return table(["name", "job", "fleet", "status", "voyage_count"], ships.map((r) => [s(r["name"]), s(r["job"]), s(r["fleet"]), s(r["status"]), s(r["voyage_count"])]));
+  const formationName = (value: unknown): string => {
+    try {
+      const parsed = typeof value === "string" ? JSON.parse(value) : value;
+      return parsed !== null && typeof parsed === "object" && typeof (parsed as { name?: unknown }).name === "string" ? (parsed as { name: string }).name : "-";
+    } catch { return "-"; }
+  };
+  return table(["name", "fleet", "faction", "job", "weight", "formation", "status", "voyages"], ships.map((r) => [s(r["name"]), s(r["fleet"]), s(r["faction"]), s(r["job"]), s(r["weight"]), formationName(r["formation"]), s(r["status"]), s(r["voyage_count"])]));
 }
 
 export function eventsTable(evs: { id: number; ts: string; kind: string; moon_id?: string | null; payload: Record<string, unknown> }[]): string {
