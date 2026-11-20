@@ -102,6 +102,14 @@ test("1. Delivery ships take their weight and faction from the provider.", async
   assert.equal(commissioned.length, 3);
   const expected = new Map([["L", "light"], ["T1", "standard"], ["S", "heavy"]]);
   const log = x.w.g.db.all("events.since", { id: 0 }).map(rowToEvent);
+  // every commission, customs ships included, is immediately followed by the launch that flies that ship
+  const all = events(x, "ship.commissioned", null);
+  assert.ok(all.some((event) => event.payload.ship.job === "customs"), "customs ships were commissioned too");
+  for (const event of all) {
+    const launch = log.find((candidate) => candidate.id === event.id + 1);
+    assert.equal(launch?.kind, "voyage.launched", `${event.payload.ship.name} was commissioned for a launch`);
+    assert.equal(launch.payload.ship_id, event.payload.ship.id);
+  }
   for (const event of commissioned) {
     const launch = log.find((candidate) => candidate.id === event.id + 1);
     assert.equal(launch?.kind, "voyage.launched");
