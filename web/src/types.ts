@@ -23,6 +23,7 @@ export type Snapshot = {
   roles: { implement: string[]; review: string[] };
   systems: (Row & { planets: (Row & { moons: Row[] })[] })[];
   voyages: (Row & { owner: Owner | null; refuel_for: string | null })[];
+  weights: string[];
   fleet: Row[]; pools: PoolView[]; decisions: Row[]; specs: SpecEntry[]; failures: Failure[];
 };
 

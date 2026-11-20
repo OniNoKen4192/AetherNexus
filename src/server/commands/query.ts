@@ -43,6 +43,8 @@ export type Snapshot = {
   roles: { implement: string[]; review: string[] };
   systems: (Row & { planets: (Row & { moons: (Row | (Row & FuelFields))[] })[] })[];
   pools: PoolView[];
+  /** The catalogue's weights, lightest first: the order the page lists ships in. */
+  weights: string[];
   voyages: VoyageView[];
   fleet: ShipView[]; decisions: Row[]; specs: SpecEntry[]; failures: Failure[];
 };
@@ -174,7 +176,7 @@ export function snapshot(g: Galaxy, ctx: OwnerCtx & { failures: Failure[]; ready
   return {
     cursor, repo: path.basename(g.repoRoot), rung: g.config.automation.level, ready_to_send: ctx.readyToSend ?? 0,
     limits: { max_concurrent_ships: g.config.scheduler.max_concurrent_ships, per_provider_max: g.config.scheduler.per_provider_max, in_flight: inFlight.length },
-    roles: { implement: g.config.roles.implement, review: g.config.roles.review }, systems, pools: pools(g),
+    roles: { implement: g.config.roles.implement, review: g.config.roles.review }, systems, pools: pools(g), weights: [...g.catalogue.weights],
     voyages, fleet, decisions: g.db.all("decisions.pending"),
     specs: specEntries(g, assigned), failures: ctx.failures,
   };

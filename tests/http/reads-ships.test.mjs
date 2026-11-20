@@ -81,3 +81,14 @@ test("bad formation and cargo JSON use safe read fallbacks", async () => {
     assert.equal(response.json.voyages[0].cargo, null);
   } finally { await x.close(); }
 });
+
+test("the snapshot carries the catalogue's weights in order, so the page can list ships lightest first", async () => {
+  const x = await startWorld();
+  try {
+    assert.deepEqual((await x.api("/api/snapshot")).json.weights, ["light", "standard", "heavy"]);
+    x.w.g.catalogue.weights.push("colossal");   // as an owner's catalogue file would add
+    const again = (await x.api("/api/snapshot")).json.weights;
+    assert.deepEqual(again, ["light", "standard", "heavy", "colossal"]);
+    assert.notEqual(again, x.w.g.catalogue.weights, "a copy, never the catalogue's own list");
+  } finally { await x.close(); }
+});
