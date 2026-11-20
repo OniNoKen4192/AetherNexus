@@ -18,10 +18,10 @@ async function world(refuel = false) { const w = await makeGalaxy((c) => patch(c
 function read(w, provider, used, extra = {}) { append(w.g.db, { kind: "fuel.reading", provider, ts: iso(0), payload: { window: "window", used, ...(extra.resets_at === null ? {} : { resets_at: extra.resets_at ?? iso(3_600_000) }), source: "reported", ...(extra.model_family ? { model_family: extra.model_family } : {}) } }); }
 const pick = (g, extra = {}) => chooseProvider(g, { role: "implement", tier: "sol", mayRefuel: false, ...extra });
 const LOW = { kind: "held", provider: "fake", reason: "low", until: "2026-11-17T13:00:00.000Z" };
-async function assignedWorld(freighters, max) {
+async function assignedWorld(deliveries, max) {
   const w = await worldWithMoon("happy", (c) => {
     patch(c);
-    c.fleet.freighters = freighters;
+    c.fleet.freighters = deliveries;
     c.scheduler.per_provider_max = max === undefined ? {} : { fake: max };
   });
   w.g.now = () => T;

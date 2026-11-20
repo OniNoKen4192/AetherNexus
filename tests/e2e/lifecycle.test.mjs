@@ -31,7 +31,7 @@ test("drop → assign another spec to the freed body → happy → merged", asyn
   assert.equal(jobs[0].previousSessionId, undefined, "T2 does not resume T1's session");
   const launched = w.g.db.all("events.byTask", { task_id: "T2" }).filter((e) => e.kind === "voyage.launched").map((e) => JSON.parse(e.payload));
   assert.equal(launched[0].session_id, undefined);
-  assert.equal((await sendCustoms(w.g, { taskId: "T2" })).moonStatus, "reviewing", "inspect finds T2's own holding freighter, not T1's");
+  assert.equal((await sendCustoms(w.g, { taskId: "T2" })).moonStatus, "reviewing", "inspect finds T2's own holding delivery, not T1's");
   assert.equal(dockCargo(w.g, { taskId: "T2" }).moonStatus, "merged");
   assert.ok(w.g.db.all("voyages.byTask", { task_id: "T2" }).every((v) => v.task_id === "T2"));
   assert.equal(w.g.db.all("verdicts.byTask", { task_id: "T2" }).length, 1);
@@ -64,7 +64,7 @@ test("drop → re-assign the same task id → happy → merged with clean histor
   assert.equal(jobs[0].previousSessionId, undefined, "the new assignment does not resume the dropped one's session");
   assert.equal(jobs[0].deltaSpec, undefined);
   const r = await sendCustoms(w.g, { taskId: "T1" });
-  assert.equal(r.verdict.verdict, "APPROVE"); assert.equal(r.moonStatus, "reviewing", "inspect finds the new assignment's holding freighter");
+  assert.equal(r.verdict.verdict, "APPROVE"); assert.equal(r.moonStatus, "reviewing", "inspect finds the new assignment's holding delivery");
   assert.equal(dockCargo(w.g, { taskId: "T1" }).moonStatus, "merged");
   const voyages = w.g.db.all("voyages.byAssignment", { assignment_id: second });
   assert.deepEqual(voyages.map((v) => v.role), ["implement", "review"]);

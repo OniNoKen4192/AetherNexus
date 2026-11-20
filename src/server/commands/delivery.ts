@@ -110,15 +110,15 @@ export async function sendDelivery(
   if ((status === "adrift" || status === "quarantined") && !repliedSincePark(g, moon.assignment_id)) throw new Refusal(`moon ${taskId} is ${status} — use 'nexus moon reply' or 'nexus delivery cancel'`);
   if (status === "audited") {
     if (lastVerdict?.verdict !== "FIX") throw new Refusal(`moon ${taskId} is 'audited' — run 'nexus customs send'; only a FIX verdict reopens it for another delivery`);
-      // Complement of sendCustoms's precondition (latest implement voyage 'holding'): a holding freighter is an unreviewed round,
-      // and the FIX verdict on record belongs to an earlier one (a FIX verdict supersedes the freighter it reviewed).
+      // Complement of sendCustoms's precondition (latest implement voyage 'holding'): a holding delivery is an unreviewed round,
+      // and the FIX verdict on record belongs to an earlier one (a FIX verdict supersedes the delivery it reviewed).
       const latestImpl = g.db.get<{ status: string; round: number }>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
       if (latestImpl?.status === "holding") throw new Refusal(`moon ${taskId} is 'audited' — run 'nexus customs send'; round ${latestImpl.round} has not been reviewed yet`);
   } else if (!relaunch && status !== "emitted" && status !== "gated") {
     throw new Refusal(`moon ${taskId} is '${status}' — it cannot be launched from there`);
   }
   const { visited, waitingOn } = dependencyState(g, taskId);
-  if (!visited && waitingOn.length > 0) throw new Refusal(`moon ${taskId} is waiting on ${waitingOn.join(", ")} — a freighter can be sent once they are settled`);
+  if (!visited && waitingOn.length > 0) throw new Refusal(`moon ${taskId} is waiting on ${waitingOn.join(", ")} — a delivery can be sent once they are settled`);
   const fixRound = status === "audited";
   const round = fixRound || relaunch ? moon.round + 1 : moon.round || 1;
 
@@ -168,7 +168,7 @@ export async function sendDelivery(
     const parkMoon = (reason: string, details: Record<string, unknown>): { voyageId: string; audit: AuditReport | null; moonStatus: MoonStatus } => {
       // A moon that is already parked cannot go adrift again: refuse and leave it as it is (fix the worktree, then relaunch).
       if (status === "adrift" || status === "quarantined") throw new Refusal(`carry-over audit refused the parked worktree (${reason})`, details);
-      // The previous freighter voyage is already superseded, or ended out of fuel (neither can go adrift), so park the moon itself.
+      // The previous delivery voyage is already superseded, or ended out of fuel (neither can go adrift), so park the moon itself.
       append(g.db, { kind: "moon.adrift", ...scope, payload: { reason } });
       const reasoning = status === "awaiting_pickup"
         ? `${reason === "baseline_tampered" ? "raided: the gate baseline changed while the cargo awaited pickup" : "contraband in the cargo awaiting pickup"}: ${JSON.stringify(details)}`

@@ -20,12 +20,12 @@ test("the built Bridge bundle contains the trust rung controls", async () => {
 
   for (const copy of [
     "manual — you do every step",
-    "verdicts — you send each freighter; the server inspects, docks and re-runs fixes",
-    "roundabout — the server also sends a freighter to every ready moon",
+    "verdicts — you send each delivery; the server inspects, docks and re-runs fixes",
+    "roundabout — the server also sends a delivery to every ready moon",
     "Trust rung",
     "Raising to roundabout sends ",
-    " freighter now.",
-    " freighters now.",
+    " delivery now.",
+    " deliveries now.",
     "Raise",
     "Cancel",
     "config.automation",

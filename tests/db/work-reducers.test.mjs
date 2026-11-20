@@ -19,7 +19,7 @@ test("assign: planet and moon rows carry work columns; task lookup works", () =>
   db.close();
 });
 
-test("full freighter + customs lifecycle through reducers; rebuild matches", () => {
+test("full delivery + customs lifecycle through reducers; rebuild matches", () => {
   const { db, sys, planet, moon } = world(); const ship = db.get("ships.pickIdle", { job: "delivery", fleet: "fake", weight: "standard" }); const customs = db.get("ships.pickIdle", { job: "customs", fleet: "fake", weight: "standard" });
   const base = { system_id: sys, planet_id: planet, moon_id: moon };
   append(db, { kind: "moon.gated", ...base, payload: { base_sha: "0".repeat(40), state_path: ".nexus/state/T1.json", round: 1 } });

@@ -37,7 +37,7 @@ export type VoyageShip = { name: string; faction: string; weight: string; format
 type VoyageView = Row & { owner: Owner | null; refuel_for: string | null; cargo: { id: string; label: string } | null; ship: VoyageShip | null };
 export type Snapshot = {
   cursor: number; repo: string; rung: string;
-  /** First freighters that would be sent right now if the rung were roundabout; 0 when the caller did not supply it. */
+  /** First deliveries that would be sent right now if the rung were roundabout; 0 when the caller did not supply it. */
   ready_to_send: number;
   limits: { max_concurrent_ships: number; per_provider_max: Record<string, number>; in_flight: number };
   roles: { implement: string[]; review: string[] };

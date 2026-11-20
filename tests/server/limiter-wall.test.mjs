@@ -94,7 +94,7 @@ test("past and near resets clamp to sixty seconds while an unparseable reset fal
   }
 });
 
-test("first hit in flight releases the freighter and leaves cargo awaiting pickup", () => {
+test("first hit in flight releases the delivery and leaves cargo awaiting pickup", () => {
   const w = world(); gate(w); const voyage = launch(w); const result = hit(w, voyage);
   assert.equal(result.parked, false); assert.equal(w.db.get("voyages.byId", { id: voyage.voyageId }).status, "out_of_fuel");
   const ship = w.db.get("ships.byId", { id: voyage.shipId }); assert.equal(ship.status, "idle"); assert.equal(ship.voyage_count, voyage.voyageCount);
@@ -102,7 +102,7 @@ test("first hit in flight releases the freighter and leaves cargo awaiting picku
   assert.equal(w.db.all("decisions.pendingByTarget", { target_id: "T1" }).length, 0); finish(w);
 });
 
-test("first hit from holding releases the freighter and leaves audited cargo awaiting pickup", () => {
+test("first hit from holding releases the delivery and leaves audited cargo awaiting pickup", () => {
   const w = world(); gate(w); const voyage = launch(w);
   append(w.db, { kind: "voyage.returned", ...w.base, voyage_id: voyage.voyageId, payload: { role: "implement", report: { rate_limited: true } } });
   append(w.db, { kind: "voyage.audited", ...w.base, voyage_id: voyage.voyageId, payload: { audit: {} } });
@@ -111,7 +111,7 @@ test("first hit from holding releases the freighter and leaves audited cargo awa
   assert.equal(w.db.get("moons.byId", { id: w.moon }).status, "awaiting_pickup"); finish(w);
 });
 
-test("first customs hit abandons review without changing cargo round or the holding freighter", () => {
+test("first customs hit abandons review without changing cargo round or the holding delivery", () => {
   const w = world(); gate(w, 3); const freight = launch(w, "implement", "fake", 3);
   append(w.db, { kind: "voyage.returned", ...w.base, voyage_id: freight.voyageId, payload: { role: "implement", report: {} } });
   append(w.db, { kind: "voyage.audited", ...w.base, voyage_id: freight.voyageId, payload: { audit: {} } });
@@ -204,7 +204,7 @@ test("c2: the earliest reading wins when it was recorded first", () => {
   finish(w);
 });
 
-test("c8: a second customs hit on one provider parks despite freighter voyages in between", () => {
+test("c8: a second customs hit on one provider parks despite delivery voyages in between", () => {
   const w = world(["X"]); gate(w); const firstFreight = launch(w, "implement", "X");
   append(w.db, { kind: "voyage.returned", ...w.base, voyage_id: firstFreight.voyageId, payload: { role: "implement", report: {} } });
   append(w.db, { kind: "voyage.audited", ...w.base, voyage_id: firstFreight.voyageId, payload: { audit: {} } });
@@ -222,7 +222,7 @@ test("c8: a second customs hit on one provider parks despite freighter voyages i
   finish(w);
 });
 
-test("c8: a customs hit does not count against the next freighter hit", () => {
+test("c8: a customs hit does not count against the next delivery hit", () => {
   const w = world(["X"]); gate(w); const firstFreight = launch(w, "implement", "X");
   append(w.db, { kind: "voyage.returned", ...w.base, voyage_id: firstFreight.voyageId, payload: { role: "implement", report: {} } });
   append(w.db, { kind: "voyage.audited", ...w.base, voyage_id: firstFreight.voyageId, payload: { audit: {} } });

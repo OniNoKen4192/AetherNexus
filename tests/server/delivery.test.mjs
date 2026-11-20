@@ -4,7 +4,7 @@ import { assignMoon } from "../../dist/server/commands/assign.js";
 import { sendDelivery } from "../../dist/server/commands/delivery.js";
 import { renderPrompt } from "../../dist/server/dispatch.js";
 
-test("happy launch: gate → voyage events logged → audit clean → moon audited, freighter holding", async () => {
+test("happy launch: gate → voyage events logged → audit clean → moon audited, delivery holding", async () => {
   const w = await worldWithMoon("happy"); const seen = [];
   const r = await sendDelivery(w.g, { taskId: "T1", provider: "fake", onEvent: (e) => seen.push(e.kind) });
   assert.equal(r.moonStatus, "audited"); assert.equal(r.audit.verdict, "clean"); assert.deepEqual(r.audit.in_scope.sort(), ["src/lib/thing.js", "src/lib/thing.test.js"]);

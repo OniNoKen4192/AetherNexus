@@ -17,7 +17,7 @@ function gate(db, base, round = 1) { append(db, { kind: "moon.gated", ...base, p
 function launch(db, base, ship, role, voyage, round = 1) { append(db, { kind: "voyage.launched", ...base, voyage_id: voyage, ship_id: ship.id, provider: "fake", payload: { role, round, provider: "fake", ship_id: ship.id, worktree: ".nexus/worktrees/T1" } }); }
 function assertRebuildEqual(db) { const before = dumpProjections(db); rebuild(db); assert.equal(dumpProjections(db), before); }
 
-test("a freighter that runs out of fuel releases its ship and leaves cargo awaiting pickup", () => {
+test("a delivery that runs out of fuel releases its ship and leaves cargo awaiting pickup", () => {
   const { db, moon, base } = world(); const ship = db.get("ships.pickIdle", { job: "delivery", fleet: "fake", weight: "standard" }); const voyage = `${ship.id}/T1/implement/1`; const count = ship.voyage_count;
   gate(db, base); launch(db, base, ship, "implement", voyage);
   append(db, { kind: "voyage.out_of_fuel", ...base, voyage_id: voyage, payload: {} });
@@ -30,9 +30,9 @@ test("a freighter that runs out of fuel releases its ship and leaves cargo await
 });
 
 test("a customs ship that runs out of fuel abandons review without changing the cargo round", () => {
-  const { db, moon, base } = world(); const freighter = db.get("ships.pickIdle", { job: "delivery", fleet: "fake", weight: "standard" }); const customs = db.get("ships.pickIdle", { job: "customs", fleet: "fake", weight: "standard" });
-  const freightVoyage = `${freighter.id}/T1/implement/1`; const reviewVoyage = `${customs.id}/T1/review/1`;
-  gate(db, base, 3); launch(db, base, freighter, "implement", freightVoyage, 3);
+  const { db, moon, base } = world(); const delivery = db.get("ships.pickIdle", { job: "delivery", fleet: "fake", weight: "standard" }); const customs = db.get("ships.pickIdle", { job: "customs", fleet: "fake", weight: "standard" });
+  const freightVoyage = `${delivery.id}/T1/implement/1`; const reviewVoyage = `${customs.id}/T1/review/1`;
+  gate(db, base, 3); launch(db, base, delivery, "implement", freightVoyage, 3);
   append(db, { kind: "voyage.returned", ...base, voyage_id: freightVoyage, payload: { role: "implement", report: {} } });
   append(db, { kind: "voyage.audited", ...base, voyage_id: freightVoyage, payload: { audit: {} } });
   launch(db, base, customs, "review", reviewVoyage, 3);

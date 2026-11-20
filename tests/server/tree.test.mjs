@@ -66,7 +66,7 @@ test("'mine' resolves and unblocks: inspect then dock merge", async () => {
   settle(w);
 });
 
-test("'not_mine' on a holding freighter parks as main_tree_modified", async () => {
+test("'not_mine' on a holding delivery parks as main_tree_modified", async () => {
   const w = await worldWithMoon("happy"); w.g.adapters.fake = stub(() => stray(w));
   const r = await sendDelivery(w.g, { taskId: "T1" }); const d = pendingTreeDecision(w.g, "T1");
   assert.deepEqual(answerDecision(w.g, { decisionId: d.id, answer: "not_mine" }), { moonStatus: "adrift", parked: true });
@@ -79,7 +79,7 @@ test("'not_mine' on a holding freighter parks as main_tree_modified", async () =
   settle(w);
 });
 
-test("'not_mine' after an APPROVE (question raised by the review voyage) parks the cleared freighter", async () => {
+test("'not_mine' after an APPROVE (question raised by the review voyage) parks the cleared delivery", async () => {
   const w = await worldWithMoon("happy"); await sendDelivery(w.g, { taskId: "T1" });
   hook(w, "review", () => stray(w));
   const r = await sendCustoms(w.g, { taskId: "T1" }); assert.equal(r.moonStatus, "reviewing");

@@ -2,7 +2,7 @@ import { loadMoon } from "../dispatch.js";
 import type { Galaxy } from "../galaxy.js";
 
 export type DependencyState = {
-  /** A freighter has been sent to this moon under its current assignment (an implement voyage exists). */
+  /** A delivery has been sent to this moon under its current assignment (an implement voyage exists). */
   visited: boolean;
   /** Task ids in the moon's depends_on that are not settled on the same planet. */
   waitingOn: string[];

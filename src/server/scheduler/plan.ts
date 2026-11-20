@@ -17,11 +17,11 @@ export function effectiveRung(level: string): Rung {
 export type PlannedAction = {
   action: "dock" | "park_stale" | "inspect" | "send";
   taskId: string;
-  /** true when this would be the first freighter sent to the moon under its current assignment */
+  /** true when this would be the first delivery sent to the moon under its current assignment */
   first: boolean;
   /** Present only when the limiter sent the ship somewhere other than a plain flight: a reroute or a refuel. */
   provider?: string;
-  /** Present only on a refuel: the cheaper model the freighter flies. */
+  /** Present only on a refuel: the cheaper model the delivery flies. */
   model?: string;
   /** Present (true) only on a refuel. */
   refuel?: true;

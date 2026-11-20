@@ -12,7 +12,7 @@ const twoProviders = (c) => {
   c.routing.security_routed = ["src/auth.ts"]; c.routing.do_not_touch = [".env"]; c.scheduler.per_provider_max = { fake: 1 };
 };
 
-test("a dock during another voyage logs git on its own freighter only", async () => {
+test("a dock during another voyage logs git on its own delivery only", async () => {
   const w = await worldWithTwoMoons("slow", "happy");
   await sendDelivery(w.g, { taskId: "T2" }); await sendCustoms(w.g, { taskId: "T2" });
   let t1Voyage; const flying = sendDelivery(w.g, { taskId: "T1", onLaunched: (id) => { t1Voyage = id; } });
@@ -32,7 +32,7 @@ test("max_concurrent_ships refuses across two galaxy handles", async () => {
   const flying = sendDelivery(w.g, { taskId: "T1" });
   await assert.rejects(sendDelivery(g2, { taskId: "T2" }), /1 voyage in flight — the limit is 1 \(scheduler\.max_concurrent_ships\)/);
   await flying;
-  assert.equal(g2.db.all("ships.all").filter((s) => s.status === "assigned").length, 1, "only T1's freighter is assigned");
+  assert.equal(g2.db.all("ships.all").filter((s) => s.status === "assigned").length, 1, "only T1's delivery is assigned");
   assert.equal((await sendDelivery(g2, { taskId: "T2" })).moonStatus, "audited", "T2 is still launchable once T1 has landed");
   g2.close(); w.cleanup();
 });

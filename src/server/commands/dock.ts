@@ -28,7 +28,7 @@ export function dockCargo(g: Galaxy, input: { taskId: string }): { mergeSha: str
   if (!finishing && verdicts[verdicts.length - 1]?.verdict !== "APPROVE") throw new Refusal(`moon ${taskId} has no APPROVE verdict to dock on`);
   const voyage = g.db.get<VoyageRow>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
   const resuming = voyage?.status === "docked";   // docked already: only the remaining steps are left
-  if (!voyage || (voyage.status !== "cleared" && voyage.status !== "en_route" && !resuming)) throw new Refusal(`moon ${taskId} has no cleared freighter voyage to dock`);
+  if (!voyage || (voyage.status !== "cleared" && voyage.status !== "en_route" && !resuming)) throw new Refusal(`moon ${taskId} has no cleared delivery voyage to dock`);
   if (finishing && g.db.get<{ status: string }>("ships.byId", { id: voyage.ship_id })?.status !== "assigned" && !fs.existsSync(path.join(g.paths.worktrees, taskId))) {
     throw new Refusal(`moon ${taskId} is already merged`);
   }

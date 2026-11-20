@@ -19,7 +19,7 @@ test("every illegal moon/voyage transition is refused with from/event in the err
   const vs = ["launched","working","holding","cleared","en_route","docked","superseded","adrift","quarantined"];
   for (const ev of Object.keys(VOYAGE_TRANSITIONS)) for (const s of vs) { const want = VOYAGE_TRANSITIONS[ev][s]; if (want) assert.equal(nextVoyageStatus(s, ev, "x"), want); else assert.throws(() => nextVoyageStatus(s, ev, "x"), TransitionRefused, `${s} ${ev}`); }
 });
-test("voyage happy paths: freighter and customs", () => {
+test("voyage happy paths: delivery and customs", () => {
   let s = "launched"; for (const [ev, want] of [["voyage.event","working"],["voyage.returned:implement","holding"],["voyage.cleared","cleared"],["voyage.departed","en_route"],["voyage.docked","docked"]]) { s = nextVoyageStatus(s, ev, "v"); assert.equal(s, want); }
   assert.equal(nextVoyageStatus("working", "voyage.returned:review", "v"), "docked");
   assert.equal(nextVoyageStatus("holding", "voyage.superseded", "v"), "superseded");

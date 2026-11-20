@@ -1,5 +1,5 @@
 // Child process for tests/e2e/scheduler-hard-kill.test.mjs: a real server at roundabout that is killed hard
-// (no close, no exit handlers) while T1's freighter is in flight. Prints one JSON line, then dies.
+// (no close, no exit handlers) while T1's delivery is in flight. Prints one JSON line, then dies.
 import fs from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { startWorld } from "../http/helpers.mjs";

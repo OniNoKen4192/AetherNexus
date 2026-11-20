@@ -97,7 +97,7 @@ test("a dependency settled on another planet is still waiting", async () => {
   } finally { w.cleanup(); }
 });
 
-test("a first freighter is not sent while a dependency is unsettled", async () => {
+test("a first delivery is not sent while a dependency is unsettled", async () => {
   const w = await world([{ streamId: "P1", moons: [{ taskId: "A" }, { taskId: "B", dependsOn: "A" }] }]);
   try {
     await assert.rejects(sendDelivery(w.g, { taskId: "B" }), /is waiting on A/);
@@ -107,7 +107,7 @@ test("a first freighter is not sent while a dependency is unsettled", async () =
   } finally { w.cleanup(); }
 });
 
-test("a visited moon is not re-checked before its next freighter is sent", async () => {
+test("a visited moon is not re-checked before its next delivery is sent", async () => {
   const w = await world([{ streamId: "P1", moons: [{ taskId: "T1", script: "fix-round" }] }]);
   try {
     await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
@@ -119,7 +119,7 @@ test("a visited moon is not re-checked before its next freighter is sent", async
   } finally { w.cleanup(); }
 });
 
-test("planet dependencies are reported but do not block a freighter", async () => {
+test("planet dependencies are reported but do not block a delivery", async () => {
   const w = await world([{ streamId: "P1", dependsOn: ["P0"], moons: [{ taskId: "T1" }] }]);
   try {
     assert.deepEqual(dependencyState(w.g, "T1").waitingOnPlanets, ["P0"]);
