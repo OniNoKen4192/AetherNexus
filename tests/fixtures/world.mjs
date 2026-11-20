@@ -35,6 +35,45 @@ export function fuelPatch(opts = {}, extra) {
   };
 }
 
+/**
+ * Config for ship scenarios: two fake providers with their own faction and weights. Runs `extra` last.
+ *   fake:  adapter "fake", faction "tinkers",   weights { sol: "heavy", terra: "standard", luna: "light" }, pool { kind: "window", reserve_floor: 0.1, refuel? }
+ *   spare: adapter "fake", faction "outriders", weights { "m-cheap": "light", default: "heavy" },           pool { kind: "window", reserve_floor: 0.25 }
+ *   opts.refuel = { min_wait_minutes } adds fake.pool.refuel = { provider: "spare", models: { terra: "m-cheap" }, min_wait_minutes }
+ *   roles { implement: ["fake"], review: ["fake"] }; routing.security_routed ["src/auth.ts"]; routing.do_not_touch [".env"]
+ */
+export function shipsPatch(opts = {}, extra) {
+  return (c) => {
+    c.providers.fake = {
+      ...c.providers.fake,
+      adapter: "fake",
+      faction: "tinkers",
+      weights: { sol: "heavy", terra: "standard", luna: "light" },
+      pool: {
+        kind: "window",
+        reserve_floor: 0.1,
+        ...(opts.refuel ? {
+          refuel: {
+            provider: "spare",
+            models: { terra: "m-cheap" },
+            min_wait_minutes: opts.refuel.min_wait_minutes,
+          },
+        } : {}),
+      },
+    };
+    c.providers.spare = {
+      adapter: "fake",
+      faction: "outriders",
+      weights: { "m-cheap": "light", default: "heavy" },
+      pool: { kind: "window", reserve_floor: 0.25 },
+    };
+    c.roles = { implement: ["fake"], review: ["fake"] };
+    c.routing.security_routed = ["src/auth.ts"];
+    c.routing.do_not_touch = [".env"];
+    extra?.(c);
+  };
+}
+
 export function seedSystem(db, id = "S-20261013-demo", seed = 42) {
   const gen = generateSystem(seed);
   append(db, { kind: "system.created", system_id: id, payload: { kind: "feature", title: "Demo", brief: "demo brief", base_sha: "0".repeat(40), integration_branch: `system/${id}/integration`, seed, theme: gen.theme, planets: gen.planets } });
@@ -72,9 +111,10 @@ export function idleShip(db, fleet = "fake", job = "delivery", weight = "standar
  */
 export function writeSpecs(w, entries) {
   const template = read("tests/fixtures/specs/good-basic.md");
-  const paths = entries.map(({ id, deps = [], scripts = [] }) => {
+  const paths = entries.map(({ id, deps = [], scripts = [], tier }) => {
     const comments = scripts.map((name) => `<!-- FAKE-SCRIPT: ${name} -->`).join("\n");
     let body = template.replace(/^- \*\*Depends on\*\*:.*$/m, `- **Depends on**: ${deps.length ? deps.join(", ") : "none"}`);
+    if (tier !== undefined) body = body.replace(/^- \*\*Model hint\*\*:.*$/m, `- **Model hint**: ${tier}`);
     if (comments) body = body.replace("# TASK: thing-add-x", `# TASK: thing-add-x\n${comments}`);
     return writeSpec(w.dir, id, body);
   });
