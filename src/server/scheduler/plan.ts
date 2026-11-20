@@ -73,8 +73,10 @@ export function planWithHolds(g: Galaxy, ctx: PlanCtx): { actions: PlannedAction
             if (moon.status === "audited") action = "send";
             else if (moon.status === "adrift" || moon.status === "quarantined") {
               if (dependencies.visited || (rung === "roundabout" && dependencies.waitingOn.length === 0 && dependencies.waitingOnPlanets.length === 0)) action = "send";
-            } else if ((moon.status === "emitted" || moon.status === "gated") && rung === "roundabout"
-              && dependencies.waitingOn.length === 0 && dependencies.waitingOnPlanets.length === 0) action = "send";
+            } else if (moon.status === "emitted" || moon.status === "gated") {
+              // A visited moon left gated (the launch after its gate never happened) is a later visit, like a replied park.
+              if (dependencies.visited || (rung === "roundabout" && dependencies.waitingOn.length === 0 && dependencies.waitingOnPlanets.length === 0)) action = "send";
+            }
           }
         }
 

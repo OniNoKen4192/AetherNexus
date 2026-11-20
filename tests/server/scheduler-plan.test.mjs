@@ -136,6 +136,32 @@ test("replied parked moons distinguish a visited moon from a first visit", async
   });
 });
 
+// What sendDelivery leaves behind when it gates a fix round and the launch after the gate never happens.
+function gateWithoutLaunch(w, taskId = "T1") {
+  const moon = loadMoon(w.g, taskId);
+  const lastGate = w.g.db.all("events.byAssignment", { assignment_id: moon.assignment_id }).map(rowToEvent).filter((e) => e.kind === "moon.gated").at(-1);
+  append(w.g.db, { kind: "moon.gated", ...moonScope(w.g, moon), payload: { ...lastGate.payload, round: moon.round + 1 } });
+  assert.equal(loadMoon(w.g, taskId).status, "gated");
+}
+
+test("a visited moon left gated is sent again at verdicts and roundabout", async () => {
+  await withWorld(() => worldWithMoon("fix-round"), async (w) => {
+    await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
+    await sendCustoms(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
+    gateWithoutLaunch(w);
+    for (const rung of ["verdicts", "roundabout"]) assert.deepEqual(plan(w.g, ctx(rung)), [action("send")]);
+  });
+});
+
+test("a planet dependency does not block a visited moon left gated", async () => {
+  await withWorld(() => world([{ taskId: "T1", script: "fix-round" }], { planetDependsOn: ["P0"] }), async (w) => {
+    await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
+    await sendCustoms(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-fix" });
+    gateWithoutLaunch(w);
+    assert.deepEqual(plan(w.g, ctx("roundabout")), [action("send")]);
+  });
+});
+
 test("parked moons without a reply are not planned", async () => {
   for (const reviewScript of [undefined, "review-reject"]) {
     await withWorld(() => worldWithMoon(), async (w) => {
