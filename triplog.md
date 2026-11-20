@@ -4,6 +4,24 @@ Session-by-session project memory, newest first: what shipped, what
 was decided and why, what was left loose. Written by /lanes-rest-stop;
 the dated specs remain the deep record each entry links to.
 
+## 2026-11-20 — v1 scheduler, fuel and limiter, command rename, ship catalogue
+
+**Shipped:** 2ed1514..42ec34f — merged to `main`: npm audit fix (PR #3); v1 slice 1, the scheduler and the lower trust rungs with a rung selector on the Bridge (PR #4); v1 slice 2, fuel readings, the limiter, refuelling and the fuel gauge (PR #5); commands renamed after what moves (PR #6). On `design/ship-catalogue` (27 commits, not pushed): ships as lasting records with job, fleet, faction, weight and formation, commissioned on demand inside the launch transaction; cargo drawn per trip; the catalogue (`src/core/catalogue/`, optional `.nexus/catalogue.json`); migration 003; reads, `nexus fleet` and the Bridge show ships in words; voyage-ending events release their ship in the same transaction, with `nexus fleet recover`. Full suite on the branch: 764 tests / 760 pass / 4 live skipped / 0 fail.
+
+**Decisions:**
+- The scheduler runs only inside `nexus serve`; `plan.ts` decides and `loop.ts` acts. A first delivery is refused until the moon's dependencies are settled, at every rung. An action refused twice in a row parks the moon. Spec `docs/superpowers/specs/2026-11-14-v1-scheduler-design.md`.
+- Every launch and inspection asks the limiter first, whoever sends it. A held ship is rerouted or waits, never parked; `adrift` now means only "needs a person". A second wall hit in a row on one provider parks the moon `rate_limited`. Spec `docs/superpowers/specs/2026-11-15-v1-fuel-design.md`.
+- Commands are named after what moves (`delivery.send`, `customs.send`, `cargo.dock`, `delivery.cancel`), with no aliases. The job is a "delivery"; "freighter" and "carrier" are hulls and formation names only, enforced by `tests/wording.test.mjs`.
+- Fleet size is never a limit, and there is no cap on open deliveries (owner's decision). The only limits are the two scheduler caps, dependencies and fuel. Spec `docs/superpowers/specs/2026-11-19-ship-catalogue-design.md`.
+- Reducers copy ship and cargo data from the event and never read the catalogue or config, so a catalogue edit never changes a ship that exists and rebuild stays byte-equal.
+- A ship left `assigned` by a crash was silently replaced by a new one. Fixed at the root: every event that ends a voyage is written with the ship's release in one transaction (`appendAll`). Ships stranded by older builds are released at `nexus serve` start and by `nexus fleet recover`; plain `nexus fleet` stays read-only, because a read must not write.
+- A crash between a customs return and its verdict leaves the moon `reviewing` with no action offered. Owner's decision 2026-11-20: a follow-up, not a blocker for the ship catalogue PR.
+- Ship-catalogue Task 2: the Codex call went silent for 1800 s and was aborted while Codex finished the work. Merged after my own verification plus a one-line doc fix, not a second Codex round (owner's decision).
+- Migration 003 and the `dispatch.ts` changes (security-routed) were done with the owner's go, not unattended.
+- Ledgers with every review's minors: `.superpowers/sdd/2026-11-15-v1-scheduler/`, `2026-11-15-v1-fuel/`, `2026-11-19-ship-catalogue/` (git-ignored).
+
+**Loose ends:** see `.lanes/seed.md` (2026-11-20).
+
 ## 2026-11-14 — v0.5 Bridge designed, built through Lanes, merged
 
 **Shipped:** bbb92b9..2ed1514 (PR #2, merge commit) — `nexus serve`: a loopback HTTP server (127.0.0.1, per-start token exchanged for an HttpOnly SameSite=Strict cookie, Host and Origin checks, `.nexus/server.json` lock) with reads, a server-sent-events feed with `Last-Event-ID` replay, HTTP commands and a voyage runner that runs voyages concurrently and cancels them; limits enforced inside the launch transaction; per-voyage git log scope (`withGitLog`) replacing the single-flight ruling; main-tree change detection with a "was that you?" decision (`nexus decision answer`); `nexus events --follow`; the Bridge page (`web/`, Preact + Vite, built to `dist/web`) covering the whole moon lifecycle, routing order and ship retire. 379 tests (2 live skipped); CI green on 5 OS/Node jobs. Done-when proven twice: `tests/e2e/bridge.test.mjs` and a Chrome walkthrough (REJECT → reply → APPROVE → dock from the page).

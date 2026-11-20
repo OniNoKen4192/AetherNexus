@@ -1,21 +1,19 @@
-# Seed — 2026-11-14
+# Seed — 2026-11-20
 
-**HEAD at close:** 2ed15142f84cfbf6e0960190bb2b6f11fa99080c
+**HEAD at close:** 42ec34f13c91bc4179219fb987d548e2eb15774a
 
-**Where we left off:** v0.5 Bridge is merged to main (PR #2) with CI green. `nexus serve` and the browser page cover the whole moon lifecycle; the release's done-when (a REJECT handled entirely from the browser) is proven by an e2e test and a Chrome walkthrough. Next phase per `docs/2026-10-10-aether-nexus-design.md` §14 is v1 — Nexus: fuel gauge, limiter and rung selector on the Bridge, intake adapters, triage/decompose/plan roles, `highways` + `autopilot`, gravity, the bug path, Drydock.
+**Where we left off:** v1 slices 1 and 2 and the command rename are merged to `main` (PRs #4–#6). The ship catalogue is complete on `design/ship-catalogue` (all ten plan tasks plus the stranded-ship fix; 764 tests / 760 pass / 4 live skipped) but is not pushed and has no PR. The next round is the follow-up items, one at a time; item 1 is proposed and waiting for the owner's go.
 
 **Parked:**
-- Merged branches not deleted: local `design/v0.5-bridge` and eleven `lanes/V0.5-BRIDGE.*`; remote `origin/design/v0.5-bridge`.
-- Empty folders under `.lanes/worktrees/V0.5-BRIDGE.*` (deregistered; Windows held the handles) and a stale record `.lanes/state/V0.5-BRIDGE.12.json.stale-53d70a3` — git-ignored, delete by hand.
-- Git-ignored SDD ledger `.superpowers/sdd/2026-11-13-v0.5-bridge/` — the only copy of every ruling, the walkthrough report and the final-review triage; keep or delete.
-- `~/.codex/config.toml` has `[windows] sandbox = "elevated"` (backup `config.toml.bak-2026-11-13`); needed for Lanes runs on this machine.
-- Bridge minors left open by the final review: routing buttons can stay disabled until reload if another client restores the exact previous order mid-move (`web/src/components/Routing.tsx`); a persistently failing db read logs every poll with no backoff (`src/server/follow.ts`); a voyage whose other-process owner dies shows as running elsewhere until the next refresh; Fleet lists every ship of unused providers.
-- Not exercised in the browser: Drop, Park stale, "Not me", an errored spec in the assign list, a voyage failure notice, a narrow window; the final fix wave's page changes were reviewed by reading only.
-- No rendering tests for the page in the suite (bundle-string and source-text checks only).
-- `npm audit`: 5 advisories in transitive packages (hono, qs), predating v0.5; no `audit fix` run.
-- When adding npm packages on Windows, the lock can miss optional cross-platform entries: PR #2 needed `@emnapi/core` and `@emnapi/runtime` added by hand before `npm ci` passed on CI.
-- Carried from 2026-10-14, not re-checked, still listed as open: `origin/design/v0-skeleton` on GitHub; ledger `.superpowers/sdd/2026-10-13-v0-skeleton/`; stray `nexus-repo-*` / `nexus-db-*` dirs in `%TEMP%`; spec drift (`.nexus/state/` gitignored vs spec §3.5; kinds with no reducer; planet-level `plan` voyages cannot be stored); git refusal list is a denylist; Bash in the Claude implementer is only backstopped; `commands/`/`agents/` still reference the retired validator.
+- `design/ship-catalogue`: 27 commits ahead of `origin/main` (plus the rest-stop commit), no upstream, no PR. Needs the owner's explicit go to push.
+- Follow-ups, in order: (1) `verdicts` never sends to a `gated` moon that was already visited (`src/server/scheduler/plan.ts`, the send rule); proposed fix: allow it when the moon was visited; (2) a newer wall hit can shorten a known longer hold; (3) a pickup after a wall hit in a fix round does not carry customs' instructions; (4) the test guard (`makeGalaxy`) does not cover a second galaxy handle or a CLI child process; (5) a crash between a customs return and its verdict leaves the moon `reviewing` with no action (`availableActions` in `src/server/commands/query.ts`; the verdict is in the `voyage.returned` report). Proposed branch: `fix/fuel-followups`.
+- Merged branches not deleted: 26 local `lanes/*`; local and remote `design/v1-fuel`, `design/v1-scheduler`, `chore/npm-audit-fix`, `chore/send-freighter-rename`.
+- 14 empty folders under `.lanes/worktrees/` (`V1-FUEL.*`, `V1-SCHEDULER.09`); git-ignored, delete by hand.
+- Git-ignored ledgers under `.superpowers/sdd/` (scheduler, fuel, ship catalogue): the only copy of the reviewers' minors; keep or delete.
+- Not seen in the browser for the ship catalogue: a truly narrow window, a Retire click, the rung selector.
+- The stored words `dropped` / `moon.dropped` and the `drop` outcome need a migration; ship art per faction is not designed; v1 slices 3–6 are not designed.
+- Carried from the 2026-11-14 seed, not re-checked: Bridge minors (`Routing.tsx`, `src/server/follow.ts`), no rendering tests for the page, older v0 items (see that seed in git history, commit 47ba846).
 
-**See:** triplog.md (2026-11-14 entry) for the session narrative.
+**See:** triplog.md (2026-11-20 entry) for the session narrative.
 
-**First action on resume:** go through the Parked list above with the owner and clear or re-park each item, then brainstorm the v1 scope (superpowers:brainstorming) from parent design §14's v1 row, deciding first which slice comes first — the limiter and fuel gauge on the Bridge, or intake adapters.
+**First action on resume:** get the owner's answer on pushing `design/ship-catalogue` and opening its PR, then start follow-up 1 on `fix/fuel-followups`.
