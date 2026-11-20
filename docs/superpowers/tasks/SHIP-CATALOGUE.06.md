@@ -142,3 +142,21 @@ DEVIATIONS: <anything done differently than specified, and why — or "none".
   non-empty list>
 BLOCKED_REASON: <only if BLOCKED: what was needed that the spec didn't provide>
 ```
+
+## Amendments
+
+### A1 — 2026-11-19 — accepted deviation
+- **Original sha256**: 571faf35ddfb319ef892488c9290636ea552a826d052ce64c8735401e71a0299
+- **Verdict ref**: lanes-reviewer, SHIP-CATALOGUE.06 — accepted in the round-0 FIX verdict, carried into the APPROVE after fix round 1
+- **Deviation**: In the moon detail, the per-voyage refuel label is no longer its own `div.badge.waiting-label` under `.moon-detail`; it is a `span.badge.waiting-label` inside that voyage's `.voyage-ship` line.
+- **Reason accepted**: The label is still shown once per voyage and now sits on the line of the voyage it describes. No existing test depends on the old element.
+- **Affected paths**: web/src/components/MoonDetail.tsx
+- **Acceptance criteria**: unchanged
+
+### A2 — 2026-11-19 — accepted deviation
+- **Original sha256**: 571faf35ddfb319ef892488c9290636ea552a826d052ce64c8735401e71a0299
+- **Verdict ref**: lanes-reviewer, SHIP-CATALOGUE.06 — accepted in the round-0 FIX verdict, carried into the APPROVE after fix round 1
+- **Deviation**: `web/src/ships.ts` omits the doc comments shown in the Interfaces block.
+- **Reason accepted**: Names, parameters and return types match exactly; the behaviour the comments describe is pinned by criteria 1–4.
+- **Affected paths**: web/src/ships.ts
+- **Acceptance criteria**: unchanged
