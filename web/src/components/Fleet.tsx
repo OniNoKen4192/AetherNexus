@@ -1,5 +1,6 @@
 import { useState } from "preact/hooks";
 import { familyLines, gaugeText, meterValue } from "../gauge";
+import { asFormation, formationText, sortShips } from "../ships";
 import type { Bridge } from "../store";
 import type { PoolView, Row } from "../types";
 import { useCommand } from "./ActionBar";
@@ -34,6 +35,10 @@ function Ship({ b, ship }: { b: Bridge; ship: Row }) {
   const command = useCommand(b);
   const id = String(ship["id"]);
   const status = String(ship["status"]);
+  const formation = asFormation(ship["formation"]);
+  const faction = typeof ship["faction"] === "string" ? ship["faction"] : null;
+  const weight = typeof ship["weight"] === "string" ? ship["weight"] : null;
+  const trips = typeof ship["voyage_count"] === "number" ? ship["voyage_count"] : null;
   const retire = async () => {
     const value = reason.trim();
     if (value !== "" && await command.send("fleet.retire", { shipId: id, reason: value })) {
@@ -43,7 +48,13 @@ function Ship({ b, ship }: { b: Bridge; ship: Row }) {
   };
 
   return <div className="fleet-ship">
-    <span>{String(ship["name"])}</span><span>{String(ship["job"])}</span><span className="badge">{status}</span>
+    <span>{String(ship["name"])}</span>
+    {faction !== null && <span className="fleet-ship-meta">{faction}</span>}
+    {formation !== null && <span className="fleet-ship-meta">{formationText(formation)}</span>}
+    {weight !== null && <span className="fleet-ship-meta">{weight}</span>}
+    <span className="badge">{status}</span>
+    {trips !== null && <span className="fleet-ship-meta">{trips === 1 ? `${trips} trip` : `${trips} trips`}</span>}
+    <span className="fleet-ship-meta">{String(ship["job"])}</span>
     {status === "idle" && (!open ? <button className="btn" type="button" disabled={command.busy} onClick={() => setOpen(true)}>Retire</button> :
       <div className="fleet-retire">
         <input className="field" placeholder="Reason" aria-label={`Reason to retire ${String(ship["name"])}`} value={reason} disabled={command.busy} onInput={(event) => setReason(event.currentTarget.value)} />
@@ -105,7 +116,9 @@ export function Fleet({ b }: { b: Bridge }) {
               </div>
             ))}
             <div className="fleet-ships">
-              {provider.ships.map((ship) => <Ship b={b} ship={ship} key={String(ship["id"])} />)}
+              {/* Sorted by a key beside each row; the line gets the row exactly as the server sent it, so a row from an older server shows what it has. */}
+              {sortShips(provider.ships.map((ship) => ({ ship, name: String(ship["name"]), weight: typeof ship["weight"] === "string" ? ship["weight"] : "" })), Array.isArray(snapshot.weights) ? snapshot.weights : [])
+                .map((entry) => <Ship b={b} ship={entry.ship} key={String(entry.ship["id"])} />)}
             </div>
           </div>
         ))}
