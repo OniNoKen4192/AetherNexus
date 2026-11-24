@@ -6,7 +6,10 @@ import { worldWithMoon } from "../fixtures/world.mjs";
 import { append, rowToEvent } from "../../dist/db/events.js";
 import { rebuild, dumpProjections } from "../../dist/db/rebuild.js";
 import { sendDelivery } from "../../dist/server/commands/delivery.js";
+import { sendCustoms } from "../../dist/server/commands/customs.js";
+import { replyMoon } from "../../dist/server/commands/park.js";
 import { loadMoon } from "../../dist/server/dispatch.js";
+import { audit } from "../../dist/validate/audit.js";
 
 const iso = (ms = 0) => new Date(Date.now() + ms).toISOString();
 function config(c, { probe = false, refuel = false, level = "manual" } = {}) {
@@ -89,4 +92,64 @@ test("12. a RATE_LIMITED report awaits pickup while BLOCKED still parks", async 
     const w = await worldWithMoon("happy", (c) => config(c));
     try { w.g.adapters.fake = { id: "fake", roles: ["implement", "review"], classify: () => "unknown", async *dispatch() { yield { kind: "done", ts: iso(), data: { report: { status, blocked_reason: status.toLowerCase(), raw: `STATUS: ${status}` } } }; } }; const r = await sendDelivery(w.g, { taskId: "T1" }); const moon = loadMoon(w.g, "T1"), voyage = w.g.db.get("voyages.byId", { id: r.voyageId }); if (status === "RATE_LIMITED") { assert.equal(moon.status, "awaiting_pickup"); assert.equal(moon.park_reason, null); assert.equal(voyage.status, "out_of_fuel"); assert.equal(w.g.db.get("ships.byId", { id: voyage.ship_id }).status, "idle"); assert.equal(w.g.db.all("decisions.pending").length, 0); assert.equal(events(w, "fuel.exhausted").length, 1); stable(w); } else { assert.equal(moon.status, "adrift"); assert.equal(moon.park_reason, "blocked"); } } finally { w.cleanup(); }
   }
+});
+
+// Follow-ups 3 and 6: customs' instructions stay outstanding until a delivery that carries them comes back.
+const DELTA = "Set thing = 2 in src/lib/thing.js; acceptance: node run-tests.mjs";
+function captureDeliveries(w, wallAtRound) {
+  const jobs = []; const real = w.g.adapters.fake;
+  w.g.adapters.fake = { ...real, dispatch: (job, ctx) => {
+    if (job.role !== "implement") return real.dispatch(job, ctx);
+    jobs.push(job);
+    if (job.round !== wallAtRound) return real.dispatch(job, ctx);
+    return (async function* () { yield { kind: "error", ts: iso(), data: { classification: "rate_limited", message: "usage limit reached", resets_at: iso(400) } }; })();
+  } };
+  return jobs;
+}
+
+test("a pickup after a wall hit in a fix round carries customs' instructions", async () => {
+  const w = await worldWithMoon("fix-round", (c) => config(c));
+  try {
+    const jobs = captureDeliveries(w, 2);
+    await sendDelivery(w.g, { taskId: "T1" });
+    assert.equal((await sendCustoms(w.g, { taskId: "T1", reviewScript: "review-fix" })).moonStatus, "audited");
+    assert.equal((await sendDelivery(w.g, { taskId: "T1" })).moonStatus, "awaiting_pickup");
+    assert.equal((await sendDelivery(w.g, { taskId: "T1", override: true })).moonStatus, "audited");
+    const pickup = jobs.at(-1);
+    assert.equal(pickup.round, 3);
+    assert.equal(pickup.deltaSpec, DELTA);
+    assert.match(pickup.prompt, /## Delta from customs \(round 3\)/);
+    stable(w);
+  } finally { w.cleanup(); }
+});
+
+test("a delivery sent to a moon left gated by a fix round carries customs' instructions", async () => {
+  const w = await worldWithMoon("fix-round", (c) => config(c));
+  try {
+    const jobs = captureDeliveries(w);
+    await sendDelivery(w.g, { taskId: "T1" });
+    await sendCustoms(w.g, { taskId: "T1", reviewScript: "review-fix" });
+    // The sky fills while the fix round is being gated: the gate is recorded, the launch is refused.
+    const max = w.g.config.scheduler.max_concurrent_ships;
+    await assert.rejects(sendDelivery(w.g, { taskId: "T1" }, { audit: (input) => { w.g.config.scheduler.max_concurrent_ships = 0; return audit(input); } }), /scheduler.max_concurrent_ships/);
+    w.g.config.scheduler.max_concurrent_ships = max;
+    assert.equal(loadMoon(w.g, "T1").status, "gated");
+    assert.equal(jobs.length, 1);
+    assert.equal((await sendDelivery(w.g, { taskId: "T1" })).moonStatus, "audited");
+    const resent = jobs.at(-1);
+    assert.equal(resent.round, 2);
+    assert.equal(resent.deltaSpec, DELTA);
+    assert.match(resent.prompt, /## Delta from customs \(round 2\)/);
+  } finally { w.cleanup(); }
+});
+
+test("a first delivery and a relaunch with no FIX verdict carry no customs section", async () => {
+  const w = await worldWithMoon("scope-violation", (c) => config(c));
+  try {
+    const jobs = captureDeliveries(w);
+    assert.equal((await sendDelivery(w.g, { taskId: "T1" })).moonStatus, "adrift");
+    replyMoon(w.g, { taskId: "T1", note: "stay in scope" });
+    assert.equal((await sendDelivery(w.g, { taskId: "T1" })).moonStatus, "audited");
+    for (const job of jobs) { assert.equal(job.deltaSpec, undefined); assert.doesNotMatch(job.prompt, /## Delta from customs/); }
+  } finally { w.cleanup(); }
 });

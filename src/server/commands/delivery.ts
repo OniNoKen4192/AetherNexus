@@ -216,7 +216,9 @@ export async function sendDelivery(
   // and a dropped assignment of the same task id is a different conversation.
   const previous = g.db.get<{ session_id: string | null; provider: string }>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
   const resumeId = previous?.provider === provider ? previous.session_id : null;
-  const deltaSpec = fixRound ? lastVerdict?.delta_spec ?? undefined : undefined;
+  // Customs' instructions stay outstanding while the latest verdict is FIX: a delivery that carried them and came back
+  // would have a newer verdict. So a pickup after a wall hit, a reply after a park and a moon left gated all carry them.
+  const deltaSpec = lastVerdict?.verdict === "FIX" ? lastVerdict.delta_spec ?? undefined : undefined;
   const delta_section = deltaSpec ? `\n## Delta from customs (round ${round})\n\n${deltaSpec}\n\n` : "\n";
   const prompt = renderPrompt(promptPath("implement.md"), { spec_path: moon.spec_path, worktree, spec_text: specText, delta_section });
   if (choice.reroutedFrom) {
