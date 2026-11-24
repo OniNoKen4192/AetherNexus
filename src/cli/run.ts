@@ -10,7 +10,7 @@ import { initGalaxy } from "../server/commands/init.js";
 import { createSystem, showSystem } from "../server/commands/system.js";
 import { assignPlanet, assignMoon } from "../server/commands/assign.js";
 import { sendDelivery } from "../server/commands/delivery.js";
-import { sendCustoms } from "../server/commands/customs.js";
+import { recordVerdict, sendCustoms } from "../server/commands/customs.js";
 import { dockCargo } from "../server/commands/dock.js";
 import { replyMoon, cancelDelivery, retireShip, parkStaleMoon, recoverStrandedShips } from "../server/commands/park.js";
 import { answerDecision } from "../server/commands/decision.js";
@@ -36,6 +36,7 @@ const USAGE = `usage: nexus [--json] <command>
   moon assign <planet-id> <spec-path> [--moon <name>]
   delivery send <task-id> [--provider <p>] [--override] [--refuel] [--quiet]
   customs send <task-id> [--provider <p>] [--override] [--quiet]
+  verdict record <task-id>                 record a verdict customs brought back before a crash; nothing flies
   moon reply <task-id> --note <text>
   delivery cancel <task-id>
   moon park <task-id> --reason <text>      for a voyage whose process died (crash, kill, reboot):
@@ -138,7 +139,7 @@ async function run(argv: string[]): Promise<void> {
     out(r, () => `initialized ${r.configPath} (${r.ships} ships); commit .nexus/config.json and .nexus/.gitignore`);
     return;
   }
-  if (!["system", "planet", "moon", "delivery", "customs", "cargo", "status", "events", "fleet", "db", "validate", "decision", "config", "serve"].includes(c0)) throw new Usage();
+  if (!["system", "planet", "moon", "delivery", "customs", "verdict", "cargo", "status", "events", "fleet", "db", "validate", "decision", "config", "serve"].includes(c0)) throw new Usage();
 
   const g = openGalaxy(process.cwd(), process.env["NEXUS_FAKE_SCRIPTS"] ? { scriptsDir: process.env["NEXUS_FAKE_SCRIPTS"] } : {});
   try {
@@ -244,6 +245,10 @@ async function dispatch(g: Galaxy, pos: string[], o: Opts, out: (r: unknown, h: 
       const r = await interruptible((signal) => sendCustoms(g, { ...customsIn(taskId), signal }));
       if (r.interrupted && interruptedPark(g, taskId)) return interruptedExit();
       return out(r.value, () => `voyage ${r.value.voyageId}: verdict ${r.value.verdict?.verdict ?? "none"}, moon ${r.value.moonStatus}`);
+    }
+    case "verdict record": {
+      const r = recordVerdict(g, { taskId: need(rest[0], "<task-id>") });
+      return out(r, () => `recorded verdict ${r.verdict.verdict} from voyage ${r.voyageId}: moon ${r.moonStatus}`);
     }
     case "moon park": {
       const r = parkStaleMoon(g, { taskId: need(rest[0], "<task-id>"), reason: need(o.reason, "--reason") });

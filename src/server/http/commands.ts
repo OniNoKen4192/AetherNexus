@@ -7,7 +7,7 @@ import { answerDecision } from "../commands/decision.js";
 import { dockCargo } from "../commands/dock.js";
 import { sendDelivery } from "../commands/delivery.js";
 import { cancelDelivery, parkStaleMoon, replyMoon, retireShip } from "../commands/park.js";
-import { sendCustoms } from "../commands/customs.js";
+import { recordVerdict, sendCustoms } from "../commands/customs.js";
 import { createSystem } from "../commands/system.js";
 import { loadMoon } from "../dispatch.js";
 import { Refusal } from "../errors.js";
@@ -35,6 +35,7 @@ const COMMANDS: Record<string, Definition> = {
   } },
   "delivery.send": { fields: { taskId: s(), provider: s(true), override: boolean(true), refuel: boolean(true) }, run: (g, runner, i) => runner.start(i["taskId"] as string, ({ signal, onLaunched }) => sendDelivery(g, { ...(i as { taskId: string; provider?: string; override?: boolean; refuel?: boolean }), signal, onLaunched })) },
   "customs.send": { fields: { taskId: s(), provider: s(true), override: boolean(true) }, run: (g, runner, i) => runner.start(i["taskId"] as string, ({ signal, onLaunched }) => sendCustoms(g, { ...(i as { taskId: string; provider?: string; override?: boolean }), signal, onLaunched })) },
+  "verdict.record": { fields: { taskId: s() }, run: (g, _r, i) => recordVerdict(g, i as Parameters<typeof recordVerdict>[1]) },
   "cargo.dock": { fields: { taskId: s() }, run: (g, _r, i) => dockCargo(g, i as Parameters<typeof dockCargo>[1]) },
   "voyage.cancel": { fields: { voyageId: s() }, run: (_g, runner, i) => { runner.cancel(i["voyageId"] as string); return { cancelled: true }; } },
   "moon.reply": { fields: { taskId: s(), note: s() }, run: (g, _r, i) => replyMoon(g, i as Parameters<typeof replyMoon>[1]) },

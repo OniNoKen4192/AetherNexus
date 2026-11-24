@@ -5,11 +5,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { worldWithMoon, idleShip } from "../fixtures/world.mjs";
+import { repoRoot } from "../helpers.mjs";
+import { runCommand } from "../../dist/server/http/commands.js";
 import { append, rowToEvent } from "../../dist/db/events.js";
 import { rebuild, dumpProjections } from "../../dist/db/rebuild.js";
 import { sendDelivery } from "../../dist/server/commands/delivery.js";
-import { sendCustoms } from "../../dist/server/commands/customs.js";
+import { sendCustoms, recordVerdict } from "../../dist/server/commands/customs.js";
 import { availableActions, moonDetail } from "../../dist/server/commands/query.js";
 import { loadMoon, moonScope } from "../../dist/server/dispatch.js";
 import { planWithHolds } from "../../dist/server/scheduler/plan.js";
@@ -34,13 +37,14 @@ async function returnedWithoutVerdict(w, report) {
   return { deliveryId: delivery.voyageId, voyageId };
 }
 
-test("APPROVE left unrecorded: inspect is offered and records it without another flight; the moon can dock", async () => {
+test("APPROVE left unrecorded: recording the verdict is offered and done without another flight; the moon can dock", async () => {
   const w = await worldWithMoon("happy", pin());
   try {
     const { deliveryId, voyageId } = await returnedWithoutVerdict(w, { verdict: "APPROVE", reasoning: "ok" });
-    assert.deepEqual(availableActions(w.g, "T1", ctx), ["inspect"]);
+    assert.deepEqual(availableActions(w.g, "T1", ctx), ["record_verdict"]);
     const launches = log(w.g).filter((e) => e.kind === "voyage.launched").length;
-    const r = await sendCustoms(w.g, { taskId: "T1" });
+    await assert.rejects(sendCustoms(w.g, { taskId: "T1" }), /its verdict is waiting to be recorded; run 'nexus verdict record'/);
+    const r = recordVerdict(w.g, { taskId: "T1" });
     assert.deepEqual([r.voyageId, r.verdict.verdict, r.moonStatus], [voyageId, "APPROVE", "reviewing"]);
     assert.equal(log(w.g).filter((e) => e.kind === "voyage.launched").length, launches, "no second customs voyage");
     const issued = log(w.g).filter((e) => e.kind === "verdict.issued");
@@ -49,6 +53,7 @@ test("APPROVE left unrecorded: inspect is offered and records it without another
     assert.equal(voyage(w.g, deliveryId).status, "cleared");
     assert.deepEqual(availableActions(w.g, "T1", ctx), ["dock"]);
     await assert.rejects(sendCustoms(w.g, { taskId: "T1" }), /only an 'audited' moon/);
+    assert.throws(() => recordVerdict(w.g, { taskId: "T1" }), /no customs verdict is waiting to be recorded/);
     assert.equal(log(w.g).filter((e) => e.kind === "verdict.issued").length, 1);
     stable(w.g);
   } finally { w.cleanup(); }
@@ -58,7 +63,7 @@ test("FIX left unrecorded: the delivery is superseded, its ship freed, the spec 
   const w = await worldWithMoon("fix-round", pin());
   try {
     const { deliveryId } = await returnedWithoutVerdict(w, { verdict: "FIX", reasoning: "thing is 1", delta_spec: "Set thing = 2 in src/lib/thing.js" });
-    const r = await sendCustoms(w.g, { taskId: "T1" });
+    const r = recordVerdict(w.g, { taskId: "T1" });
     assert.deepEqual([r.verdict.verdict, r.moonStatus], ["FIX", "audited"]);
     assert.equal(voyage(w.g, deliveryId).status, "superseded");
     assert.equal(w.g.db.get("ships.byId", { id: voyage(w.g, deliveryId).ship_id }).status, "idle");
@@ -73,7 +78,7 @@ test("REJECT left unrecorded: the moon is quarantined and the decision is opened
   const w = await worldWithMoon("happy", pin());
   try {
     const { deliveryId } = await returnedWithoutVerdict(w, { verdict: "REJECT", reasoning: "wrong task" });
-    const r = await sendCustoms(w.g, { taskId: "T1" });
+    const r = recordVerdict(w.g, { taskId: "T1" });
     assert.equal(r.moonStatus, "quarantined");
     assert.equal(voyage(w.g, deliveryId).status, "quarantined");
     assert.deepEqual(w.g.db.all("decisions.pending").map((d) => d.kind), ["reject"]);
@@ -87,13 +92,13 @@ test("recording a stored verdict needs no ship: a dry pool does not hold it, and
     await returnedWithoutVerdict(w, { verdict: "APPROVE", reasoning: "ok" });
     append(w.g.db, { kind: "fuel.exhausted", provider: "fake", payload: { until: iso(3_600_000), voyage_id: "prior" } });
     assert.equal(moonDetail(w.g, "T1", ctx).moon.waiting_on_fuel, null);
-    assert.deepEqual(planWithHolds(w.g, { ...ctx, rung: "verdicts" }), { actions: [{ action: "inspect", taskId: "T1", first: false }], holds: [] });
+    assert.deepEqual(planWithHolds(w.g, { ...ctx, rung: "verdicts" }), { actions: [{ action: "record_verdict", taskId: "T1", first: false }], holds: [] });
     assert.deepEqual(planWithHolds(w.g, { ...ctx, rung: "manual" }), { actions: [], holds: [] });
-    assert.equal((await sendCustoms(w.g, { taskId: "T1" })).verdict.verdict, "APPROVE");
+    assert.equal(recordVerdict(w.g, { taskId: "T1" }).verdict.verdict, "APPROVE");
   } finally { w.cleanup(); }
 });
 
-test("a FIX at the round cap and its park are one step: a write that fails in the middle leaves no verdict, and inspect finishes it without a flight", async () => {
+test("a FIX at the round cap and its park are one step: a write that fails in the middle leaves no verdict, and recording it later needs no flight", async () => {
   const w = await worldWithMoon("fix-round", pin((c) => { c.automation = { level: "manual", max_fix_rounds: 1 }; }));
   try {
     await sendDelivery(w.g, { taskId: "T1" });
@@ -103,9 +108,9 @@ test("a FIX at the round cap and its park are one step: a write that fails in th
     restore();
     assert.equal(log(w.g).filter((e) => e.kind === "verdict.issued").length, 0, "no verdict without its park");
     assert.equal(loadMoon(w.g, "T1").status, "reviewing");
-    assert.deepEqual(availableActions(w.g, "T1", ctx), ["inspect"]);
+    assert.deepEqual(availableActions(w.g, "T1", ctx), ["record_verdict"]);
     const launches = log(w.g).filter((e) => e.kind === "voyage.launched").length;
-    const r = await sendCustoms(w.g, { taskId: "T1" });
+    const r = recordVerdict(w.g, { taskId: "T1" });
     assert.deepEqual([r.verdict.verdict, r.moonStatus, loadMoon(w.g, "T1").park_reason], ["FIX", "adrift", "max_fix_rounds"]);
     assert.equal(log(w.g).filter((e) => e.kind === "voyage.launched").length, launches, "customs does not fly again");
     const issued = log(w.g).find((e) => e.kind === "verdict.issued");
@@ -113,6 +118,24 @@ test("a FIX at the round cap and its park are one step: a write that fails in th
     assert.equal(w.g.db.all("decisions.pending").length, 1);
     stable(w.g);
   } finally { w.cleanup(); }
+});
+
+test("the Bridge command `verdict.record` and `nexus verdict record` record the stored verdict", async () => {
+  const w = await worldWithMoon("happy", pin());
+  try {
+    await returnedWithoutVerdict(w, { verdict: "APPROVE", reasoning: "ok" });
+    const answer = await runCommand(w.g, {}, "verdict.record", { taskId: "T1" });
+    assert.deepEqual([answer.status, answer.body.result.verdict.verdict, answer.body.result.moonStatus], [200, "APPROVE", "reviewing"]);
+    await assert.rejects(runCommand(w.g, {}, "verdict.record", { taskId: "T1", provider: "fake" }), /unexpected field 'provider'/);
+  } finally { w.cleanup(); }
+
+  const c = await worldWithMoon("happy", pin());
+  try {
+    const { voyageId } = await returnedWithoutVerdict(c, { verdict: "APPROVE", reasoning: "ok" });
+    const cli = (...args) => execFileSync(process.execPath, ["--disable-warning=ExperimentalWarning", path.join(repoRoot, "dist", "cli", "main.js"), ...args], { cwd: c.dir, encoding: "utf8" });
+    assert.equal(cli("verdict", "record", "T1").trim(), `recorded verdict APPROVE from voyage ${voyageId}: moon reviewing`);
+    assert.throws(() => cli("verdict", "record", "T1"), /no customs verdict is waiting to be recorded/);
+  } finally { c.cleanup(); }
 });
 
 /** The next write of an event of this kind throws, as if the process died there. Returns the function that puts the real write back. */
@@ -157,7 +180,7 @@ for (const [kind, where] of [["tree.written", "before the spec was amended"], ["
   });
 }
 
-test("a reviewing moon whose customs voyage is still out, or whose verdict is recorded, is not offered inspect", async () => {
+test("a reviewing moon whose customs voyage is still out, or whose verdict is recorded, is not offered a verdict to record", async () => {
   const w = await worldWithMoon("happy", pin());
   try {
     await sendDelivery(w.g, { taskId: "T1" });

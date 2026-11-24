@@ -28,15 +28,10 @@ export async function sendCustoms(
   const { taskId } = input;
   requireTreeAnswered(g, taskId);
   const moon = loadMoon(g, taskId);
-  const unrecorded = unrecordedReturn(g, moon);
-  if (moon.status !== "audited" && !unrecorded) throw new Refusal(`moon ${taskId} is '${moon.status}' — only an 'audited' moon can be inspected`);
+  if (unrecordedReturn(g, moon)) throw new Refusal(`moon ${taskId} is 'reviewing' — customs already came back and its verdict is waiting to be recorded; run 'nexus verdict record'`);
+  if (moon.status !== "audited") throw new Refusal(`moon ${taskId} is '${moon.status}' — only an 'audited' moon can be inspected`);
   const delivery = g.db.get<VoyageRow>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
   if (!delivery || delivery.status !== "holding") throw new Refusal(`moon ${taskId} has no holding delivery voyage to inspect`);
-  if (unrecorded) {
-    // Customs already flew and came back; only the record of its verdict is missing. No ship, no fuel, no provider.
-    recordVerdict(g, moon, delivery, unrecorded.review, unrecorded.verdict);
-    return { voyageId: unrecorded.review.id, verdict: unrecorded.verdict, moonStatus: loadMoon(g, taskId).status as MoonStatus };
-  }
 
   const audited = g.db.all("events.byAssignment", { assignment_id: moon.assignment_id }).map(rowToEvent)
     .filter((e) => e.kind === "voyage.audited" && e.voyage_id === delivery.id).pop();
@@ -77,8 +72,24 @@ export async function sendCustoms(
 
   const verdict = outcome.done.data.report as ReviewReport;
   // The customs ship was released with its return, in runVoyage.
-  recordVerdict(g, moon, delivery, { id: outcome.voyageId, ship_id: outcome.shipId }, verdict);
+  writeVerdict(g, moon, delivery, { id: outcome.voyageId, ship_id: outcome.shipId }, verdict);
   return { voyageId: outcome.voyageId, verdict, moonStatus: loadMoon(g, taskId).status as MoonStatus };
+}
+
+/**
+ * Record the verdict a customs voyage brought back when the record of it is missing (`unrecordedReturn`). Nothing flies:
+ * no ship, no provider, no fuel. Refused for any moon that has no such verdict waiting.
+ */
+export function recordVerdict(g: Galaxy, input: { taskId: string }): { voyageId: string; verdict: ReviewReport; moonStatus: MoonStatus } {
+  const { taskId } = input;
+  requireTreeAnswered(g, taskId);
+  const moon = loadMoon(g, taskId);
+  const unrecorded = unrecordedReturn(g, moon);
+  if (!unrecorded) throw new Refusal(`moon ${taskId} is '${moon.status}' — no customs verdict is waiting to be recorded`);
+  const delivery = g.db.get<VoyageRow>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
+  if (!delivery || delivery.status !== "holding") throw new Refusal(`moon ${taskId} has no holding delivery voyage for the verdict to apply to`);
+  writeVerdict(g, moon, delivery, unrecorded.review, unrecorded.verdict);
+  return { voyageId: unrecorded.review.id, verdict: unrecorded.verdict, moonStatus: loadMoon(g, taskId).status as MoonStatus };
 }
 
 const verdictRecorded = (g: Galaxy, moon: MoonRow, reviewVoyageId: string): boolean =>
@@ -87,7 +98,7 @@ const verdictRecorded = (g: Galaxy, moon: MoonRow, reviewVoyageId: string): bool
 /**
  * The customs voyage that returned for this moon without its verdict being recorded, with the verdict from its report; null
  * when there is none. The return and the verdict are two writes, so a process that dies between them leaves the moon
- * `reviewing` with nothing flying. `sendCustoms` on such a moon records the stored verdict instead of flying again.
+ * `reviewing` with nothing flying. `recordVerdict` records the stored verdict; customs does not fly again.
  */
 export function unrecordedReturn(g: Galaxy, moon: MoonRow): { review: { id: string; ship_id: string }; verdict: ReviewReport } | null {
   if (moon.status !== "reviewing") return null;
@@ -104,7 +115,7 @@ export function unrecordedReturn(g: Galaxy, moon: MoonRow): { review: { id: stri
  * crash cannot leave a verdict that nothing acted on; the transaction also checks that this customs voyage has no verdict
  * yet, so two processes finishing the same return record it once.
  */
-function recordVerdict(g: Galaxy, moon: MoonRow, delivery: VoyageRow, review: { id: string; ship_id: string }, verdict: ReviewReport): void {
+function writeVerdict(g: Galaxy, moon: MoonRow, delivery: VoyageRow, review: { id: string; ship_id: string }, verdict: ReviewReport): void {
   const taskId = moon.task_id;
   const scope = moonScope(g, moon);
   const fscope = { ...scope, voyage_id: delivery.id, ship_id: delivery.ship_id };

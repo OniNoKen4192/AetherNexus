@@ -15,7 +15,7 @@ export function effectiveRung(level: string): Rung {
 }
 
 export type PlannedAction = {
-  action: "dock" | "park_stale" | "inspect" | "send";
+  action: "dock" | "park_stale" | "record_verdict" | "inspect" | "send";
   taskId: string;
   /** true when this would be the first delivery sent to the moon under its current assignment */
   first: boolean;
@@ -38,13 +38,12 @@ export type PlanCtx = {
   rung?: Rung;
 };
 
-/** `flies`: the action launches a ship, so the limiter and the flight slots decide whether it goes now. */
-type Candidate = PlannedAction & { assignmentId: number; tier: string | null; flies: boolean };
+type Candidate = PlannedAction & { assignmentId: number; tier: string | null };
 
 const group = (candidate: Candidate): number => {
   if (candidate.action === "dock") return 0;
   if (candidate.action === "park_stale") return 1;
-  if (candidate.action === "inspect") return 2;
+  if (candidate.action === "record_verdict" || candidate.action === "inspect") return 2;
   return candidate.first ? 4 : 3;
 };
 
@@ -65,8 +64,9 @@ export function planWithHolds(g: Galaxy, ctx: PlanCtx): { actions: PlannedAction
 
         if (actions.includes("dock") && moon.status === "reviewing") action = "dock";
         else if (actions.includes("park_stale") && (moon.status === "implementing" || moon.status === "reviewing")) action = "park_stale";
-        // On a reviewing moon, inspect only records the verdict customs already brought back: no ship flies.
-        else if (actions.includes("inspect") && (moon.status === "audited" || moon.status === "reviewing")) action = "inspect";
+        // Customs came back and its verdict was never recorded: finishing that record flies nothing and asks no limiter.
+        else if (actions.includes("record_verdict") && moon.status === "reviewing") action = "record_verdict";
+        else if (actions.includes("inspect") && moon.status === "audited") action = "inspect";
         else if (actions.includes("send")) {
           if (moon.status === "awaiting_pickup") action = "send";
           else {
@@ -82,7 +82,7 @@ export function planWithHolds(g: Galaxy, ctx: PlanCtx): { actions: PlannedAction
           }
         }
 
-        if (action) candidates.push({ action, taskId, first: action === "send" && first, assignmentId: moon.assignment_id, tier: moon.tier, flies: action === "send" || (action === "inspect" && moon.status === "audited") });
+        if (action) candidates.push({ action, taskId, first: action === "send" && first, assignmentId: moon.assignment_id, tier: moon.tier });
       }
     }
   }
@@ -100,7 +100,7 @@ export function planWithHolds(g: Galaxy, ctx: PlanCtx): { actions: PlannedAction
   const holds: Hold[] = [];
 
   for (const candidate of candidates) {
-    if (!candidate.flies) {
+    if (candidate.action !== "send" && candidate.action !== "inspect") {
       actions.push({ action: candidate.action, taskId: candidate.taskId, first: candidate.first });
       continue;
     }

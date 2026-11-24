@@ -20,7 +20,7 @@ import type { ShipFormation } from "../../core/catalogue/types.js";
 export type Owner = "server" | "other" | "stale";
 export type SpecEntry = { path: string; taskId: string | null; touch: string[]; error: string | null };
 export type Failure = { ts: string; taskId: string; voyageId: string | null; message: string };
-export type Action = "send" | "inspect" | "dock" | "reply" | "cancel_delivery" | "park_stale" | "cancel" | "answer";
+export type Action = "send" | "inspect" | "record_verdict" | "dock" | "reply" | "cancel_delivery" | "park_stale" | "cancel" | "answer";
 export type PoolView = {
   provider: string; kind: string; state: "dry" | "free" | "low" | "ok" | "unknown";
   remaining?: number; resets_at?: string; until?: string; reading_ts?: string;
@@ -105,8 +105,6 @@ function fuelFields(g: Galaxy, taskId: string, ctx: OwnerCtx): FuelFields {
   const actions = availableActions(g, taskId, ctx);
   const action = actions.includes("send") ? "send" : actions.includes("inspect") ? "inspect" : null;
   if (action === null) return { waiting_on_fuel: null, can_refuel: null };
-  // Recording a verdict customs already brought back flies no ship, so no pool can hold it.
-  if (action === "inspect" && loadMoon(g, taskId).status === "reviewing") return { waiting_on_fuel: null, can_refuel: null };
   const hold = fuelHold(g, taskId, action);
   if (hold === null) return { waiting_on_fuel: null, can_refuel: null };
   return {
@@ -197,8 +195,8 @@ export function availableActions(g: Galaxy, taskId: string, ctx: OwnerCtx): Acti
       return owner === "server" ? ["cancel"] : owner === "stale" ? ["park_stale"] : [];
     }
   }
-  // Customs came back and its verdict was never recorded (the process died in between): an inspection that only records it.
-  if (unrecordedReturn(g, moon)) return ["inspect"];
+  // Customs came back and its verdict was never recorded (the process died in between): nothing flies, the verdict is recorded.
+  if (unrecordedReturn(g, moon)) return ["record_verdict"];
   const verdicts = g.db.all("verdicts.byAssignment", { assignment_id: moon.assignment_id });
   const verdict = verdicts[verdicts.length - 1]?.["verdict"];
   if (moon.status === "audited") {
