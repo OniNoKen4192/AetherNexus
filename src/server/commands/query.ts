@@ -10,6 +10,7 @@ import { pidAlive } from "../lock.js";
 import { pendingTreeDecision } from "./decision.js";
 import { dependencyState } from "./deps.js";
 import { repliedSincePark } from "./delivery.js";
+import { unrecordedReturn } from "./customs.js";
 import { showSystem } from "./system.js";
 import { fuelHold } from "../limiter/limiter.js";
 import { poolReadings, poolState } from "../limiter/pool.js";
@@ -104,6 +105,8 @@ function fuelFields(g: Galaxy, taskId: string, ctx: OwnerCtx): FuelFields {
   const actions = availableActions(g, taskId, ctx);
   const action = actions.includes("send") ? "send" : actions.includes("inspect") ? "inspect" : null;
   if (action === null) return { waiting_on_fuel: null, can_refuel: null };
+  // Recording a verdict customs already brought back flies no ship, so no pool can hold it.
+  if (action === "inspect" && loadMoon(g, taskId).status === "reviewing") return { waiting_on_fuel: null, can_refuel: null };
   const hold = fuelHold(g, taskId, action);
   if (hold === null) return { waiting_on_fuel: null, can_refuel: null };
   return {
@@ -194,6 +197,8 @@ export function availableActions(g: Galaxy, taskId: string, ctx: OwnerCtx): Acti
       return owner === "server" ? ["cancel"] : owner === "stale" ? ["park_stale"] : [];
     }
   }
+  // Customs came back and its verdict was never recorded (the process died in between): an inspection that only records it.
+  if (unrecordedReturn(g, moon)) return ["inspect"];
   const verdicts = g.db.all("verdicts.byAssignment", { assignment_id: moon.assignment_id });
   const verdict = verdicts[verdicts.length - 1]?.["verdict"];
   if (moon.status === "audited") {

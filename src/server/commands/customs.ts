@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { append, appendAll } from "../../db/events.js";
+import { append, appendAll, type NexusEvent } from "../../db/events.js";
 import { rowToEvent } from "../../db/events.js";
 import type { MoonStatus } from "../../core/transitions.js";
 import type { AgentEvent, ReviewReport } from "../../providers/adapter.js";
@@ -9,7 +9,7 @@ import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
 import { chooseProvider } from "../limiter/limiter.js";
 import { requireTreeAnswered } from "./decision.js";
-import { loadMoon, moonScope, parkVoyage, recordTreeWrite, promptPath, moonTouch, renderPrompt, runVoyage } from "../dispatch.js";
+import { loadMoon, moonScope, parkVoyage, recordTreeWrite, promptPath, moonTouch, renderPrompt, runVoyage, type MoonRow } from "../dispatch.js";
 
 type VoyageRow = { id: string; ship_id: string; status: string; round: number; report: string | null };
 
@@ -27,9 +27,15 @@ export async function sendCustoms(
   const { taskId } = input;
   requireTreeAnswered(g, taskId);
   const moon = loadMoon(g, taskId);
-  if (moon.status !== "audited") throw new Refusal(`moon ${taskId} is '${moon.status}' — only an 'audited' moon can be inspected`);
+  const unrecorded = unrecordedReturn(g, moon);
+  if (moon.status !== "audited" && !unrecorded) throw new Refusal(`moon ${taskId} is '${moon.status}' — only an 'audited' moon can be inspected`);
   const delivery = g.db.get<VoyageRow>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
   if (!delivery || delivery.status !== "holding") throw new Refusal(`moon ${taskId} has no holding delivery voyage to inspect`);
+  if (unrecorded) {
+    // Customs already flew and came back; only the record of its verdict is missing. No ship, no fuel, no provider.
+    recordVerdict(g, moon, delivery, unrecorded.review, unrecorded.verdict);
+    return { voyageId: unrecorded.review.id, verdict: unrecorded.verdict, moonStatus: loadMoon(g, taskId).status as MoonStatus };
+  }
 
   const audited = g.db.all("events.byAssignment", { assignment_id: moon.assignment_id }).map(rowToEvent)
     .filter((e) => e.kind === "voyage.audited" && e.voyage_id === delivery.id).pop();
@@ -63,7 +69,6 @@ export async function sendCustoms(
     role: "review", taskId, provider, worktree, touch: moonTouch(moon), ...(input.onEvent ? { onEvent: input.onEvent } : {}), ...(input.signal ? { signal: input.signal } : {}), ...(input.onLaunched ? { onLaunched: input.onLaunched } : {}),
     job: { role: "review", specPath: moon.spec_path, specText, prompt, round: moon.round, auditJson },
   });
-  const scope = moonScope(g, moon);
   if (!outcome.done) {
     // runVoyage ended the review voyage without a verdict (parked, or its ship ran out of fuel and the moon is back to audited): none is reported.
     return { voyageId: outcome.voyageId, verdict: null, moonStatus: loadMoon(g, taskId).status as MoonStatus };
@@ -71,32 +76,72 @@ export async function sendCustoms(
 
   const verdict = outcome.done.data.report as ReviewReport;
   // The customs ship was released with its return, in runVoyage.
-  append(g.db, {
-    kind: "verdict.issued", ...scope, voyage_id: outcome.voyageId, ship_id: outcome.shipId,
-    payload: { verdict: verdict.verdict, reasoning: verdict.reasoning, ...(verdict.delta_spec ? { delta_spec: verdict.delta_spec } : {}), round: moon.round, voyage_id: delivery.id },
-  });
-  const fscope = { ...scope, voyage_id: delivery.id, ship_id: delivery.ship_id };
+  recordVerdict(g, moon, delivery, { id: outcome.voyageId, ship_id: outcome.shipId }, verdict);
+  return { voyageId: outcome.voyageId, verdict, moonStatus: loadMoon(g, taskId).status as MoonStatus };
+}
 
-  if (verdict.verdict === "APPROVE") {
-    append(g.db, { kind: "voyage.cleared", ...fscope, payload: {} });
-  } else if (verdict.verdict === "REJECT") {
-    append(g.db, { kind: "voyage.quarantined", ...fscope, payload: {} });
-    append(g.db, { kind: "ship.quarantined", ...fscope, payload: { voyage_id: delivery.id, outcome: "quarantined" } });
-    append(g.db, { kind: "decision.opened", ...scope, payload: { kind: "reject", target_kind: "moon", target_id: taskId, reasoning: verdict.reasoning } });
-  } else if (g.db.all<{ verdict: string }>("verdicts.byAssignment", { assignment_id: moon.assignment_id }).filter((row) => row.verdict === "FIX").length >= g.config.automation.max_fix_rounds) {
-    parkVoyage(g, { taskId, voyageId: delivery.id, shipId: delivery.ship_id, reason: "max_fix_rounds", details: `FIX verdict after round ${moon.round} (max ${g.config.automation.max_fix_rounds}): ${verdict.reasoning}` });
-  } else {
-    // one transaction: a superseded voyage never keeps its ship
-    appendAll(g.db, () => [
+const verdictRecorded = (g: Galaxy, moon: MoonRow, reviewVoyageId: string): boolean =>
+  g.db.all("events.byAssignment", { assignment_id: moon.assignment_id }).map(rowToEvent).some((e) => e.kind === "verdict.issued" && e.voyage_id === reviewVoyageId);
+
+/**
+ * The customs voyage that returned for this moon without its verdict being recorded, with the verdict from its report; null
+ * when there is none. The return and the verdict are two writes, so a process that dies between them leaves the moon
+ * `reviewing` with nothing flying. `sendCustoms` on such a moon records the stored verdict instead of flying again.
+ */
+export function unrecordedReturn(g: Galaxy, moon: MoonRow): { review: { id: string; ship_id: string }; verdict: ReviewReport } | null {
+  if (moon.status !== "reviewing") return null;
+  const review = g.db.get<VoyageRow>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "review" });
+  if (!review || review.status !== "docked" || !review.report) return null;
+  let verdict: ReviewReport;
+  try { verdict = JSON.parse(review.report) as ReviewReport; } catch { return null; }
+  if (verdict?.verdict !== "APPROVE" && verdict?.verdict !== "FIX" && verdict?.verdict !== "REJECT") return null;
+  return verdictRecorded(g, moon, review.id) ? null : { review: { id: review.id, ship_id: review.ship_id }, verdict };
+}
+
+/**
+ * Record customs' verdict and what it does to the delivery. The verdict and the delivery's fate are one transaction, so a
+ * crash cannot leave a verdict that nothing acted on; the transaction also checks that this customs voyage has no verdict
+ * yet, so two processes finishing the same return record it once.
+ */
+function recordVerdict(g: Galaxy, moon: MoonRow, delivery: VoyageRow, review: { id: string; ship_id: string }, verdict: ReviewReport): void {
+  const taskId = moon.task_id;
+  const scope = moonScope(g, moon);
+  const fscope = { ...scope, voyage_id: delivery.id, ship_id: delivery.ship_id };
+  let outOfRounds = false;
+  const rows = appendAll(g.db, () => {
+    if (verdictRecorded(g, moon, review.id)) return [];
+    const issued: NexusEvent = {
+      kind: "verdict.issued", ...scope, voyage_id: review.id, ship_id: review.ship_id,
+      payload: { verdict: verdict.verdict, reasoning: verdict.reasoning, ...(verdict.delta_spec ? { delta_spec: verdict.delta_spec } : {}), round: moon.round, voyage_id: delivery.id },
+    };
+    if (verdict.verdict === "APPROVE") return [issued, { kind: "voyage.cleared", ...fscope, payload: {} }];
+    if (verdict.verdict === "REJECT") return [
+      issued,
+      { kind: "voyage.quarantined", ...fscope, payload: {} },
+      { kind: "ship.quarantined", ...fscope, payload: { voyage_id: delivery.id, outcome: "quarantined" } },
+      { kind: "decision.opened", ...scope, payload: { kind: "reject", target_kind: "moon", target_id: taskId, reasoning: verdict.reasoning } },
+    ];
+    // This FIX counts towards the cap. Out of rounds, the delivery is parked below, not superseded.
+    const fixes = g.db.all<{ verdict: string }>("verdicts.byAssignment", { assignment_id: moon.assignment_id }).filter((row) => row.verdict === "FIX").length + 1;
+    outOfRounds = fixes >= g.config.automation.max_fix_rounds;
+    if (outOfRounds) return [issued];
+    // a superseded voyage never keeps its ship
+    return [
+      issued,
       { kind: "voyage.superseded", ...fscope, payload: {} },
       { kind: "ship.released", ...fscope, payload: { voyage_id: delivery.id, outcome: "superseded" } },
-    ]);
-    const amended = amendmentFor(specText, moon.round, verdict.reasoning, verdict.delta_spec);
-    recordTreeWrite(g, [moon.spec_path]);
-    fs.writeFileSync(specAbs, amended);
-    const wtSpec = path.join(worktree, moon.spec_path);
-    if (fs.existsSync(path.dirname(wtSpec))) fs.writeFileSync(wtSpec, amended);
-    append(g.db, { kind: "moon.amended", ...scope, payload: { appendix_sha: hashSpec(amended).appendixSha } });
+    ];
+  });
+  if (rows.length === 0 || verdict.verdict !== "FIX") return;
+  if (outOfRounds) {
+    parkVoyage(g, { taskId, voyageId: delivery.id, shipId: delivery.ship_id, reason: "max_fix_rounds", details: `FIX verdict after round ${moon.round} (max ${g.config.automation.max_fix_rounds}): ${verdict.reasoning}` });
+    return;
   }
-  return { voyageId: outcome.voyageId, verdict, moonStatus: loadMoon(g, taskId).status as MoonStatus };
+  const specAbs = path.join(g.repoRoot, moon.spec_path);
+  const amended = amendmentFor(fs.readFileSync(specAbs, "utf8"), moon.round, verdict.reasoning, verdict.delta_spec);
+  recordTreeWrite(g, [moon.spec_path]);
+  fs.writeFileSync(specAbs, amended);
+  const wtSpec = path.join(g.paths.worktrees, taskId, moon.spec_path);
+  if (fs.existsSync(path.dirname(wtSpec))) fs.writeFileSync(wtSpec, amended);
+  append(g.db, { kind: "moon.amended", ...scope, payload: { appendix_sha: hashSpec(amended).appendixSha } });
 }

@@ -38,7 +38,8 @@ export type PlanCtx = {
   rung?: Rung;
 };
 
-type Candidate = PlannedAction & { assignmentId: number; tier: string | null };
+/** `flies`: the action launches a ship, so the limiter and the flight slots decide whether it goes now. */
+type Candidate = PlannedAction & { assignmentId: number; tier: string | null; flies: boolean };
 
 const group = (candidate: Candidate): number => {
   if (candidate.action === "dock") return 0;
@@ -64,7 +65,8 @@ export function planWithHolds(g: Galaxy, ctx: PlanCtx): { actions: PlannedAction
 
         if (actions.includes("dock") && moon.status === "reviewing") action = "dock";
         else if (actions.includes("park_stale") && (moon.status === "implementing" || moon.status === "reviewing")) action = "park_stale";
-        else if (actions.includes("inspect") && moon.status === "audited") action = "inspect";
+        // On a reviewing moon, inspect only records the verdict customs already brought back: no ship flies.
+        else if (actions.includes("inspect") && (moon.status === "audited" || moon.status === "reviewing")) action = "inspect";
         else if (actions.includes("send")) {
           if (moon.status === "awaiting_pickup") action = "send";
           else {
@@ -80,7 +82,7 @@ export function planWithHolds(g: Galaxy, ctx: PlanCtx): { actions: PlannedAction
           }
         }
 
-        if (action) candidates.push({ action, taskId, first: action === "send" && first, assignmentId: moon.assignment_id, tier: moon.tier });
+        if (action) candidates.push({ action, taskId, first: action === "send" && first, assignmentId: moon.assignment_id, tier: moon.tier, flies: action === "send" || (action === "inspect" && moon.status === "audited") });
       }
     }
   }
@@ -98,7 +100,7 @@ export function planWithHolds(g: Galaxy, ctx: PlanCtx): { actions: PlannedAction
   const holds: Hold[] = [];
 
   for (const candidate of candidates) {
-    if (candidate.action !== "send" && candidate.action !== "inspect") {
+    if (!candidate.flies) {
       actions.push({ action: candidate.action, taskId: candidate.taskId, first: candidate.first });
       continue;
     }
