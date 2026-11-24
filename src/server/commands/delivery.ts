@@ -10,6 +10,7 @@ import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
 import { chooseProvider } from "../limiter/limiter.js";
 import { endOutOfFuel } from "../limiter/wall.js";
+import { amendForFix } from "./customs.js";
 import { requireTreeAnswered } from "./decision.js";
 import { dependencyState } from "./deps.js";
 import { loadMoon, loadPlanet, moonScope, parkVoyage, refuseIfAtCap, refuseIfSkyFull, promptPath, moonTouch, renderPrompt, runVoyage } from "../dispatch.js";
@@ -125,6 +126,8 @@ export async function sendDelivery(
   // Precheck 2: spec immutability — the body is the contract; changes go under ## Amendments.
   const specAbs = path.join(g.repoRoot, moon.spec_path);
   if (!fs.existsSync(specAbs)) throw new Refusal(`spec '${moon.spec_path}' does not exist`);
+  // Customs' FIX is in the spec before the delivery that answers it is gated; a no-op unless a crash left it unwritten.
+  if (lastVerdict?.verdict === "FIX") amendForFix(g, moon);
   const specText = fs.readFileSync(specAbs, "utf8");
   if (hashSpec(specText).bodySha !== moon.spec_sha) throw new Refusal("spec body changed since assign — amend under ## Amendments instead");
 

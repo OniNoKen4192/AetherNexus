@@ -4,7 +4,7 @@ import { append, appendAll, type NexusEvent } from "../../db/events.js";
 import { rowToEvent } from "../../db/events.js";
 import type { MoonStatus } from "../../core/transitions.js";
 import type { AgentEvent, ReviewReport } from "../../providers/adapter.js";
-import { appendAmendment, hashSpec } from "../../validate/spec.js";
+import { appendAmendment, hashSpec, specAppendix } from "../../validate/spec.js";
 import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
 import { chooseProvider } from "../limiter/limiter.js";
@@ -14,8 +14,9 @@ import { loadMoon, moonScope, parkEvents, recordTreeWrite, promptPath, moonTouch
 type VoyageRow = { id: string; ship_id: string; status: string; round: number; report: string | null };
 
 /** Header stays one line; the delta spec follows as an indented block. */
+const amendmentNote = (reasoning: string): string => reasoning.replace(/\s+/g, " ").trim() || "fix required";
 function amendmentFor(text: string, round: number, reasoning: string, delta: string | undefined): string {
-  const note = reasoning.replace(/\s+/g, " ").trim() || "fix required";
+  const note = amendmentNote(reasoning);
   let out = appendAmendment(text, { round, date: new Date().toISOString().slice(0, 10), author: "customs", note });
   if (delta) out = out.replace(/\n+$/, "") + "\n\n" + delta.split("\n").map((l) => "    " + l).join("\n") + "\n";
   return out;
@@ -134,12 +135,35 @@ function recordVerdict(g: Galaxy, moon: MoonRow, delivery: VoyageRow, review: { 
       { kind: "ship.released", ...fscope, payload: { voyage_id: delivery.id, outcome: "superseded" } },
     ];
   });
-  if (rows.length === 0 || verdict.verdict !== "FIX" || outOfRounds) return;
+  if (rows.length > 0 && verdict.verdict === "FIX" && !outOfRounds) amendForFix(g, moon);
+}
+
+/**
+ * Write customs' latest FIX into the spec as an amendment, unless it is already there. The amendment is files and a log
+ * entry written after the verdict, so a process can die anywhere among them; this is called again before the next
+ * delivery is sent and finishes whatever is missing, writing the entry at most once. A FIX at the round cap parks the
+ * moon and is not an amendment.
+ */
+export function amendForFix(g: Galaxy, moon: MoonRow): void {
+  const events = g.db.all("events.byAssignment", { assignment_id: moon.assignment_id }).map(rowToEvent);
+  const issued = events.filter((e) => e.kind === "verdict.issued").pop();
+  if (!issued || issued.payload["verdict"] !== "FIX") return;
+  const later = events.filter((e) => e.id > issued.id);
+  if (later.some((e) => e.kind === "moon.amended" && e.payload["for_verdict"] === issued.id)) return;
+  if (later.some((e) => e.kind === "moon.adrift" && e.payload["reason"] === "max_fix_rounds")) return;
+  const reasoning = typeof issued.payload["reasoning"] === "string" ? issued.payload["reasoning"] : "";
+  const delta = typeof issued.payload["delta_spec"] === "string" ? issued.payload["delta_spec"] : undefined;
   const specAbs = path.join(g.repoRoot, moon.spec_path);
-  const amended = amendmentFor(fs.readFileSync(specAbs, "utf8"), moon.round, verdict.reasoning, verdict.delta_spec);
-  recordTreeWrite(g, [moon.spec_path]);
-  fs.writeFileSync(specAbs, amended);
-  const wtSpec = path.join(g.paths.worktrees, taskId, moon.spec_path);
-  if (fs.existsSync(path.dirname(wtSpec))) fs.writeFileSync(wtSpec, amended);
-  append(g.db, { kind: "moon.amended", ...scope, payload: { appendix_sha: hashSpec(amended).appendixSha } });
+  let text = fs.readFileSync(specAbs, "utf8");
+  // The entry is in the file when the process died after writing it (or an older build wrote it and logged it unmarked).
+  const header = `customs: ${amendmentNote(reasoning)}`;
+  const written = specAppendix(text).split("\n").some((line) => /^### A\d+ /.test(line) && line.endsWith(header));
+  if (!written) {
+    text = amendmentFor(text, Number(issued.payload["round"]), reasoning, delta);
+    recordTreeWrite(g, [moon.spec_path]);
+    fs.writeFileSync(specAbs, text);
+  }
+  const wtSpec = path.join(g.paths.worktrees, moon.task_id, moon.spec_path);
+  if (fs.existsSync(path.dirname(wtSpec))) fs.writeFileSync(wtSpec, text);
+  append(g.db, { kind: "moon.amended", ...moonScope(g, moon), payload: { appendix_sha: hashSpec(text).appendixSha, for_verdict: issued.id } });
 }

@@ -98,13 +98,9 @@ test("a FIX at the round cap and its park are one step: a write that fails in th
   try {
     await sendDelivery(w.g, { taskId: "T1" });
     // The process dies while the park is being written: the first park event never lands.
-    const run = w.g.db.run.bind(w.g.db); let failed = false;
-    w.g.db.run = (name, params) => {
-      if (name === "events.insert" && params.kind === "voyage.adrift" && !failed) { failed = true; throw new Error("the process died here"); }
-      return run(name, params);
-    };
+    const restore = dieAt(w, "voyage.adrift");
     await assert.rejects(sendCustoms(w.g, { taskId: "T1", reviewScript: "review-fix" }), /the process died here/);
-    w.g.db.run = run;
+    restore();
     assert.equal(log(w.g).filter((e) => e.kind === "verdict.issued").length, 0, "no verdict without its park");
     assert.equal(loadMoon(w.g, "T1").status, "reviewing");
     assert.deepEqual(availableActions(w.g, "T1", ctx), ["inspect"]);
@@ -118,6 +114,48 @@ test("a FIX at the round cap and its park are one step: a write that fails in th
     stable(w.g);
   } finally { w.cleanup(); }
 });
+
+/** The next write of an event of this kind throws, as if the process died there. Returns the function that puts the real write back. */
+function dieAt(w, kind) {
+  const run = w.g.db.run.bind(w.g.db); let failed = false;
+  w.g.db.run = (name, params) => {
+    if (name === "events.insert" && params.kind === kind && !failed) { failed = true; throw new Error("the process died here"); }
+    return run(name, params);
+  };
+  return () => { w.g.db.run = run; };
+}
+const customsEntries = (file) => (fs.readFileSync(file, "utf8").match(/^### A\d+ .* customs: /gm) ?? []).length;
+
+for (const [kind, where] of [["tree.written", "before the spec was amended"], ["moon.amended", "after the spec was amended, before that was logged"]]) {
+  test(`a FIX recorded by a process that died ${where}: the next delivery amends the spec once and carries it`, async () => {
+    const w = await worldWithMoon("fix-round", pin());
+    try {
+      const specPath = path.join(w.dir, ".nexus", "specs", "T1.md");
+      await sendDelivery(w.g, { taskId: "T1" });
+      const restore = dieAt(w, kind);
+      await assert.rejects(sendCustoms(w.g, { taskId: "T1", reviewScript: "review-fix" }), /the process died here/);
+      restore();
+      assert.equal(loadMoon(w.g, "T1").status, "audited");
+      assert.equal(log(w.g).filter((e) => e.kind === "moon.amended").length, 0);
+      assert.equal(customsEntries(specPath), kind === "tree.written" ? 0 : 1);
+
+      const jobs = []; const real = w.g.adapters.fake;
+      w.g.adapters.fake = { ...real, dispatch: (job, c) => { jobs.push(job); return real.dispatch(job, c); } };
+      assert.equal((await sendDelivery(w.g, { taskId: "T1" })).moonStatus, "audited");
+      assert.equal(customsEntries(specPath), 1, "amended once, not twice");
+      assert.match(fs.readFileSync(specPath, "utf8"), /^ {4}Set thing = 2 in src\/lib\/thing\.js/m);
+      assert.equal(fs.readFileSync(path.join(w.dir, ".nexus", "worktrees", "T1", ".nexus", "specs", "T1.md"), "utf8"), fs.readFileSync(specPath, "utf8"));
+      assert.match(jobs[0].specText, /^### A1 .* customs: /m, "the delivery flies with the amended spec");
+      const amended = log(w.g).filter((e) => e.kind === "moon.amended");
+      assert.equal(amended.length, 1);
+      assert.equal(amended[0].payload.for_verdict, log(w.g).find((e) => e.kind === "verdict.issued").id);
+      // nothing more is owed: customs approves round 2 and no further amendment is written
+      assert.equal((await sendCustoms(w.g, { taskId: "T1" })).verdict.verdict, "APPROVE");
+      assert.equal(customsEntries(specPath), 1);
+      stable(w.g);
+    } finally { w.cleanup(); }
+  });
+}
 
 test("a reviewing moon whose customs voyage is still out, or whose verdict is recorded, is not offered inspect", async () => {
   const w = await worldWithMoon("happy", pin());
