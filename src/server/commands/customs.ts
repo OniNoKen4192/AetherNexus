@@ -9,7 +9,7 @@ import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
 import { chooseProvider } from "../limiter/limiter.js";
 import { requireTreeAnswered } from "./decision.js";
-import { loadMoon, moonScope, parkVoyage, recordTreeWrite, promptPath, moonTouch, renderPrompt, runVoyage, type MoonRow } from "../dispatch.js";
+import { loadMoon, moonScope, parkEvents, recordTreeWrite, promptPath, moonTouch, renderPrompt, runVoyage, type MoonRow } from "../dispatch.js";
 
 type VoyageRow = { id: string; ship_id: string; status: string; round: number; report: string | null };
 
@@ -121,10 +121,12 @@ function recordVerdict(g: Galaxy, moon: MoonRow, delivery: VoyageRow, review: { 
       { kind: "ship.quarantined", ...fscope, payload: { voyage_id: delivery.id, outcome: "quarantined" } },
       { kind: "decision.opened", ...scope, payload: { kind: "reject", target_kind: "moon", target_id: taskId, reasoning: verdict.reasoning } },
     ];
-    // This FIX counts towards the cap. Out of rounds, the delivery is parked below, not superseded.
+    // This FIX counts towards the cap. Out of rounds, the delivery is parked, not superseded.
     const fixes = g.db.all<{ verdict: string }>("verdicts.byAssignment", { assignment_id: moon.assignment_id }).filter((row) => row.verdict === "FIX").length + 1;
-    outOfRounds = fixes >= g.config.automation.max_fix_rounds;
-    if (outOfRounds) return [issued];
+    if (fixes >= g.config.automation.max_fix_rounds) {
+      outOfRounds = true;
+      return [issued, ...parkEvents(g, { taskId, voyageId: delivery.id, shipId: delivery.ship_id, reason: "max_fix_rounds", details: `FIX verdict after round ${moon.round} (max ${g.config.automation.max_fix_rounds}): ${verdict.reasoning}` })];
+    }
     // a superseded voyage never keeps its ship
     return [
       issued,
@@ -132,11 +134,7 @@ function recordVerdict(g: Galaxy, moon: MoonRow, delivery: VoyageRow, review: { 
       { kind: "ship.released", ...fscope, payload: { voyage_id: delivery.id, outcome: "superseded" } },
     ];
   });
-  if (rows.length === 0 || verdict.verdict !== "FIX") return;
-  if (outOfRounds) {
-    parkVoyage(g, { taskId, voyageId: delivery.id, shipId: delivery.ship_id, reason: "max_fix_rounds", details: `FIX verdict after round ${moon.round} (max ${g.config.automation.max_fix_rounds}): ${verdict.reasoning}` });
-    return;
-  }
+  if (rows.length === 0 || verdict.verdict !== "FIX" || outOfRounds) return;
   const specAbs = path.join(g.repoRoot, moon.spec_path);
   const amended = amendmentFor(fs.readFileSync(specAbs, "utf8"), moon.round, verdict.reasoning, verdict.delta_spec);
   recordTreeWrite(g, [moon.spec_path]);

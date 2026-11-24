@@ -93,6 +93,32 @@ test("recording a stored verdict needs no ship: a dry pool does not hold it, and
   } finally { w.cleanup(); }
 });
 
+test("a FIX at the round cap and its park are one step: a write that fails in the middle leaves no verdict, and inspect finishes it without a flight", async () => {
+  const w = await worldWithMoon("fix-round", pin((c) => { c.automation = { level: "manual", max_fix_rounds: 1 }; }));
+  try {
+    await sendDelivery(w.g, { taskId: "T1" });
+    // The process dies while the park is being written: the first park event never lands.
+    const run = w.g.db.run.bind(w.g.db); let failed = false;
+    w.g.db.run = (name, params) => {
+      if (name === "events.insert" && params.kind === "voyage.adrift" && !failed) { failed = true; throw new Error("the process died here"); }
+      return run(name, params);
+    };
+    await assert.rejects(sendCustoms(w.g, { taskId: "T1", reviewScript: "review-fix" }), /the process died here/);
+    w.g.db.run = run;
+    assert.equal(log(w.g).filter((e) => e.kind === "verdict.issued").length, 0, "no verdict without its park");
+    assert.equal(loadMoon(w.g, "T1").status, "reviewing");
+    assert.deepEqual(availableActions(w.g, "T1", ctx), ["inspect"]);
+    const launches = log(w.g).filter((e) => e.kind === "voyage.launched").length;
+    const r = await sendCustoms(w.g, { taskId: "T1" });
+    assert.deepEqual([r.verdict.verdict, r.moonStatus, loadMoon(w.g, "T1").park_reason], ["FIX", "adrift", "max_fix_rounds"]);
+    assert.equal(log(w.g).filter((e) => e.kind === "voyage.launched").length, launches, "customs does not fly again");
+    const issued = log(w.g).find((e) => e.kind === "verdict.issued");
+    assert.deepEqual(log(w.g).filter((e) => e.id > issued.id && e.id <= issued.id + 4).map((e) => e.kind), ["voyage.adrift", "ship.adrift", "moon.adrift", "decision.opened"]);
+    assert.equal(w.g.db.all("decisions.pending").length, 1);
+    stable(w.g);
+  } finally { w.cleanup(); }
+});
+
 test("a reviewing moon whose customs voyage is still out, or whose verdict is recorded, is not offered inspect", async () => {
   const w = await worldWithMoon("happy", pin());
   try {
