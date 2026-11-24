@@ -91,6 +91,15 @@ function ProviderAction({ b, action }: { b: Bridge; action: "send" | "inspect" }
   </div>;
 }
 
+/** Customs came back and its verdict was never recorded: one button, no provider, because nothing flies. */
+function RecordVerdictAction({ b }: { b: Bridge }) {
+  const command = useCommand(b);
+  return <div className="action-group">
+    <button className="btn" type="button" disabled={command.busy} onClick={() => void command.send("verdict.record", { taskId: b.taskId })}>Record verdict</button>
+    <ErrorMessage error={command.error} />
+  </div>;
+}
+
 function DockAction({ b }: { b: Bridge }) {
   const command = useCommand(b);
   return <div className="action-group">
@@ -188,6 +197,7 @@ function ActionControl({ action, b }: { action: Action; b: Bridge }) {
   switch (action) {
     case "send": return <ProviderAction b={b} action="send" />;
     case "inspect": return <ProviderAction b={b} action="inspect" />;
+    case "record_verdict": return <RecordVerdictAction b={b} />;
     case "dock": return <DockAction b={b} />;
     case "reply": return <ReplyAction b={b} />;
     case "cancel_delivery": return <CancelDeliveryAction b={b} />;

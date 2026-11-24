@@ -15,7 +15,7 @@ export function effectiveRung(level: string): Rung {
 }
 
 export type PlannedAction = {
-  action: "dock" | "park_stale" | "inspect" | "send";
+  action: "dock" | "park_stale" | "record_verdict" | "inspect" | "send";
   taskId: string;
   /** true when this would be the first delivery sent to the moon under its current assignment */
   first: boolean;
@@ -43,7 +43,7 @@ type Candidate = PlannedAction & { assignmentId: number; tier: string | null };
 const group = (candidate: Candidate): number => {
   if (candidate.action === "dock") return 0;
   if (candidate.action === "park_stale") return 1;
-  if (candidate.action === "inspect") return 2;
+  if (candidate.action === "record_verdict" || candidate.action === "inspect") return 2;
   return candidate.first ? 4 : 3;
 };
 
@@ -64,6 +64,8 @@ export function planWithHolds(g: Galaxy, ctx: PlanCtx): { actions: PlannedAction
 
         if (actions.includes("dock") && moon.status === "reviewing") action = "dock";
         else if (actions.includes("park_stale") && (moon.status === "implementing" || moon.status === "reviewing")) action = "park_stale";
+        // Customs came back and its verdict was never recorded: finishing that record flies nothing and asks no limiter.
+        else if (actions.includes("record_verdict") && moon.status === "reviewing") action = "record_verdict";
         else if (actions.includes("inspect") && moon.status === "audited") action = "inspect";
         else if (actions.includes("send")) {
           if (moon.status === "awaiting_pickup") action = "send";
@@ -73,8 +75,10 @@ export function planWithHolds(g: Galaxy, ctx: PlanCtx): { actions: PlannedAction
             if (moon.status === "audited") action = "send";
             else if (moon.status === "adrift" || moon.status === "quarantined") {
               if (dependencies.visited || (rung === "roundabout" && dependencies.waitingOn.length === 0 && dependencies.waitingOnPlanets.length === 0)) action = "send";
-            } else if ((moon.status === "emitted" || moon.status === "gated") && rung === "roundabout"
-              && dependencies.waitingOn.length === 0 && dependencies.waitingOnPlanets.length === 0) action = "send";
+            } else if (moon.status === "emitted" || moon.status === "gated") {
+              // A visited moon left gated (the launch after its gate never happened) is a later visit, like a replied park.
+              if (dependencies.visited || (rung === "roundabout" && dependencies.waitingOn.length === 0 && dependencies.waitingOnPlanets.length === 0)) action = "send";
+            }
           }
         }
 

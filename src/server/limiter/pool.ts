@@ -53,24 +53,19 @@ export function poolReadings(g: Galaxy, provider: string): Reading[] {
 }
 
 export function poolState(g: Galaxy, provider: string, model?: string): PoolState {
-  const noFamily = Symbol();
-  const exhaustions = new Map<string | symbol, { event: ReturnType<typeof rowToEvent>; until: string; untilMs: number }>();
-  for (const event of recent(g, "fuel.exhausted", provider)) {
-    const family = event.payload["model_family"];
-    if (!familyApplies(family, model)) continue;
-    const until = event.payload["until"];
-    const untilMs = dateMs(until);
-    if (untilMs === undefined) continue;
-    const key = typeof family === "string" && family.length > 0 ? family : noFamily;
-    if (!exhaustions.has(key)) exhaustions.set(key, { event, until: until as string, untilMs });
-  }
+  // Every wall hit holds the pool until its own reset or until a voyage launched after it returns. The longest live hold wins:
+  // a newer hit never shortens an older one (its reset may be a guess or the 60 s floor).
   let liveUntil: { value: string; ms: number } | undefined;
-  for (const { event: exhaustion, until, untilMs } of exhaustions.values()) {
-    if (untilMs <= g.now()) continue;
+  for (const exhaustion of recent(g, "fuel.exhausted", provider)) {
     const family = exhaustion.payload["model_family"];
+    if (!familyApplies(family, model)) continue;
+    const until = exhaustion.payload["until"];
+    const untilMs = dateMs(until);
+    if (untilMs === undefined || untilMs <= g.now()) continue;
+    if (liveUntil && untilMs <= liveUntil.ms) continue;
     const returned = g.db.all<{ model: string | null }>("voyages.returnedByProviderSince", { provider, ts: exhaustion.ts });
     const cleared = returned.some((voyage) => typeof family !== "string" || (typeof voyage.model === "string" && familyApplies(family, voyage.model)));
-    if (!cleared && (!liveUntil || untilMs > liveUntil.ms)) liveUntil = { value: until, ms: untilMs };
+    if (!cleared) liveUntil = { value: until as string, ms: untilMs };
   }
   if (liveUntil) return { state: "dry", until: liveUntil.value };
 

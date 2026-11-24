@@ -93,14 +93,21 @@ export function refuseIfSkyFull(g: Galaxy): void {
 
 /** Park sequence: voyage, ship, moon, then a pending decision. Each is its own transaction, so a crash leaves a visible, finishable park. */
 export function parkVoyage(g: Galaxy, p: { taskId: string; voyageId: string; shipId: string; reason: string; details?: string }): void {
+  for (const event of parkEvents(g, p)) append(g.db, event);
+}
+
+/** The park sequence as events, for a caller that writes it in one transaction with the event that causes the park. */
+export function parkEvents(g: Galaxy, p: { taskId: string; voyageId: string; shipId: string; reason: string; details?: string }): NexusEvent[] {
   const moon = loadMoon(g, p.taskId); const scope = moonScope(g, moon);
-  append(g.db, { kind: "voyage.adrift", ...scope, voyage_id: p.voyageId, ship_id: p.shipId, payload: { reason: p.reason, ...(p.details !== undefined ? { details: p.details } : {}) } });
-  append(g.db, { kind: "ship.adrift", ...scope, voyage_id: p.voyageId, ship_id: p.shipId, payload: { voyage_id: p.voyageId, outcome: "adrift" } });
-  append(g.db, { kind: "moon.adrift", ...scope, voyage_id: p.voyageId, payload: { reason: p.reason } });
-  append(g.db, {
-    kind: "decision.opened", ...scope,
-    payload: { kind: "adrift", target_kind: "moon", target_id: p.taskId, reasoning: `voyage ${p.voyageId} parked: ${p.reason}${p.details ? ` — ${p.details}` : ""}` },
-  });
+  return [
+    { kind: "voyage.adrift", ...scope, voyage_id: p.voyageId, ship_id: p.shipId, payload: { reason: p.reason, ...(p.details !== undefined ? { details: p.details } : {}) } },
+    { kind: "ship.adrift", ...scope, voyage_id: p.voyageId, ship_id: p.shipId, payload: { voyage_id: p.voyageId, outcome: "adrift" } },
+    { kind: "moon.adrift", ...scope, voyage_id: p.voyageId, payload: { reason: p.reason } },
+    {
+      kind: "decision.opened", ...scope,
+      payload: { kind: "adrift", target_kind: "moon", target_id: p.taskId, reasoning: `voyage ${p.voyageId} parked: ${p.reason}${p.details ? ` — ${p.details}` : ""}` },
+    },
+  ];
 }
 
 /** Record, before the write, that the system is about to write these repo-relative paths into the main tree, so no voyage mistakes them for a foreign change. */

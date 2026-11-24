@@ -167,12 +167,33 @@ test("c5: a newer expired exhaustion for one family does not hide a live one for
     assert.deepEqual(poolState(a.g, "fake", "claude-sonnet-5-5"), { state: "unknown" });
     append(b.g.db, { kind: "fuel.exhausted", provider: "fake", ts: "2026-11-17T09:00:00.000Z", payload: { model_family: "opus", until: "2026-11-18T12:00:00.000Z", voyage_id: "b1" } });
     append(b.g.db, { kind: "fuel.exhausted", provider: "fake", ts: "2026-11-17T10:00:00.000Z", payload: { model_family: "opus", until: "2026-11-17T11:00:00.000Z", voyage_id: "b2" } });
-    assert.deepEqual(poolState(b.g, "fake"), { state: "unknown" });
+    assert.deepEqual(poolState(b.g, "fake"), { state: "dry", until: "2026-11-18T12:00:00.000Z" });
     append(c.g.db, { kind: "fuel.exhausted", provider: "fake", ts: "2026-11-17T09:00:00.000Z", payload: { model_family: "opus", until: "2026-11-18T12:00:00.000Z", voyage_id: "c1" } });
     append(c.g.db, { kind: "fuel.exhausted", provider: "fake", ts: "2026-11-17T10:00:00.000Z", payload: { model_family: "sonnet", until: "2026-11-17T13:00:00.000Z", voyage_id: "c2" } });
     assert.deepEqual(poolState(c.g, "fake"), { state: "dry", until: "2026-11-18T12:00:00.000Z" });
     assert.deepEqual(poolState(c.g, "fake", "claude-sonnet-5-5"), { state: "dry", until: "2026-11-17T13:00:00.000Z" });
   } finally { a.cleanup(); b.cleanup(); c.cleanup(); }
+});
+
+test("a newer wall hit with a shorter reset does not shorten a live longer hold", async () => {
+  const w = await world();
+  try {
+    append(w.g.db, { kind: "fuel.exhausted", provider: "fake", ts: iso(0), payload: { until: iso(3_600_000), voyage_id: "v1" } });
+    append(w.g.db, { kind: "fuel.exhausted", provider: "fake", ts: iso(1_000), payload: { until: iso(600_000), voyage_id: "v2" } });
+    assert.deepEqual(poolState(w.g, "fake"), { state: "dry", until: iso(3_600_000) });
+    w.g.now = () => T + 600_001;
+    assert.deepEqual(poolState(w.g, "fake"), { state: "dry", until: iso(3_600_000) });
+  } finally { w.cleanup(); }
+});
+
+test("a hold cleared by a voyage stays cleared when a newer wall hit sets a shorter one", async () => {
+  const w = await voyageWorld();
+  try {
+    append(w.g.db, { kind: "fuel.exhausted", provider: "fake", ts: iso(0), payload: { until: iso(3_600_000), voyage_id: "v1" } });
+    voyage(w, "fake", iso(5_000), iso(10_000));
+    append(w.g.db, { kind: "fuel.exhausted", provider: "fake", ts: iso(20_000), payload: { until: iso(600_000), voyage_id: "v2" } });
+    assert.deepEqual(poolState(w.g, "fake"), { state: "dry", until: iso(600_000) });
+  } finally { w.cleanup(); }
 });
 
 test("c6: a voyage returned after the exhaustion clears it", async () => {

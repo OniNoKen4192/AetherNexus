@@ -10,6 +10,7 @@ import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
 import { chooseProvider } from "../limiter/limiter.js";
 import { endOutOfFuel } from "../limiter/wall.js";
+import { amendForFix } from "./customs.js";
 import { requireTreeAnswered } from "./decision.js";
 import { dependencyState } from "./deps.js";
 import { loadMoon, loadPlanet, moonScope, parkVoyage, refuseIfAtCap, refuseIfSkyFull, promptPath, moonTouch, renderPrompt, runVoyage } from "../dispatch.js";
@@ -125,6 +126,8 @@ export async function sendDelivery(
   // Precheck 2: spec immutability — the body is the contract; changes go under ## Amendments.
   const specAbs = path.join(g.repoRoot, moon.spec_path);
   if (!fs.existsSync(specAbs)) throw new Refusal(`spec '${moon.spec_path}' does not exist`);
+  // Customs' FIX is in the spec before the delivery that answers it is gated; a no-op unless a crash left it unwritten.
+  if (lastVerdict?.verdict === "FIX") amendForFix(g, moon);
   const specText = fs.readFileSync(specAbs, "utf8");
   if (hashSpec(specText).bodySha !== moon.spec_sha) throw new Refusal("spec body changed since assign — amend under ## Amendments instead");
 
@@ -216,7 +219,9 @@ export async function sendDelivery(
   // and a dropped assignment of the same task id is a different conversation.
   const previous = g.db.get<{ session_id: string | null; provider: string }>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
   const resumeId = previous?.provider === provider ? previous.session_id : null;
-  const deltaSpec = fixRound ? lastVerdict?.delta_spec ?? undefined : undefined;
+  // Customs' instructions stay outstanding while the latest verdict is FIX: a delivery that carried them and came back
+  // would have a newer verdict. So a pickup after a wall hit, a reply after a park and a moon left gated all carry them.
+  const deltaSpec = lastVerdict?.verdict === "FIX" ? lastVerdict.delta_spec ?? undefined : undefined;
   const delta_section = deltaSpec ? `\n## Delta from customs (round ${round})\n\n${deltaSpec}\n\n` : "\n";
   const prompt = renderPrompt(promptPath("implement.md"), { spec_path: moon.spec_path, worktree, spec_text: specText, delta_section });
   if (choice.reroutedFrom) {
