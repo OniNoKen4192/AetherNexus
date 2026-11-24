@@ -1,6 +1,7 @@
 import type { Bridge } from "../store";
 import { timeText } from "../gauge";
 import { asFuelWait, fuelWaitText, needsAttention, parkReasonText, refuelledText, statusText } from "../labels";
+import { asCargo, asVoyageShip, voyageSentence } from "../ships";
 import { NewSystem } from "./NewSystem";
 import { AssignStream, AssignSpec } from "./Assign";
 
@@ -52,10 +53,14 @@ export function SystemView({ b }: { b: Bridge }) {
                         const waitingOnPlanets = strings(moon["waiting_on_planets"]);
                         const fuelWait = asFuelWait(moon["waiting_on_fuel"]);
                         const parkReason = text(moon["park_reason"]);
-                        const refuelled = (b.snapshot?.voyages ?? [])
-                          .filter((voyage) => voyage["assignment_id"] === moon["assignment_id"] && (voyage["status"] === "launched" || voyage["status"] === "working"))
+                        const inFlight = (b.snapshot?.voyages ?? [])
+                          .filter((voyage) => voyage["assignment_id"] === moon["assignment_id"] && (voyage["status"] === "launched" || voyage["status"] === "working"));
+                        const refuelled = inFlight
                           .map(refuelledText)
                           .filter((label): label is string => label !== null);
+                        const voyageShips = inFlight
+                          .map((voyage) => voyageSentence({ ship: asVoyageShip(voyage["ship"]), cargo: asCargo(voyage["cargo"]) }))
+                          .filter((sentence): sentence is string => sentence !== null);
                         return (
                           <div className={`row${taskId === b.taskId ? " selected" : ""}`} key={moonId} onClick={() => b.openMoon(taskId)}>
                             <span>{name}</span>
@@ -65,6 +70,7 @@ export function SystemView({ b }: { b: Bridge }) {
                             {waitingOnPlanets.length > 0 && <span className="badge waiting-label">waiting on planet {waitingOnPlanets.join(", ")}</span>}
                             {waitingOn.length === 0 && waitingOnPlanets.length === 0 && fuelWait !== null && <span className="badge waiting-label">{fuelWaitText(fuelWait, (iso) => timeText(iso, Date.now()))}</span>}
                             {refuelled.map((label, index) => <span className="badge waiting-label" key={`${label}-${index}`}>{label}</span>)}
+                            {voyageShips.map((sentence, index) => <span className="voyage-ship" key={`${sentence}-${index}`}>{sentence}</span>)}
                             {needsAttention(moon["park_reason"]) && <span className="badge attention-label">{parkReasonText(parkReason)}</span>}
                             {latestFailure !== undefined && <span className="badge failure-badge" title={latestFailure.message}>failed</span>}
                           </div>

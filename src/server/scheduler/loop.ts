@@ -32,14 +32,14 @@ function messageOf(error: unknown): string {
 }
 
 /**
- * The loop that acts on what `plan` decides: it sends freighters, has customs inspect, docks, and parks a moon whose
+ * The loop that acts on what `plan` decides: it sends deliveries, has customs inspect, docks, and parks a moon whose
  * voyage's process is gone. Woken by every new event and by a slow tick. One pass at a time; an error never stops it.
  * A ship the limiter holds for fuel is not an action and never a failure: the hold is written to the log once
  * (`limiter.held`), and the tick sends the ship when the pool is back.
  */
 export function createScheduler(g: Galaxy, opts: { runner: VoyageRunner; pollMs: number; tickMs?: number }): Scheduler {
   const { runner } = opts;
-  /** Moons with a freighter or customs run started here that has not settled yet. */
+  /** Moons with a delivery or customs run started here that has not settled yet. */
   const busy = new Set<string>();
   /** One failed attempt per (moon, action), with the moon's status at the time. A second failure in a row parks the moon. */
   const failed = new Map<string, { taskId: string; status: string | null; gaveUp?: true }>();

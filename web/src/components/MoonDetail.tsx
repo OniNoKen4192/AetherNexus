@@ -3,6 +3,7 @@ import { useBridgeStatus, type Bridge } from "../store";
 import type { FeedEvent } from "../types";
 import { timeText } from "../gauge";
 import { asFuelWait, fuelWaitText, needsAttention, parkReasonHint, parkReasonText, refuelledText, statusText } from "../labels";
+import { asCargo, asVoyageShip, voyageSentence } from "../ships";
 import { ActionBar } from "./ActionBar";
 
 type Tab = "Spec" | "Activity" | "Audit" | "Verdicts";
@@ -82,7 +83,15 @@ export function MoonDetail({ b }: { b: Bridge }) {
           </div>
           {b.detail.voyages.map((voyage, index) => {
             const label = refuelledText(voyage);
-            return label === null ? null : <div className="badge waiting-label" key={`${String(voyage["id"])}-${index}`}>{label}</div>;
+            const sentence = voyageSentence({ ship: asVoyageShip(voyage["ship"]), cargo: asCargo(voyage["cargo"]) });
+            const role = text(voyage["role"]);
+            const roleText = role === "implement" ? "delivery" : role === "review" ? "customs" : role;
+            return <div className="voyage-ship" key={`${String(voyage["id"])}-${index}`}>
+              <span>{roleText}</span><span>round {number(voyage["round"])}</span>
+              <span>{statusText(text(voyage["status"]))}</span>
+              {sentence !== null && <span>{sentence}</span>}
+              {label !== null && <span className="badge waiting-label">{label}</span>}
+            </div>;
           })}
           {waitingOn.length > 0 && <div className="badge waiting-label">waiting on {waitingOn.join(", ")}</div>}
           {waitingOnPlanets.length > 0 && <div className="badge waiting-label">waiting on planet {waitingOnPlanets.join(", ")}</div>}

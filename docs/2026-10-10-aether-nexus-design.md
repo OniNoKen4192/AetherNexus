@@ -47,7 +47,7 @@ The metaphor is load-bearing in the UI and in event names. Internals keep plain 
 | Task (one spec, one worktree) | **Moon** | task | A task is *assigned* to an existing barren moon. Moon mass = difficulty score. Merged → `settled`; dropped → `barren` again. |
 | The bodies themselves | **Terrain** | — | Generated at `system create`: 6 planets inside an **asteroid belt**, 1–4 moons each, all barren. Grows only by **discovery** (a moon captured; a gas giant, ice giant or dwarf planet found beyond the belt). Nothing ever disappears. |
 | Asteroid belt | **the Belt** | — | Human-readable boundary of the inner system; reserved for the idle director's free housekeeping. Never assigned a task. |
-| A named vessel in the roster | **Ship** | — | Classes: **Freighter** (implements; carries a moon's cargo to its planet), **Customs** (reviews; inspects cargo in orbit, issues the verdict), **Carrier** (hauls a finished stream planet → HQ), **Surveyor** (plans). Fleet = provider. |
+| A named vessel in the roster | **Ship** | — | *Superseded 2026-11-19 by `docs/superpowers/specs/2026-11-19-ship-catalogue-design.md`: a ship has a job (delivery, customs, transfer, survey), a faction, a weight and a formation; "freighter" and "carrier" are hulls in the catalogue.* Classes: **Freighter** (implements; carries a moon's cargo to its planet), **Customs** (reviews; inspects cargo in orbit, issues the verdict), **Carrier** (hauls a finished stream planet → HQ), **Surveyor** (plans). Fleet = provider. |
 | One assignment of a ship | **Voyage** | subagent run | `launched → working → holding → cleared → en_route → docked`. The agent process is the `working` phase. |
 | The orchestrator | **The Nexus** (dispatch) | — | Station at the galactic core. |
 | Provider usage pool | **Fuel** (per provider: Claude fuel, Codex fuel, OpenRouter credits, local = reactor) | quota | Reserve floor = "reserve tanks." |
@@ -227,6 +227,7 @@ systems(id, kind feature|bug, title, brief, base_sha, integration_branch, status
 planets(id, system_id, mission, territory JSON, depends_on JSON, interfaces, plan_path, branch, status)
 moons(id, planet_id, spec_path, spec_sha, touch JSON, depends_on JSON, tier, gravity, status, worktree, branch)
 ships(id, name UNIQUE, class freighter|customs|carrier|surveyor, fleet, status idle|assigned|adrift|quarantined|retired, voyage_count)
+-- superseded 2026-11-19 (migration 003): ships(id, name UNIQUE, job delivery|customs|transfer|survey, fleet, faction, weight, formation JSON, status, voyage_count); voyages gain cargo JSON
 voyages(id, ship_id, moon_id|planet_id, role, round, provider, model, session_id, status, launched_ts, returned_ts, docked_ts, report JSON, cost JSON)
 verdicts(id, moon_id, voyage_id, verdict APPROVE|FIX|REJECT, delta_spec, reasoning, round)
 decisions(id, kind, target_id, status pending|resolved, opened_ts, resolved_ts, human_note, outcome)

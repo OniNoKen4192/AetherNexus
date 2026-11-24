@@ -13,6 +13,8 @@ import { repliedSincePark } from "./delivery.js";
 import { showSystem } from "./system.js";
 import { fuelHold } from "../limiter/limiter.js";
 import { poolReadings, poolState } from "../limiter/pool.js";
+import { PLAIN_FORMATION } from "../../core/catalogue/builtin.js";
+import type { ShipFormation } from "../../core/catalogue/types.js";
 
 export type Owner = "server" | "other" | "stale";
 export type SpecEntry = { path: string; taskId: string | null; touch: string[]; error: string | null };
@@ -28,17 +30,23 @@ export type PoolView = {
 export type FuelWait = { provider: string; reason: string; until?: string };
 export type RefuelOffer = { provider: string; model: string };
 type FuelFields = { waiting_on_fuel: FuelWait | null; can_refuel: RefuelOffer | null };
-type VoyageView = Row & { owner: Owner | null; refuel_for: string | null };
+/** A ship as every read shows it: the row, with `formation` parsed. */
+export type ShipView = Row & { formation: ShipFormation };
+/** What a voyage row says about its ship. */
+export type VoyageShip = { name: string; faction: string; weight: string; formation_name: string };
+type VoyageView = Row & { owner: Owner | null; refuel_for: string | null; cargo: { id: string; label: string } | null; ship: VoyageShip | null };
 export type Snapshot = {
   cursor: number; repo: string; rung: string;
-  /** First freighters that would be sent right now if the rung were roundabout; 0 when the caller did not supply it. */
+  /** First deliveries that would be sent right now if the rung were roundabout; 0 when the caller did not supply it. */
   ready_to_send: number;
   limits: { max_concurrent_ships: number; per_provider_max: Record<string, number>; in_flight: number };
   roles: { implement: string[]; review: string[] };
   systems: (Row & { planets: (Row & { moons: (Row | (Row & FuelFields))[] })[] })[];
   pools: PoolView[];
+  /** The catalogue's weights, lightest first: the order the page lists ships in. */
+  weights: string[];
   voyages: VoyageView[];
-  fleet: Row[]; decisions: Row[]; specs: SpecEntry[]; failures: Failure[];
+  fleet: ShipView[]; decisions: Row[]; specs: SpecEntry[]; failures: Failure[];
 };
 export type MoonDetail = {
   moon: Row & FuelFields; spec: string | null;
@@ -61,11 +69,34 @@ function voyageOwner(g: Galaxy, voyage: Row, ctx: OwnerCtx): Owner | null {
   return ownerFromLaunch(voyage, launched, ctx);
 }
 
-function voyageRows(voyages: Row[], assignmentEvents: EventRow[], ctx: OwnerCtx): VoyageView[] {
+function formation(value: unknown): ShipFormation {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    if (parsed !== null && typeof parsed === "object" && typeof parsed.name === "string" && Array.isArray(parsed.vessels)) return parsed as ShipFormation;
+  } catch { /* Bad stored JSON falls back to the plain formation. */ }
+  return { ...PLAIN_FORMATION, vessels: PLAIN_FORMATION.vessels.map((vessel) => ({ ...vessel })) };
+}
+
+function shipViews(rows: Row[]): ShipView[] {
+  return rows.map((ship) => ({ ...ship, formation: formation(ship["formation"]) }));
+}
+
+function cargo(value: unknown): { id: string; label: string } | null {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    return parsed !== null && typeof parsed === "object" && typeof parsed.id === "string" && typeof parsed.label === "string"
+      ? { id: parsed.id, label: parsed.label }
+      : null;
+  } catch { return null; }
+}
+
+function voyageRows(voyages: Row[], assignmentEvents: EventRow[], ctx: OwnerCtx, ships: Map<string, ShipView>): VoyageView[] {
   return voyages.map((voyage) => {
     const launched = assignmentEvents.find((event) => event.kind === "voyage.launched" && event.voyage_id === voyage["id"]);
     const refuelFor = launched?.payload["refuel_for"];
-    return { ...voyage, owner: ownerFromLaunch(voyage, launched, ctx), refuel_for: typeof refuelFor === "string" ? refuelFor : null };
+    const found = ships.get(String(voyage["ship_id"]));
+    const ship = found === undefined ? null : { name: String(found["name"]), faction: String(found["faction"]), weight: String(found["weight"]), formation_name: found.formation.name };
+    return { ...voyage, owner: ownerFromLaunch(voyage, launched, ctx), refuel_for: typeof refuelFor === "string" ? refuelFor : null, cargo: cargo(voyage["cargo"]), ship };
   });
 }
 
@@ -129,6 +160,8 @@ export function snapshot(g: Galaxy, ctx: OwnerCtx & { failures: Failure[]; ready
     const shown = showSystem(g, String(s["id"]));
     return { ...shown.system, planets: shown.planets };
   });
+  const fleet = shipViews(g.db.all("ships.all"));
+  const ships = new Map(fleet.map((ship) => [String(ship["id"]), ship]));
   const assigned = new Set<string>(); const voyages: VoyageView[] = [];
   for (const system of systems) for (const planet of system.planets) for (const moon of planet.moons) {
     if (typeof moon["task_id"] !== "string" || typeof moon["assignment_id"] !== "number") continue;
@@ -137,14 +170,14 @@ export function snapshot(g: Galaxy, ctx: OwnerCtx & { failures: Failure[]; ready
     moon["waiting_on_planets"] = dependencies.visited ? [] : dependencies.waitingOnPlanets;
     const assignmentEvents = g.db.all("events.byAssignment", { assignment_id: moon["assignment_id"] }).map(rowToEvent);
     Object.assign(moon, fuelFields(g, moon["task_id"], { ...ctx, assignmentEvents }));
-    assigned.add(moon["task_id"]); voyages.push(...voyageRows(g.db.all("voyages.byAssignment", { assignment_id: moon["assignment_id"] }), assignmentEvents, ctx));
+    assigned.add(moon["task_id"]); voyages.push(...voyageRows(g.db.all("voyages.byAssignment", { assignment_id: moon["assignment_id"] }), assignmentEvents, ctx, ships));
   }
   const inFlight = g.db.all("voyages.inFlight");
   return {
     cursor, repo: path.basename(g.repoRoot), rung: g.config.automation.level, ready_to_send: ctx.readyToSend ?? 0,
     limits: { max_concurrent_ships: g.config.scheduler.max_concurrent_ships, per_provider_max: g.config.scheduler.per_provider_max, in_flight: inFlight.length },
-    roles: { implement: g.config.roles.implement, review: g.config.roles.review }, systems, pools: pools(g),
-    voyages, fleet: g.db.all("ships.all"), decisions: g.db.all("decisions.pending"),
+    roles: { implement: g.config.roles.implement, review: g.config.roles.review }, systems, pools: pools(g), weights: [...g.catalogue.weights],
+    voyages, fleet, decisions: g.db.all("decisions.pending"),
     specs: specEntries(g, assigned), failures: ctx.failures,
   };
 }
@@ -187,9 +220,10 @@ export function moonDetail(g: Galaxy, taskId: string, ctx: OwnerCtx): MoonDetail
   catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; spec = null; }
   const events = g.db.all("events.byAssignment", { assignment_id: moon.assignment_id }).map(rowToEvent);
   const fuel = fuelFields(g, taskId, { ...ctx, assignmentEvents: events });
+  const ships = new Map(shipViews(g.db.all("ships.all")).map((ship) => [String(ship["id"]), ship]));
   return {
     moon: { ...moon, waiting_on: dependencies.visited ? [] : dependencies.waitingOn, waiting_on_planets: dependencies.visited ? [] : dependencies.waitingOnPlanets, ...fuel }, spec,
-    voyages: voyageRows(g.db.all("voyages.byAssignment", { assignment_id: moon.assignment_id }), events, ctx),
+    voyages: voyageRows(g.db.all("voyages.byAssignment", { assignment_id: moon.assignment_id }), events, ctx, ships),
     verdicts: g.db.all("verdicts.byAssignment", { assignment_id: moon.assignment_id }), events,
     decisions: g.db.all("decisions.pendingByTarget", { target_id: taskId }), actions: availableActions(g, taskId, ctx),
   };
@@ -216,4 +250,4 @@ export function events(g: Galaxy, opts: { since?: number; moon?: string }): Even
   return opts.moon && opts.since !== undefined ? out.filter((e) => e.id > opts.since!) : out;
 }
 
-export function fleet(g: Galaxy): Row[] { return g.db.all("ships.all"); }
+export function fleet(g: Galaxy): ShipView[] { return shipViews(g.db.all("ships.all")); }

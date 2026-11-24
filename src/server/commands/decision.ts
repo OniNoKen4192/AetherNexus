@@ -36,11 +36,11 @@ export function answerDecision(g: Galaxy, input: { decisionId: number; answer: "
   // and answering again takes the already-adrift path below and only resolves it.
   if (moon.status === "adrift" || moon.status === "quarantined") { resolve(); return { moonStatus: status(), parked: false }; }
   const reasoning = d.reasoning ?? "";
-  const freighter = g.db.get<VoyageRow>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
-  if (freighter && (freighter.status === "holding" || freighter.status === "cleared")) {
-    parkVoyage(g, { taskId: moon.task_id, voyageId: freighter.id, shipId: freighter.ship_id, reason: "main_tree_modified", details: reasoning });
+  const delivery = g.db.get<VoyageRow>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
+  if (delivery && (delivery.status === "holding" || delivery.status === "cleared")) {
+    parkVoyage(g, { taskId: moon.task_id, voyageId: delivery.id, shipId: delivery.ship_id, reason: "main_tree_modified", details: reasoning });
   } else {
-    // The freighter is already superseded (FIX): park the moon itself, as the carry-over park in delivery.ts does.
+    // The delivery is already superseded (FIX): park the moon itself, as the carry-over park in delivery.ts does.
     append(g.db, { kind: "moon.adrift", ...scope, payload: { reason: "main_tree_modified" } });
     append(g.db, { kind: "decision.opened", ...scope, payload: { kind: "adrift", target_kind: "moon", target_id: moon.task_id, reasoning: `the main tree changed during a voyage and the change is not the owner's: ${reasoning}` } });
   }

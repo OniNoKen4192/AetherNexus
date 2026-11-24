@@ -34,7 +34,7 @@ test("after a hard kill the next server parks the moon whose voyage's process is
     g = openGalaxy(info.dir, { scriptsDir: path.join(repoRoot, "tests", "fixtures", "scripts") });
     const moon = (id) => g.db.get("moons.byTask", { task_id: id });
     const log = () => g.db.all("events.since", { id: 0 }).map(rowToEvent);
-    // What the kill left behind: a voyage still in flight in the log, and no freighter sent to C yet.
+    // What the kill left behind: a voyage still in flight in the log, and no delivery sent to C yet.
     assert.equal(moon("T1").status, "implementing");
     assert.equal(g.db.all("voyages.inFlight").length, 1);
     assert.equal(moon("C").status, "emitted");

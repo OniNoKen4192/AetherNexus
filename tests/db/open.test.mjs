@@ -8,7 +8,7 @@ test("openDb runs migrations, sets WAL/foreign_keys/busy_timeout, records schema
   assert.equal(db.raw.prepare("PRAGMA journal_mode").get().journal_mode, "wal");
   assert.equal(db.raw.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
   assert.equal(db.raw.prepare("PRAGMA busy_timeout").get().timeout, 5000);
-  assert.equal(db.get("meta.get", { key: "schema_version" }).value, "2");
+  assert.equal(db.get("meta.get", { key: "schema_version" }).value, "3");
   const tables = db.raw.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map((r) => r.name);
   for (const t of ["events","systems","planets","moons","ships","voyages","verdicts","decisions","query_stats","meta"]) assert.ok(tables.includes(t), t);
   db.close();
@@ -16,7 +16,7 @@ test("openDb runs migrations, sets WAL/foreign_keys/busy_timeout, records schema
 
 test("openDb is idempotent (second open does not re-run the migrations)", () => {
   const f = tmpDb(); openDb(f).close(); const db = openDb(f);
-  assert.equal(db.get("meta.get", { key: "schema_version" }).value, "2"); db.close();
+  assert.equal(db.get("meta.get", { key: "schema_version" }).value, "3"); db.close();
 });
 
 test("transaction rolls back on throw", () => {

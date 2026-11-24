@@ -1,5 +1,5 @@
 import type { Role } from "../../providers/adapter.js";
-import { append } from "../../db/events.js";
+import { append, appendAll } from "../../db/events.js";
 import { loadMoon, moonScope, parkVoyage } from "../dispatch.js";
 import type { Galaxy } from "../galaxy.js";
 import { poolReadings } from "./pool.js";
@@ -48,16 +48,11 @@ export function endOutOfFuel(g: Galaxy, p: EndOutOfFuelParams): { parked: boolea
     return { parked: true, until };
   }
 
-  append(g.db, {
-    kind: "voyage.out_of_fuel", ...scope, voyage_id: p.voyageId, ship_id: p.shipId,
-    payload: { reason: "out_of_fuel", details: p.details },
-  });
-  append(g.db, {
-    kind: "ship.released", ...scope, voyage_id: p.voyageId, ship_id: p.shipId,
-    payload: { voyage_id: p.voyageId, outcome: "out_of_fuel" },
-  });
-  append(g.db, {
-    kind: p.role === "implement" ? "moon.awaiting_pickup" : "moon.review_abandoned", ...scope, payload: {},
-  });
+  // One transaction: the voyage ends, its ship is free and the moon knows what to wait for — or none of the three.
+  appendAll(g.db, () => [
+    { kind: "voyage.out_of_fuel", ...scope, voyage_id: p.voyageId, ship_id: p.shipId, payload: { reason: "out_of_fuel", details: p.details } },
+    { kind: "ship.released", ...scope, voyage_id: p.voyageId, ship_id: p.shipId, payload: { voyage_id: p.voyageId, outcome: "out_of_fuel" } },
+    { kind: p.role === "implement" ? "moon.awaiting_pickup" : "moon.review_abandoned", ...scope, payload: {} },
+  ]);
   return { parked: false, until };
 }

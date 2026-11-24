@@ -2,7 +2,7 @@ import { test } from "node:test"; import assert from "node:assert/strict"; impor
 import { worldWithMoon } from "../fixtures/world.mjs";
 import { sendDelivery } from "../../dist/server/commands/delivery.js"; import { sendCustoms } from "../../dist/server/commands/customs.js";
 
-test("APPROVE: verdict recorded, freighter cleared, moon stays reviewing until dock", async () => {
+test("APPROVE: verdict recorded, delivery cleared, moon stays reviewing until dock", async () => {
   const w = await worldWithMoon("happy"); const l = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   const r = await sendCustoms(w.g, { taskId: "T1", provider: "fake" });
   assert.equal(r.verdict.verdict, "APPROVE"); assert.equal(r.moonStatus, "reviewing");
@@ -11,7 +11,7 @@ test("APPROVE: verdict recorded, freighter cleared, moon stays reviewing until d
   assert.equal(w.g.db.all("verdicts.byTask", { task_id: "T1" })[0].verdict, "APPROVE"); w.cleanup();
 });
 
-test("FIX: freighter superseded + released, spec amended, body edit refused; round 2 passes", async () => {
+test("FIX: delivery superseded + released, spec amended, body edit refused; round 2 passes", async () => {
   const w = await worldWithMoon("fix-round"); const l1 = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   const specPath = path.join(w.dir, ".nexus", "specs", "T1.md");
   const r1 = await sendCustoms(w.g, { taskId: "T1", provider: "fake", onEvent: () => {}, reviewScript: "review-fix" });
@@ -39,7 +39,7 @@ test("FIX: freighter superseded + released, spec amended, body edit refused; rou
   w.cleanup();
 });
 
-test("REJECT: freighter quarantined, moon quarantined, decision opened", async () => {
+test("REJECT: delivery quarantined, moon quarantined, decision opened", async () => {
   const w = await worldWithMoon("happy"); const l = await sendDelivery(w.g, { taskId: "T1", provider: "fake" });
   const r = await sendCustoms(w.g, { taskId: "T1", provider: "fake", reviewScript: "review-reject" });
   assert.equal(r.moonStatus, "quarantined"); assert.equal(w.g.db.get("voyages.byId", { id: l.voyageId }).status, "quarantined");

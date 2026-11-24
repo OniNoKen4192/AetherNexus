@@ -39,12 +39,12 @@ test("manual: nothing is ever written by the scheduler", async () => {
   } finally { await x.close(); }
 });
 
-test("verdicts: after a human sends a freighter the moon is settled unattended", async () => {
+test("verdicts: after a human sends a delivery the moon is settled unattended", async () => {
   const x = await startWorld("happy", undefined, FAST);
   try {
     setAutomationLevel(x.w.g, { level: "verdicts" });
     await sleep(300);
-    assert.deepEqual(acted(x), [], "no first freighter is sent at verdicts");
+    assert.deepEqual(acted(x), [], "no first delivery is sent at verdicts");
     assert.equal((await post(x, "delivery.send", { taskId: "T1" })).status, 202);
     await until(() => moon(x).status === "merged");
     assert.deepEqual(acted(x), ["inspect", "dock"]);
@@ -52,7 +52,7 @@ test("verdicts: after a human sends a freighter the moon is settled unattended",
   } finally { await x.close(); }
 });
 
-test("roundabout: a freighter is sent to a ready moon", async () => {
+test("roundabout: a delivery is sent to a ready moon", async () => {
   const x = await startWorld("happy", undefined, FAST);
   try {
     assert.equal((await post(x, "config.automation", { level: "roundabout" })).status, 200);
@@ -85,7 +85,7 @@ test("caps: never more than max_concurrent_ships in flight", async () => {
   } finally { await x.close(); }
 });
 
-/** A moon whose spec body was edited after assign: every freighter is refused before launch. */
+/** A moon whose spec body was edited after assign: every delivery is refused before launch. */
 async function refusedWorld() {
   const x = await startWorld("happy", undefined, FAST);
   fs.appendFileSync(path.join(x.w.dir, ".nexus", "specs", "T1.md"), "\nAn edit to the body after assign.\n");
@@ -231,7 +231,7 @@ const reading = (x, used, resets_at) => append(x.w.g.db, { kind: "fuel.reading",
 const exhausted = (x, until) => append(x.w.g.db, { kind: "fuel.exhausted", provider: "fake", payload: { until, voyage_id: "v" } });
 const held = (x, taskId = "T1") => log(x).filter((e) => e.kind === "limiter.held" && e.task_id === taskId);
 
-test("a held freighter writes limiter.held once, not on every pass", async () => {
+test("a held delivery writes limiter.held once, not on every pass", async () => {
   const x = await startWorld("happy", pooled, FAST);
   try {
     const resets = ahead(3_600_000);
@@ -269,7 +269,7 @@ test("a hold is written again after the moon was visited in between", async () =
     reading(x, 0.95, resets);
     setAutomationLevel(x.w.g, { level: "roundabout" });
     await until(() => held(x).length === 1);
-    reading(x, 0.1, resets); // the pool is back: the freighter is sent, and its ship breaks down mid-run
+    reading(x, 0.1, resets); // the pool is back: the delivery is sent, and its ship breaks down mid-run
     await until(() => moon(x).status === "adrift");
     reading(x, 0.95, resets);
     replyMoon(x.w.g, { taskId: "T1", note: "try again" });
@@ -277,7 +277,7 @@ test("a hold is written again after the moon was visited in between", async () =
     await sleep(500);
     const events = held(x);
     assert.equal(events.length, 2);
-    assert.deepEqual(events[1].payload, events[0].payload, "the same hold, written again because a freighter flew in between");
+    assert.deepEqual(events[1].payload, events[0].payload, "the same hold, written again because a delivery flew in between");
     assert.deepEqual(acted(x), ["send"]);
   } finally { await x.close(); }
 });

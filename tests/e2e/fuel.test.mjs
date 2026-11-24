@@ -171,7 +171,7 @@ test("4. Customs hits the wall.", async () => scenario("happy", fuelPatch(), asy
   const dry = await until(async () => { const value = await snapshot(x); const voyage = value.voyages.find((v) => v.task_id === "T1" && v.role === "review" && v.status === "out_of_fuel"); return voyage ? value : null; });
   await feed.waitFor((all) => all.some((event) => event.kind === "fuel.exhausted" && event.task_id === "T1"));
   assert.equal(findMoon(dry, "T1").status, "audited");
-  assert.ok(dry.fleet.filter((ship) => ship.class === "customs").every((ship) => ship.status === "idle"));
+  assert.ok(dry.fleet.filter((ship) => ship.job === "customs").every((ship) => ship.status === "idle"));
   assert.equal(dry.decisions.filter((decision) => decision.target_id === "T1").length, 0);
   movePast(x, events(x, "fuel.exhausted")[0].payload.until);
   const done = await until(async () => { const value = await snapshot(x); return findMoon(value, "T1")?.status === "merged" ? value : null; });
@@ -321,12 +321,12 @@ test("13. Customs ships come back.", async () => scenario("happy", fuelPatch(), 
   for (let count = 1; count <= 3; count++) {
     await feed.waitFor((all) => all.filter((event) => event.kind === "fuel.exhausted").length >= count, 20000);
     const snap = await snapshot(x);
-    assert.ok(snap.fleet.filter((ship) => ship.class === "customs").every((ship) => ship.status === "idle"));
+    assert.ok(snap.fleet.filter((ship) => ship.job === "customs").every((ship) => ship.status === "idle"));
     movePast(x, events(x, "fuel.exhausted", null)[count - 1].payload.until);
   }
   const done = await until(async () => { const value = await snapshot(x); return ["T1", "B", "C"].every((id) => findMoon(value, id)?.status === "merged") ? value : null; }, 30000);
   assert.equal(events(x, "moon.adrift", null).length, 0);
-  assert.ok(done.fleet.filter((ship) => ship.class === "customs").every((ship) => ship.status === "idle"));
+  assert.ok(done.fleet.filter((ship) => ship.job === "customs").every((ship) => ship.status === "idle"));
 }));
 
 test("14. Contraband in the cargo.", async () => scenario("wall", fuelPatch(), async (x, feed) => {

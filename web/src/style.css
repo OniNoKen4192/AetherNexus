@@ -112,6 +112,8 @@ textarea.field { font-family: inherit; resize: vertical; }
 .fleet-ships { margin-top: 6px; }
 .fleet-ship { display: flex; align-items: center; gap: 8px; padding: 3px 8px; flex-wrap: wrap; }
 .fleet-ship > span:first-child { flex: 1; }
+.fleet-ship-meta, .voyage-ship { color: var(--muted); font-size: 12px; }
+.voyage-ship { display: flex; gap: 8px; padding: 2px 8px; flex-wrap: wrap; }
 .fleet-retire { display: flex; align-items: center; gap: 6px; flex: 2; flex-wrap: wrap; }
 .fleet-retire .field { min-width: 120px; flex: 1; }
 .fleet-ship > .msg-error { flex-basis: 100%; }

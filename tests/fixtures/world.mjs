@@ -3,7 +3,7 @@ import { createSystem } from "../../dist/server/commands/system.js";
 import { assignPlanet, assignMoon } from "../../dist/server/commands/assign.js";
 import { append } from "../../dist/db/events.js";
 import { generateSystem } from "../../dist/core/bodies.js";
-import { generateFleet } from "../../dist/core/fleet.js";
+import { slug } from "../../dist/core/fleet.js";
 
 /**
  * Config for scheduler fuel scenarios. The fixture specs use the `terra` tier.
@@ -35,16 +35,74 @@ export function fuelPatch(opts = {}, extra) {
   };
 }
 
+/**
+ * Config for ship scenarios: two fake providers with their own faction and weights. Runs `extra` last.
+ *   fake:  adapter "fake", faction "tinkers",   weights { sol: "heavy", terra: "standard", luna: "light" }, pool { kind: "window", reserve_floor: 0.1, refuel? }
+ *   spare: adapter "fake", faction "outriders", weights { "m-cheap": "light", default: "heavy" },           pool { kind: "window", reserve_floor: 0.25 }
+ *   opts.refuel = { min_wait_minutes } adds fake.pool.refuel = { provider: "spare", models: { terra: "m-cheap" }, min_wait_minutes }
+ *   roles { implement: ["fake"], review: ["fake"] }; routing.security_routed ["src/auth.ts"]; routing.do_not_touch [".env"]
+ */
+export function shipsPatch(opts = {}, extra) {
+  return (c) => {
+    c.providers.fake = {
+      ...c.providers.fake,
+      adapter: "fake",
+      faction: "tinkers",
+      weights: { sol: "heavy", terra: "standard", luna: "light" },
+      pool: {
+        kind: "window",
+        reserve_floor: 0.1,
+        ...(opts.refuel ? {
+          refuel: {
+            provider: "spare",
+            models: { terra: "m-cheap" },
+            min_wait_minutes: opts.refuel.min_wait_minutes,
+          },
+        } : {}),
+      },
+    };
+    c.providers.spare = {
+      adapter: "fake",
+      faction: "outriders",
+      weights: { "m-cheap": "light", default: "heavy" },
+      pool: { kind: "window", reserve_floor: 0.25 },
+    };
+    c.roles = { implement: ["fake"], review: ["fake"] };
+    c.routing.security_routed = ["src/auth.ts"];
+    c.routing.do_not_touch = [".env"];
+    extra?.(c);
+  };
+}
+
 export function seedSystem(db, id = "S-20261013-demo", seed = 42) {
   const gen = generateSystem(seed);
   append(db, { kind: "system.created", system_id: id, payload: { kind: "feature", title: "Demo", brief: "demo brief", base_sha: "0".repeat(40), integration_branch: `system/${id}/integration`, seed, theme: gen.theme, planets: gen.planets } });
   return gen;
 }
 
+// A fleet as a galaxy made before ships were commissioned on demand registered it: `ship.registered` events with a class.
+// Reducer tests use it to have idle ships without a launch; such ships read as standard weight with a legacy formation.
+const LEGACY_NAMES = ["Vigilant", "Slow Thunder", "Pilgrim", "Pale Meridian", "Kindly Keel", "Dawn Treader", "Meridian", "Steadfast", "Far Harbor", "Wayfarer", "Sojourner", "Resolute", "Intrepid", "Concord", "Sentinel"];
 export function seedFleet(db, fleets = ["fake"]) {
-  const ships = generateFleet(1, "classic", { freighters: 2, customs: 1, carriers: 1, surveyors: 1 }, fleets);
+  const ships = []; let n = 0;
+  for (const fleet of fleets) for (const [cls, count] of [["freighter", 2], ["customs", 1], ["carrier", 1], ["surveyor", 1]]) {
+    for (let i = 0; i < count; i++) { const name = LEGACY_NAMES[n++]; ships.push({ id: slug(name), name, class: cls, fleet }); }
+  }
   for (const ship of ships) append(db, { kind: "ship.registered", ship_id: ship.id, provider: ship.fleet, payload: { ship } });
   return ships;
+}
+
+/**
+ * An idle ship to raw-append a `voyage.launched` on, for a test that does not run a real launch. Returns the idle ship of
+ * this fleet, job and weight when there is one; otherwise commissions one (as a launch would) and returns its row.
+ */
+export function idleShip(db, fleet = "fake", job = "delivery", weight = "standard") {
+  const idle = db.get("ships.pickIdle", { job, fleet, weight });
+  if (idle) return idle;
+  const n = db.all("ships.all").length + 1;
+  const ship = { id: `test-ship-${n}`, name: `Test Ship ${n}`, fleet, job, faction: fleet, weight, formation: { id: "plain", name: "Ship", vessels: [{ hull: "ship", count: 1, role: "lead" }] } };
+  append(db, { kind: "ship.commissioned", ship_id: ship.id, provider: fleet, payload: { ship } });
+  return db.get("ships.byId", { id: ship.id });
 }
 
 /**
@@ -53,9 +111,10 @@ export function seedFleet(db, fleets = ["fake"]) {
  */
 export function writeSpecs(w, entries) {
   const template = read("tests/fixtures/specs/good-basic.md");
-  const paths = entries.map(({ id, deps = [], scripts = [] }) => {
+  const paths = entries.map(({ id, deps = [], scripts = [], tier }) => {
     const comments = scripts.map((name) => `<!-- FAKE-SCRIPT: ${name} -->`).join("\n");
     let body = template.replace(/^- \*\*Depends on\*\*:.*$/m, `- **Depends on**: ${deps.length ? deps.join(", ") : "none"}`);
+    if (tier !== undefined) body = body.replace(/^- \*\*Model hint\*\*:.*$/m, `- **Model hint**: ${tier}`);
     if (comments) body = body.replace("# TASK: thing-add-x", `# TASK: thing-add-x\n${comments}`);
     return writeSpec(w.dir, id, body);
   });

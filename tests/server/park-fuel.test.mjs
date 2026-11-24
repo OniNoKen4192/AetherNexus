@@ -10,11 +10,11 @@ import { availableActions } from "../../dist/server/commands/query.js";
 import { loadMoon, moonScope } from "../../dist/server/dispatch.js";
 
 const iso = (ms = 0) => new Date(Date.now() + ms).toISOString();
-function config(c, { freighters = 3, probe = false } = {}) {
+function config(c, { deliveries = 3, probe = false } = {}) {
   c.providers.fake.pool = { kind: "window", reserve_floor: 0.1 };
   if (probe) c.providers.probe = { adapter: "fake", pool: { kind: "window", reserve_floor: 0.1 } };
   c.roles = { implement: probe ? ["fake", "probe"] : ["fake"], review: ["fake"] };
-  c.fleet.freighters = freighters;
+  c.fleet.freighters = deliveries;
   c.automation = { level: "manual", max_fix_rounds: 3 };
 }
 function low(w) {
@@ -35,7 +35,7 @@ function stable(w) {
   assert.equal(dumpProjections(w.g.db), before);
 }
 
-test("21. dropping cargo awaiting pickup does not release its rerouted freighter", async () => {
+test("21. dropping cargo awaiting pickup does not release its rerouted delivery", async () => {
   const w = await worldWithTwoMoons("wall", "happy", (c) => config(c, { freighters: 1 }));
   try {
     const first = await sendDelivery(w.g, { taskId: "T1" });
@@ -94,7 +94,7 @@ test("23. dropping cargo awaiting pickup supersedes its voyage without releasing
   } finally { w.cleanup(); }
 });
 
-test("24. a rerouted freighter carries no model", async () => {
+test("24. a rerouted delivery carries no model", async () => {
   const w = await worldWithMoon("happy", (c) => config(c, { probe: true }));
   try {
     low(w);

@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { append } from "../../db/events.js";
+import { append, appendAll } from "../../db/events.js";
 import { rowToEvent } from "../../db/events.js";
-import { pickIdleShip } from "../../core/fleet.js";
 import type { MoonStatus } from "../../core/transitions.js";
 import type { AgentEvent, ReviewReport } from "../../providers/adapter.js";
 import { appendAmendment, hashSpec } from "../../validate/spec.js";
@@ -10,7 +9,7 @@ import { Refusal } from "../errors.js";
 import type { Galaxy } from "../galaxy.js";
 import { chooseProvider } from "../limiter/limiter.js";
 import { requireTreeAnswered } from "./decision.js";
-import { loadMoon, moonScope, parkVoyage, recordTreeWrite, promptPath, moonTouch, renderPrompt, runVoyage, shipsNoun } from "../dispatch.js";
+import { loadMoon, moonScope, parkVoyage, recordTreeWrite, promptPath, moonTouch, renderPrompt, runVoyage } from "../dispatch.js";
 
 type VoyageRow = { id: string; ship_id: string; status: string; round: number; report: string | null };
 
@@ -29,14 +28,14 @@ export async function sendCustoms(
   requireTreeAnswered(g, taskId);
   const moon = loadMoon(g, taskId);
   if (moon.status !== "audited") throw new Refusal(`moon ${taskId} is '${moon.status}' — only an 'audited' moon can be inspected`);
-  const freighter = g.db.get<VoyageRow>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
-  if (!freighter || freighter.status !== "holding") throw new Refusal(`moon ${taskId} has no holding freighter voyage to inspect`);
+  const delivery = g.db.get<VoyageRow>("voyages.latestByAssignmentRole", { assignment_id: moon.assignment_id, role: "implement" });
+  if (!delivery || delivery.status !== "holding") throw new Refusal(`moon ${taskId} has no holding delivery voyage to inspect`);
 
   const audited = g.db.all("events.byAssignment", { assignment_id: moon.assignment_id }).map(rowToEvent)
-    .filter((e) => e.kind === "voyage.audited" && e.voyage_id === freighter.id).pop();
-  if (!audited) throw new Refusal(`voyage ${freighter.id} has no audit on record`);
+    .filter((e) => e.kind === "voyage.audited" && e.voyage_id === delivery.id).pop();
+  if (!audited) throw new Refusal(`voyage ${delivery.id} has no audit on record`);
   const auditJson = JSON.stringify(audited.payload["audit"], null, 2);
-  const implReport = freighter.report ? (JSON.parse(freighter.report) as { raw?: string }) : {};
+  const implReport = delivery.report ? (JSON.parse(delivery.report) as { raw?: string }) : {};
 
   const choice = chooseProvider(g, {
     role: "review", tier: moon.tier, mayRefuel: false,
@@ -51,13 +50,12 @@ export async function sendCustoms(
   if (choice.kind === "none") throw new Refusal(choice.message);
   const provider = choice.provider;
   if (!g.adapters[provider]) throw new Refusal(`provider '${provider}' is not configured`);
-  if (!pickIdleShip(g.db, "customs", provider)) throw new Refusal(`all ${shipsNoun("customs")} in fleet '${provider}' are assigned`);
 
   const specAbs = path.join(g.repoRoot, moon.spec_path);
   const specText = fs.readFileSync(specAbs, "utf8");
   const worktree = path.join(g.paths.worktrees, taskId);
   const body = renderPrompt(promptPath("review.md"), {
-    spec_text: specText, implementer_report: implReport.raw ?? freighter.report ?? "(no report)", audit_json: auditJson,
+    spec_text: specText, implementer_report: implReport.raw ?? delivery.report ?? "(no report)", audit_json: auditJson,
   });
   const prompt = input.reviewScript ? `FAKE-SCRIPT: ${input.reviewScript}\n${body}` : body;
 
@@ -72,25 +70,27 @@ export async function sendCustoms(
   }
 
   const verdict = outcome.done.data.report as ReviewReport;
-  // The customs ship has finished its voyage whatever the verdict.
-  append(g.db, { kind: "ship.released", ...scope, voyage_id: outcome.voyageId, ship_id: outcome.shipId, payload: { voyage_id: outcome.voyageId, outcome: "docked" } });
+  // The customs ship was released with its return, in runVoyage.
   append(g.db, {
     kind: "verdict.issued", ...scope, voyage_id: outcome.voyageId, ship_id: outcome.shipId,
-    payload: { verdict: verdict.verdict, reasoning: verdict.reasoning, ...(verdict.delta_spec ? { delta_spec: verdict.delta_spec } : {}), round: moon.round, voyage_id: freighter.id },
+    payload: { verdict: verdict.verdict, reasoning: verdict.reasoning, ...(verdict.delta_spec ? { delta_spec: verdict.delta_spec } : {}), round: moon.round, voyage_id: delivery.id },
   });
-  const fscope = { ...scope, voyage_id: freighter.id, ship_id: freighter.ship_id };
+  const fscope = { ...scope, voyage_id: delivery.id, ship_id: delivery.ship_id };
 
   if (verdict.verdict === "APPROVE") {
     append(g.db, { kind: "voyage.cleared", ...fscope, payload: {} });
   } else if (verdict.verdict === "REJECT") {
     append(g.db, { kind: "voyage.quarantined", ...fscope, payload: {} });
-    append(g.db, { kind: "ship.quarantined", ...fscope, payload: { voyage_id: freighter.id, outcome: "quarantined" } });
+    append(g.db, { kind: "ship.quarantined", ...fscope, payload: { voyage_id: delivery.id, outcome: "quarantined" } });
     append(g.db, { kind: "decision.opened", ...scope, payload: { kind: "reject", target_kind: "moon", target_id: taskId, reasoning: verdict.reasoning } });
   } else if (g.db.all<{ verdict: string }>("verdicts.byAssignment", { assignment_id: moon.assignment_id }).filter((row) => row.verdict === "FIX").length >= g.config.automation.max_fix_rounds) {
-    parkVoyage(g, { taskId, voyageId: freighter.id, shipId: freighter.ship_id, reason: "max_fix_rounds", details: `FIX verdict after round ${moon.round} (max ${g.config.automation.max_fix_rounds}): ${verdict.reasoning}` });
+    parkVoyage(g, { taskId, voyageId: delivery.id, shipId: delivery.ship_id, reason: "max_fix_rounds", details: `FIX verdict after round ${moon.round} (max ${g.config.automation.max_fix_rounds}): ${verdict.reasoning}` });
   } else {
-    append(g.db, { kind: "voyage.superseded", ...fscope, payload: {} });
-    append(g.db, { kind: "ship.released", ...fscope, payload: { voyage_id: freighter.id, outcome: "superseded" } });
+    // one transaction: a superseded voyage never keeps its ship
+    appendAll(g.db, () => [
+      { kind: "voyage.superseded", ...fscope, payload: {} },
+      { kind: "ship.released", ...fscope, payload: { voyage_id: delivery.id, outcome: "superseded" } },
+    ]);
     const amended = amendmentFor(specText, moon.round, verdict.reasoning, verdict.delta_spec);
     recordTreeWrite(g, [moon.spec_path]);
     fs.writeFileSync(specAbs, amended);

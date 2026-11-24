@@ -51,8 +51,8 @@ export function Header({ b }: { b: Bridge }) {
                 onChange={(event) => void changeRung(event.currentTarget.value)}
               >
                 <option value="manual">manual — you do every step</option>
-                <option value="verdicts">verdicts — you send each freighter; the server inspects, docks and re-runs fixes</option>
-                <option value="roundabout">roundabout — the server also sends a freighter to every ready moon</option>
+                <option value="verdicts">verdicts — you send each delivery; the server inspects, docks and re-runs fixes</option>
+                <option value="roundabout">roundabout — the server also sends a delivery to every ready moon</option>
                 {(snapshot.rung === "highways" || snapshot.rung === "autopilot") && (
                   <option value={snapshot.rung} disabled>{snapshot.rung}</option>
                 )}
@@ -64,7 +64,7 @@ export function Header({ b }: { b: Bridge }) {
             {confirming && (
               <span className="rung-confirmation">
                 <span>
-                  Raising to roundabout sends {readyToSend}{readyToSend === 1 ? " freighter now." : " freighters now."}
+                  Raising to roundabout sends {readyToSend}{readyToSend === 1 ? " delivery now." : " deliveries now."}
                 </span>
                 <button className="btn" type="button" disabled={command.busy} onClick={() => void raise()}>Raise</button>
                 <button className="btn" type="button" disabled={command.busy} onClick={() => {
